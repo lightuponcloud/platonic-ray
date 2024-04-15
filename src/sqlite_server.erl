@@ -363,9 +363,6 @@ open_db(BucketId, DbName) ->
 	    end;
 	Metadata ->
 	    %% Read db, then call exec_sql
-	    Response = riak_api:get_object(BucketId, ?DB_VERSION_KEY),
-	    Content = proplists:get_value(content, Response),
-	    file:write_file(TempFn1, Content),
 	    {ok, Pid1} = sqlite3:open(DbName, [{file, TempFn1}]),
 	    Version1 = proplists:get_value("x-amz-meta-version", Metadata),
 	    Version2 = jsx:decode(base64:decode(Version1)),

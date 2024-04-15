@@ -84,7 +84,6 @@ list_buckets() ->
     Config = #riak_api_config{},
     case s3_xml_request(get, "", "/", "", Params, <<>>, [], Config) of
 	{ok, Doc} ->
-file:write_file("/tmp/dump", term_to_binary(Doc)),
 	    Attributes = [{prefix, "Bucket", text},
                   {marker, "Marker", text},
                   {next_marker, "NextMarker", text},
@@ -793,11 +792,11 @@ s3_xml_request(Method, Host, Path, Subresource, Params, POSTData, Headers, Confi
 	{ok, {_Status, _Headers, Body}} ->
 	    XML = element(1,xmerl_scan:string(binary_to_list(Body))),
 	    case XML of
-    		#xmlElement{name='Error'} ->
-        	    ErrCode = erlcloud_xml:get_text("/Error/Code", XML),
-        	    ErrMsg = erlcloud_xml:get_text("/Error/Message", XML),
-        	    erlang:error({s3_error, ErrCode, ErrMsg});
-    		_ -> {ok, XML}
+		#xmlElement{name='Error'} ->
+		    ErrCode = erlcloud_xml:get_text("/Error/Code", XML),
+		    ErrMsg = erlcloud_xml:get_text("/Error/Message", XML),
+		    erlang:error({s3_error, ErrCode, ErrMsg});
+		_ -> {ok, XML}
 	    end;
 	{error, {http_error, 404,_,_,_}} -> not_found;
 	{error, {http_error, 503,_,_,_}} -> erlang:error({s3_error, failed_connect, "Connection Failed"});
