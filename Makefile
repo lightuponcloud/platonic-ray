@@ -2,14 +2,13 @@ PROJECT = middleware
 PROJECT_DESCRIPTION = Rest interface for Riak CS
 PROJECT_VERSION = 0.1.0
 
-DEPS = cowboy erlydtl jsx ux lager sqlite3
+DEPS = cowboy erlydtl jsx lager sqlite3
 REL_DEPS = relx
 LOCAL_DEPS = inets xmerl
 DEP_PLUGINS = cowboy
 TEST_DEPS = meck
 
 dep_cowboy_commit = 2.9.0
-dep_ux = git https://github.com/erlang-unicode/ux.git master
 dep_jsx = git https://github.com/talentdeficit/jsx v2.11.0
 dep_sqlite3 = git https://github.com/processone/erlang-sqlite3 v1.1.6
 dep_lager = git https://github.com/erlang-lager/lager 3.9.2
