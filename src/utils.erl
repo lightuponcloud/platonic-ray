@@ -35,7 +35,7 @@ mime_type(FileName) when erlang:is_list(FileName) ->
     case filename:extension(FileName) of
 	[] -> "application/octet_stream";
 	Extension0 ->
-	    Extension1 = ux_string:to_lower(unicode:characters_to_list(Extension0)),
+	    Extension1 = light_unicode:to_lower(unicode:characters_to_list(Extension0)),
 	    case Extension1 of
 		".heic" -> "image/heic";  %% nonsense from apple
 		_ ->

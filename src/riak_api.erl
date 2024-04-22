@@ -429,7 +429,7 @@ pick_object_key(BucketId, Prefix, FileName, Version, UserName, IndexContent)
 	    P1 = proplists:get_value(prefix, P0),
 	    P2 = lists:last([T || T <- binary:split(P1, <<"/">>, [global]), erlang:byte_size(T) > 0]),
 	    P3 = unicode:characters_to_list(utils:unhex(P2)),
-	    ux_string:to_lower(P3)
+	    light_unicode:to_lower(P3)
 	end, proplists:get_value(dirs, IndexContent, [])),
     ExistingList = proplists:get_value(list, IndexContent, []),
     %% Lowercase original object names, used for comparison
@@ -438,7 +438,7 @@ pick_object_key(BucketId, Prefix, FileName, Version, UserName, IndexContent)
 	    OrigName1 = proplists:get_value(orig_name, I),
 	    OrigName2 = unicode:characters_to_list(OrigName1),
 	    Object = indexing:to_object(I),
-	    {ux_string:to_lower(OrigName2), Object}
+	    {light_unicode:to_lower(OrigName2), Object}
 	end || I <- ExistingList,
 	proplists:get_value(is_deleted, I) =:= false],
     pick_object_key(BucketId, Prefix, FileName, Version, UserName, ExistingDirectoryNames,
@@ -457,7 +457,7 @@ pick_object_key(BucketId, Prefix, FileName0, Version, UserName, ExistingDirector
 	    undefined -> FileName0;
 	    _ -> UniqOrigName0
 	end,
-    NewName1 = ux_string:to_lower(unicode:characters_to_list(NewName0)),  %% lowercase
+    NewName1 = light_unicode:to_lower(unicode:characters_to_list(NewName0)),  %% lowercase
     %% Transliterate filename
     ObjectKey0 =
 	case UniqKey0 of
@@ -481,7 +481,7 @@ pick_object_key(BucketId, Prefix, FileName0, Version, UserName, ExistingDirector
 	[] ->
 	    %% Check if pseudo-directory with this name exists.
 	    %% Increment filename in that case
-	    DirectoryName = ux_string:to_lower(unicode:characters_to_list(NewName0)),
+	    DirectoryName = light_unicode:to_lower(unicode:characters_to_list(NewName0)),
 	    case lists:member(DirectoryName, ExistingDirectoryNames) of
 		true ->
 		    %% Directory exists, new object name required

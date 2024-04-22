@@ -1135,7 +1135,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 			    sqlite_server:add_object(BucketId, Prefix, Obj),
 
 			    %% Start video transcoding
-			    ObjExt = filename:extension(ux_string:to_lower(ObjectKey0)),
+			    ObjExt = filename:extension(light_unicode:to_lower(ObjectKey0)),
 			    IsVideo = lists:member(ObjExt, ?VIDEO_EXTENSIONS),
 			    case IsVideo of
 				true -> video_transcoding:ffmpeg(BucketId, ObjectKey0);
