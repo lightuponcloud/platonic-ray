@@ -12,8 +12,8 @@
           s3_follow_redirect=false::boolean(),
           s3_follow_redirect_count=2::non_neg_integer(),
 	  %% Riak's access key and secret
-          access_key_id="GUXIOJVOKUDDMG0HPWKP"::string(),
-          secret_access_key="SF94xTjigPb1t3deGjlwCls_fgeIho9GnvzxfA"::string(),
+          access_key_id=""::string(),
+          secret_access_key=""::string(),
           %% Network request timeout; if not specifed, the default timeout will be used:
           timeout=undefined::timeout()|undefined
          }).
