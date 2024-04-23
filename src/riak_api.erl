@@ -830,6 +830,7 @@ s3_request(Method, Bucket, Path, Subresource, Params, POSTData, Headers, Config,
         _ -> [{Subresource, ""} | FParams]
     end,
     S3Host = Config#riak_api_config.s3_host,
+    Region = Config#riak_api_config.s3_region,
     EscapedPath = erlcloud_http:url_encode_loose(Path),
     HostName = lists:flatten(
 	[case Bucket of "" -> ""; _ -> [Bucket, $.] end, S3Host]),
@@ -838,7 +839,7 @@ s3_request(Method, Bucket, Path, Subresource, Params, POSTData, Headers, Config,
         Method, EscapedPath,
         [{"host", HostName} | FHeaders ],
         POSTData,
-        "US",
+        Region,
         "s3", QueryParams),
 
     RequestURI = lists:flatten([

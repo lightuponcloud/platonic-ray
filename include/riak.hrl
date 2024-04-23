@@ -6,6 +6,7 @@
 -record(riak_api_config, {
           s3_scheme="http://"::string(),
           s3_host="s3.amazonaws.com"::string(),
+	  s3_region="US",
           s3_port=80::non_neg_integer(),
 	  s3_proxy_host="127.0.0.1"::string(),
 	  s3_proxy_port=8080::non_neg_integer(),
