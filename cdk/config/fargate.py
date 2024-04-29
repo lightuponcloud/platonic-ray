@@ -22,19 +22,5 @@ class FargateStackConfig:
 
 
 @dataclass
-class AppFargateStackConfig(FargateStackConfig):
-    # Secret key used by other services to confirm their identity
-    app_service_key: str = ""
-
-
-class WorkerFargateStackConfig(FargateStackConfig):
-    pass
-
-
-class SchedulerFargateStackConfig(WorkerFargateStackConfig):
-    pass
-
-
-@dataclass
-class NotificationServiceFargateStackConfig(WorkerFargateStackConfig):
+class NotificationServiceFargateStackConfig(FargateStackConfig):
     elb_certificate_arn: str = None

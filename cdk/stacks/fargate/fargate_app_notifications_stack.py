@@ -19,7 +19,7 @@ BASE_DIR = path.dirname(path.dirname(path.abspath(__file__)))
 
 class FargateNotificationsStack(core.Stack):
     """
-    Fargate container for PubSub notifications service
+    Fargate container for DubStack service
     """
 
     def __init__(
@@ -31,8 +31,6 @@ class FargateNotificationsStack(core.Stack):
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
-
-        fargate_config = config.fargate_notifications
 
         self.vpc = vpc
 
@@ -53,7 +51,7 @@ class FargateNotificationsStack(core.Stack):
         asset = DockerImageAsset(
             self,
             "AppNotificationsServiceDockerImage",
-            directory=BASE_DIR + "../../../pubsub/",
+            directory=BASE_DIR + "../../..",
             file="Dockerfile",
         )
 
@@ -61,18 +59,21 @@ class FargateNotificationsStack(core.Stack):
         self.task_definition = ecs.FargateTaskDefinition(
             self,
             "TaskDef",
-            cpu=fargate_config.task_cpu,
-            memory_limit_mib=fargate_config.task_memory_limit_mib,
+            cpu=config.task_cpu,
+            memory_limit_mib=config.task_memory_limit_mib,
         )
+
+        backend_base_url = "https://{}".format(config.backend_domain_name)
         container = self.task_definition.add_container(
             "AppNotificationsServiceContainer",
             image=ecs.ContainerImage.from_docker_image_asset(asset),
             logging=logging,
             environment={
-                "APP_SERVICE_BASE_URL": config.get_backend_base_url(),
-                "APP_SERVICE_KEY": config.fargate_app.app_service_key,
+                "APP_SERVICE_BASE_URL": backend_base_url,
+                "APP_SERVICE_KEY": config.app_service_key,
             },
         )
+
         port_mapping = ecs.PortMapping(container_port=8082, protocol=ecs.Protocol.TCP)
         container.add_port_mappings(port_mapping)
 
@@ -91,7 +92,7 @@ class FargateNotificationsStack(core.Stack):
             certificate=cert.Certificate.from_certificate_arn(
                 self,
                 "NotificationServiceDomainCertificate",
-                certificate_arn=config.fargate_notifications.elb_certificate_arn,
+                certificate_arn=config.elb_certificate_arn,
             ),
         )
         self.fargate_service.target_group.configure_health_check(path="/")

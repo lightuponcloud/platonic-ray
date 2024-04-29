@@ -1,7 +1,10 @@
 {
-  "availability-zones:account=107892035587:region=us-east-2": [
+  "availability-zones:account=612528789372:region=us-east-2": [
     "us-east-2a",
     "us-east-2b",
     "us-east-2c"
+  ],
+  "acknowledged-issue-numbers": [
+    19836
   ]
 }

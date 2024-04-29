@@ -19,13 +19,13 @@ class RestApiStack(core.Stack):
         self.api_certificate = cert.Certificate.from_certificate_arn(
             self,
             "ApiDomainCertificate",
-            certificate_arn=config.api_gw.api_certificate_arn,
+            certificate_arn=config.api_certificate_arn,
         )
 
         self.api_domain = apigateway.DomainName(
             self,
             "CustomApiDomainName",
-            domain_name=config.api_gw.backend_domain_name,
+            domain_name=config.backend_domain_name,
             certificate=self.api_certificate,
         )
 
