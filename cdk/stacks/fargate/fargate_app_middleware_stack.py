@@ -6,7 +6,7 @@ from aws_cdk import (
     aws_ec2 as ec2,
     aws_ecs_patterns as ecs_patterns,
     aws_certificatemanager as cert,
-    aws_logs as logs,
+    aws_logs as logs
 )
 from aws_cdk.aws_ecr_assets import DockerImageAsset
 from aws_cdk.aws_elasticloadbalancingv2 import ApplicationProtocol
@@ -37,6 +37,8 @@ class FargateMiddlewareStack(core.Stack):
         # Create a cluster
         cluster = ecs.Cluster(self, "fargate-app-middleware-service", vpc=vpc)
 
+        core.Tags.of(cluster).add(config.tag_name, config.tag_value)
+
         # Logging
         logging = ecs.AwsLogDriver(
             stream_prefix="AppMiddlewareServiceLogs",
@@ -54,6 +56,7 @@ class FargateMiddlewareStack(core.Stack):
             directory=BASE_DIR + "../../..",
             file="Dockerfile",
         )
+        core.Tags.of(asset).add(config.tag_name, config.tag_value)
 
         # Task definition
         self.task_definition = ecs.FargateTaskDefinition(
@@ -74,7 +77,7 @@ class FargateMiddlewareStack(core.Stack):
             },
         )
 
-        port_mapping = ecs.PortMapping(container_port=8082, protocol=ecs.Protocol.TCP)
+        port_mapping = ecs.PortMapping(container_port=config.container_port, protocol=ecs.Protocol.TCP)
         container.add_port_mappings(port_mapping)
 
         # Create Fargate Service
@@ -101,3 +104,4 @@ class FargateMiddlewareStack(core.Stack):
             connection=ec2.Port.tcp(443),
             description="Allow http inbound from VPC",
         )
+        core.Tags.of(self.fargate_service).add(config.tag_name, config.tag_value)

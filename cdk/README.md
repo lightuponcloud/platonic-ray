@@ -13,4 +13,11 @@ How to use it
  cdk deploy DeploymentStage/NetworkStack
  cdk deploy DeploymentStage/RestApiStack
  cdk deploy DeploymentStage/S3UploadBucket
- cdk deploy DeploymentStage/FargateNotificationService
+ cdk deploy DeploymentStage/FargateMiddlewareService
+
+
+The following resources will be deployed to AWS.
+
+![AWS S3 buckets](s3_stack.png)
+
+![ECS Fargate Cluster](app_stack.png)

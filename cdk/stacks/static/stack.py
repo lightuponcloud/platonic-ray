@@ -10,11 +10,11 @@ class S3FilesStack(core.Stack):
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        self.uploads_bucket = self.create_bucket("DataUploadBucket", "lightup-uploads")
-        self.security_bucket = self.create_bucket("SecurityBucket", "lightup-security")
-        self.public_bucket = self.create_bucket("SecurityBucket", "the-lightup-pub")
+        self.uploads_bucket = self.create_bucket(config, "DataUploadBucket", config.upload_s3_bucket_name)
+        self.security_bucket = self.create_bucket(config, "SecurityBucket", config.security_s3_bucket_name)
+        self.public_bucket = self.create_bucket(config, "PublicBucket", config.pub_s3_bucket_name)
 
-    def create_bucket(self, arn, bucket_name):
+    def create_bucket(self, config, arn, bucket_name):
         # Create a private bucket
         s3_bucket = s3.Bucket(
             self,
@@ -27,9 +27,11 @@ class S3FilesStack(core.Stack):
                 restrict_public_buckets=True,
             ),
             access_control=s3.BucketAccessControl.BUCKET_OWNER_FULL_CONTROL,
-            removal_policy=core.RemovalPolicy.DESTROY,  # Delete objects on bucket removal
-            auto_delete_objects=True,
+            removal_policy=core.RemovalPolicy.RETAIN,  # Delete objects on bucket removal
+            auto_delete_objects=False,
         )
+
+        core.Tags.of(s3_bucket).add(config.tag_name, config.tag_value)
 
         # Save useful parameters to SSM Parameter Store
         return ssm.StringParameter(

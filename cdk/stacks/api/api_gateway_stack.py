@@ -32,7 +32,7 @@ class RestApiStack(core.Stack):
         self.api = apigateway.HttpApi(
             self,
             "RestApi",
-            api_name="Primary dataroom services",
+            api_name="Primary services",
             description="Api Gateway for Auth & Data services",
             default_domain_mapping=apigateway.DomainMappingOptions(
                 domain_name=self.api_domain
@@ -51,9 +51,9 @@ class RestApiStack(core.Stack):
                 allow_origins=[
                     config.frontend_base_url,
                     # Local origins
-                    "http://localhost:8080",
-                    "http://0.0.0.0:8080",
-                    "http://127.0.0.1:8080",
+                    "http://localhost:8081",
+                    "http://0.0.0.0:8081",
+                    "http://127.0.0.1:8081",
                 ],
             ),
         )
