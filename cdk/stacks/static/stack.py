@@ -4,17 +4,22 @@ from constructs import Construct
 from config import Config
 
 
-class StaticFilesStack(core.Stack):
+class S3FilesStack(core.Stack):
     def __init__(
         self, scope: Construct, construct_id: str, config: Config, **kwargs
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+        self.uploads_bucket = self.create_bucket("DataUploadBucket", "lightup-uploads")
+        self.security_bucket = self.create_bucket("SecurityBucket", "lightup-security")
+        self.public_bucket = self.create_bucket("SecurityBucket", "the-lightup-pub")
+
+    def create_bucket(self, arn, bucket_name):
         # Create a private bucket
-        self.s3_bucket = s3.Bucket(
+        s3_bucket = s3.Bucket(
             self,
-            "DataUploadBucket",
-            bucket_name=config.upload_s3_bucket_name,
+            arn,
+            bucket_name=bucket_name,
             block_public_access=s3.BlockPublicAccess(
                 block_public_acls=True,
                 block_public_policy=True,
@@ -27,9 +32,9 @@ class StaticFilesStack(core.Stack):
         )
 
         # Save useful parameters to SSM Parameter Store
-        self.static_files_bucket_name = ssm.StringParameter(
+        return ssm.StringParameter(
             self,
-            "StaticFilesBucketNameParam",
-            parameter_name=f"/{config.stage_prefix}/StaticFilesBucketNameParam",
-            string_value=self.s3_bucket.bucket_name,
+            "StaticFiles{}Param".format(arn),
+            parameter_name="/{}/StaticFiles{}Param".format(config.stage_prefix, arn),
+            string_value=s3_bucket.bucket_name,
         )

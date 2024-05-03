@@ -17,9 +17,9 @@ from config.common import Config
 BASE_DIR = path.dirname(path.dirname(path.abspath(__file__)))
 
 
-class FargateNotificationsStack(core.Stack):
+class FargateMiddlewareStack(core.Stack):
     """
-    Fargate container for DubStack service
+    Fargate container for Middleware service
     """
 
     def __init__(
@@ -35,22 +35,22 @@ class FargateNotificationsStack(core.Stack):
         self.vpc = vpc
 
         # Create a cluster
-        cluster = ecs.Cluster(self, "fargate-app-notifications-service", vpc=vpc)
+        cluster = ecs.Cluster(self, "fargate-app-middleware-service", vpc=vpc)
 
         # Logging
         logging = ecs.AwsLogDriver(
-            stream_prefix="AppNotificationsServiceLogs",
+            stream_prefix="AppMiddlewareServiceLogs",
             log_group=logs.LogGroup(
                 self,
-                "FargateNotificationsLogGroup",
-                log_group_name=f"{config.stage_prefix}/NotificationService",
+                "FargateMiddlewareLogGroup",
+                log_group_name=f"{config.stage_prefix}/MiddlewareService",
             ),
         )
 
         # Docker image
         asset = DockerImageAsset(
             self,
-            "AppNotificationsServiceDockerImage",
+            "AppMiddlewareServiceDockerImage",
             directory=BASE_DIR + "../../..",
             file="Dockerfile",
         )
@@ -65,7 +65,7 @@ class FargateNotificationsStack(core.Stack):
 
         backend_base_url = "https://{}".format(config.backend_domain_name)
         container = self.task_definition.add_container(
-            "AppNotificationsServiceContainer",
+            "AppMiddlewareServiceContainer",
             image=ecs.ContainerImage.from_docker_image_asset(asset),
             logging=logging,
             environment={
@@ -80,7 +80,7 @@ class FargateNotificationsStack(core.Stack):
         # Create Fargate Service
         self.fargate_service = ecs_patterns.ApplicationLoadBalancedFargateService(
             self,
-            "AppNotificationsService",
+            "AppMiddlewareService",
             cluster=cluster,
             task_definition=self.task_definition,
             task_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE),
@@ -91,7 +91,7 @@ class FargateNotificationsStack(core.Stack):
             redirect_http=True,
             certificate=cert.Certificate.from_certificate_arn(
                 self,
-                "NotificationServiceDomainCertificate",
+                "MiddlewareServiceDomainCertificate",
                 certificate_arn=config.elb_certificate_arn,
             ),
         )

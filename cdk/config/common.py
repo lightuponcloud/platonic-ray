@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 from aws_cdk import aws_ec2 as ec2
 
-from .fargate import NotificationServiceFargateStackConfig
+from .fargate import MiddlewareServiceFargateStackConfig
 
 
 @dataclass
@@ -26,6 +26,6 @@ class Config:
     frontend_base_url: str
 
     # Fargate Configuration
-    fargate_dubstack: NotificationServiceFargateStackConfig = field(
-        default_factory=lambda: NotificationServiceFargateStackConfig()
+    fargate_middleware: MiddlewareServiceFargateStackConfig = field(
+        default_factory=lambda: MiddlewareServiceFargateStackConfig()
     )

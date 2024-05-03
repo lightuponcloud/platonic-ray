@@ -22,5 +22,5 @@ class FargateStackConfig:
 
 
 @dataclass
-class NotificationServiceFargateStackConfig(FargateStackConfig):
+class MiddlewareServiceFargateStackConfig(FargateStackConfig):
     elb_certificate_arn: str = None
