@@ -107,4 +107,5 @@ class FargateMiddlewareStack(core.Stack):
         core.Tags.of(self.fargate_service).add(config.tag_name, config.tag_value)
 
         self.fargate_service.target_group.configure_health_check(
-            path="/riak/health/", healthy_http_codes="200", port="8081")
+            path="/riak/health/", healthy_http_codes="200", port="8081",
+            interval=core.Duration.minutes(3), timeout=core.Duration.minutes(2))
