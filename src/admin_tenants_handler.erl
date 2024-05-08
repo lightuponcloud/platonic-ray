@@ -178,7 +178,13 @@ to_json(Req0, State) ->
 %% Checks session ID and displays tenants list on HTML page
 %%
 to_html(Req0, State) ->
-    Settings = #general_settings{},
+    Settings0 = #general_settings{},
+    StaticRoot =
+	case os:getenv("STATIC_BASE_URL") of
+	    false ->  Settings0#general_settings.static_root;
+	    V -> V
+	end,
+    Settings1 = Settings0#general_settings{static_root = StaticRoot},
     User = proplists:get_value(user, State),
     case User#user.staff of
 	false -> js_handler:redirect_to_login(Req0);
@@ -186,9 +192,9 @@ to_html(Req0, State) ->
 	    TenantsList = [tenant_to_proplist(T) || T <- get_tenants_list([], undefined)],
 	    State1 = admin_users_handler:user_to_proplist(User),
 	    {ok, Body} = admin_tenants_dtl:render([
-		{brand_name, Settings#general_settings.brand_name},
-		{static_root, Settings#general_settings.static_root},
-		{root_path, Settings#general_settings.root_path},
+		{brand_name, Settings1#general_settings.brand_name},
+		{static_root, Settings1#general_settings.static_root},
+		{root_path, Settings1#general_settings.root_path},
 		{tenants, TenantsList},
 		{tenants_count, length(TenantsList)}
 	    ] ++ State1),
@@ -202,16 +208,22 @@ to_html(Req0, State) ->
 %% ( called after 'allowed_methods()' )
 %%
 forbidden(Req0, _State) ->
-    Settings = #general_settings{},
+    Settings0 = #general_settings{},
+    StaticRoot =
+	case os:getenv("STATIC_BASE_URL") of
+	    false ->  Settings0#general_settings.static_root;
+	    V -> V
+	end,
+    Settings1 = Settings0#general_settings{static_root = StaticRoot},
     State1 =
 	case utils:get_token(Req0) of
 	    undefined ->
-		SessionCookieName = Settings#general_settings.session_cookie_name,
+		SessionCookieName = Settings1#general_settings.session_cookie_name,
 		#{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
 		%% Response depends on content type
 		case ?ANONYMOUS_USER_CREATION of
 		    true ->
-			Login = utils:hex(erlang:list_to_binary(Settings#general_settings.admin_email)),
+			Login = utils:hex(erlang:list_to_binary(Settings1#general_settings.admin_email)),
 			User0 = #user{
 			    id = "admin",
 			    name = "41646d696e6973747261746f72",  % Administrator

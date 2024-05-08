@@ -17,10 +17,10 @@ from stacks.deployment_stage import DeploymentStage
 
 
 app = core.App()
-CDK_DEFAULT_ACCOUNT = "107892035587"
+CDK_DEFAULT_ACCOUNT = "<< REPLACE ME >>"
 CDK_DEFAULT_REGION = "us-east-2"
 
-CERT_ARN = "arn:aws:acm:us-east-2:107892035587:certificate/4c35c731-d74a-4088-8c31-77ffbd07cc0b"
+CERT_ARN = "<< REPLACE ME >>"
 
 config = MiddlewareServiceFargateStackConfig()
 
@@ -37,6 +37,8 @@ config.backend_domain_name = "<< REPLACE ME >>"
 config.frontend_base_url = config.backend_domain_name
 config.app_service_key = "<< REPLACE ME >>"
 config.elb_certificate_arn = CERT_ARN
+
+config.static_base_url = "<< REPLACE ME >>"
 
 config.container_port = 8081  # port number from Dockerfile
 

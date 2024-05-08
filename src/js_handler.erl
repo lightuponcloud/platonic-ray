@@ -66,8 +66,14 @@ init(Req0, Opts) ->
 	    undefined -> undefined;
 	    Value0 -> binary_to_list(Value0)
 	end,
-    Settings = #general_settings{},
-    SessionCookieName = Settings#general_settings.session_cookie_name,
+    Settings0 = #general_settings{},
+    StaticRoot =
+	case os:getenv("STATIC_BASE_URL") of
+	    false ->  Settings0#general_settings.static_root;
+	    V -> V
+	end,
+    Settings1 = Settings0#general_settings{static_root = StaticRoot},
+    SessionCookieName = Settings1#general_settings.session_cookie_name,
     #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
     case login_handler:check_session_id(SessionID0) of
 	false -> bad_request_ok(Req0, 28);
@@ -83,8 +89,8 @@ init(Req0, Opts) ->
 	    JSONMessages = decode_messages_json(MessagesFilePath, DefaultMessagesFilePath),
 	    {ok, Body} = jquery_riak_js_dtl:render([
 		{messages, JSONMessages},
-		{root_path, Settings#general_settings.root_path},
-		{static_root, Settings#general_settings.static_root},
+		{root_path, Settings1#general_settings.root_path},
+		{static_root, Settings1#general_settings.static_root},
 		{bucket_id, BucketId},
 		{token, SessionID0},
 		{user_id, User#user.id},

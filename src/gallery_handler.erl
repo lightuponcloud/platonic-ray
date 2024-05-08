@@ -22,7 +22,13 @@ init(Req0, _Opts) ->
 	    {error, _} -> not_found;
 	    P -> P
 	end,
-    Settings = #general_settings{},
+    Settings0 = #general_settings{},
+    StaticRoot =
+	case os:getenv("STATIC_BASE_URL") of
+	    false ->  Settings0#general_settings.static_root;
+	    V -> V
+	end,
+    Settings1 = Settings0#general_settings{static_root = StaticRoot},
     case BucketId =:= undefined of
 	true -> not_found_error(Req0);
 	false ->
@@ -44,16 +50,16 @@ init(Req0, _Opts) ->
 		    List0 = erlang:binary_to_term(proplists:get_value(content, RiakResponse)),
 		    List1 = proplists:get_value(list, List0),
 		    List2 = [I || I <- List1, proplists:get_value(is_deleted, I) =/= true],
-		    Locale = Settings#general_settings.locale,
+		    Locale = Settings1#general_settings.locale,
 		    Directories0 = proplists:get_value(dirs, List0),
 		    Directories1 = [I ++ [{name, lists:flatten(utils:unhex_path(utils:to_list(proplists:get_value(prefix, I))))}]
                                     || I <- Directories0, proplists:get_value(is_deleted, I) =/= true],
 		    {ok, Body} = gallery_dtl:render([
 			{bucket_id, BucketId},
 			{hex_prefix, Prefix1},
-			{brand_name, Settings#general_settings.brand_name},
-			{static_root, Settings#general_settings.static_root},
-			{root_path, Settings#general_settings.root_path},
+			{brand_name, Settings1#general_settings.brand_name},
+			{static_root, Settings1#general_settings.static_root},
+			{root_path, Settings1#general_settings.root_path},
 			{objects_list, List2},
 			{directories, Directories1},
 			{title, DirectoryName}

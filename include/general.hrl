@@ -38,7 +38,7 @@
     admin_email="support@xentime.com"::string(),
     session_cookie_name=midsessionid::atom(),
     root_path="/riak/"::string(),
-    static_root="/riak-media/"::string(),
+    static_root="/riak-media/"::string(),  %% This default path is used when APP_SERVICE_BASE_URL env var is not set
     http_listen_port=8081,
     locale="uk"
 }).

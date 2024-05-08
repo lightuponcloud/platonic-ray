@@ -13,16 +13,23 @@
 
 
 init(Req0, _Opts) ->
-    Settings = #general_settings{},
-    SessionCookieName = Settings#general_settings.session_cookie_name,
+    Settings0 = #general_settings{},
+    SessionCookieName = Settings0#general_settings.session_cookie_name,
     #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
     SessionID1 =
 	case SessionID0 of
 	    [H|_] -> H;
 	    _ -> SessionID0
 	end,
+
+    StaticRoot =
+	case os:getenv("STATIC_BASE_URL") of
+	    false ->  Settings0#general_settings.static_root;
+	    V -> V
+	end,
+    Settings1 = Settings0#general_settings{static_root = StaticRoot},
     case login_handler:check_session_id(SessionID1) of
-	false -> login(Req0, Settings);
+	false -> login(Req0, Settings1);
 	{error, Code} -> js_handler:incorrect_configuration(Req0, Code);
 	User ->
 	    TenantId = User#user.tenant_id,
@@ -33,7 +40,7 @@ init(Req0, _Opts) ->
 	    State = admin_users_handler:user_to_proplist(User)
 		++ [{token, SessionID1}, {public_bucket_id, PublicBucketId},
 		    {tenant_bucket_id, TenantBucketId}],
-	    first_page(Req0, Settings, State)
+	    first_page(Req0, Settings1, State)
     end.
 
 %%

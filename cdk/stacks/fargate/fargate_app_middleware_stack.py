@@ -67,12 +67,14 @@ class FargateMiddlewareStack(core.Stack):
         )
 
         backend_base_url = "https://{}".format(config.backend_domain_name)
+        static_base_url = config.static_base_url
         container = self.task_definition.add_container(
             "AppMiddlewareServiceContainer",
             image=ecs.ContainerImage.from_docker_image_asset(asset),
             logging=logging,
             environment={
                 "APP_SERVICE_BASE_URL": backend_base_url,
+                "STATIC_BASE_URL": static_base_url,
                 "APP_SERVICE_KEY": config.app_service_key,
             },
         )
