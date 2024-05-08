@@ -40,6 +40,7 @@ start(_Type, _Args) ->
 	    {"/riak/login/", login_handler, []},
 	    {"/riak/logout/", logout_handler, []},
 
+	    {"/riak/health/", health_handler, []},
 	    {"/riak/js/", js_handler, []},
 	    {"/riak/js/[:bucket_id]/", js_handler, []},
 	    {"/riak/", first_page_handler, []},

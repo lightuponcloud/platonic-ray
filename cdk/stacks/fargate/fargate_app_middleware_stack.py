@@ -9,7 +9,7 @@ from aws_cdk import (
     aws_logs as logs
 )
 from aws_cdk.aws_ecr_assets import DockerImageAsset
-from aws_cdk.aws_elasticloadbalancingv2 import ApplicationProtocol
+from aws_cdk.aws_elasticloadbalancingv2 import ApplicationProtocol, HealthCheck
 from constructs import Construct
 
 from config.common import Config
@@ -96,7 +96,7 @@ class FargateMiddlewareStack(core.Stack):
                 self,
                 "MiddlewareServiceDomainCertificate",
                 certificate_arn=config.elb_certificate_arn,
-            ),
+            )
         )
         self.fargate_service.target_group.configure_health_check(path="/")
         self.fargate_service.service.connections.security_groups[0].add_ingress_rule(
@@ -105,3 +105,6 @@ class FargateMiddlewareStack(core.Stack):
             description="Allow http inbound from VPC",
         )
         core.Tags.of(self.fargate_service).add(config.tag_name, config.tag_value)
+
+        self.fargate_service.target_group.configure_health_check(
+            path="/riak/health/", healthy_http_codes="200", port="8081")
