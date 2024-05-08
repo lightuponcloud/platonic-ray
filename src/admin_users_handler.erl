@@ -125,7 +125,13 @@ to_json(Req0, State) ->
     end.
 
 to_html(Req0, State0) ->
-    Settings = #general_settings{},
+    Settings0 = #general_settings{},
+    StaticRoot =
+	case os:getenv("STATIC_BASE_URL") of
+	    false ->  Settings0#general_settings.static_root;
+	    V -> V
+	end,
+    Settings1 = Settings0#general_settings{static_root = StaticRoot},
     SessionId0 = proplists:get_value(session_id, State0),
     SessionId1 =
 	case SessionId0 of
@@ -154,9 +160,9 @@ to_html(Req0, State0) ->
 
 		    State1 = admin_users_handler:user_to_proplist(User),
 		    {ok, Body} = admin_users_dtl:render([
-			{brand_name, Settings#general_settings.brand_name},
-			{static_root, Settings#general_settings.static_root},
-			{root_path, Settings#general_settings.root_path},
+			{brand_name, Settings1#general_settings.brand_name},
+			{static_root, Settings1#general_settings.static_root},
+			{root_path, Settings1#general_settings.root_path},
 			{token, SessionId1},
 			{users_list, UsersList},
 			{users_count, length(UsersList)},
