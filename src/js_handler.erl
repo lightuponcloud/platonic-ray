@@ -4,8 +4,9 @@
 -module(js_handler).
 
 -export([init/2, bad_request/2, bad_request_ok/2, forbidden/3, forbidden/4,
-	 unauthorized/3, not_found/1, not_found_ok/1, too_many/1, too_many/2, not_modified/1,
-	 redirect_to_login/1, redirect_to_login/2, incorrect_configuration/2]).
+	 unauthorized/3, unauthorized/2, not_found/1, not_found_ok/1,
+	 too_many/1, too_many/2, not_modified/1, redirect_to_login/1,
+	 redirect_to_login/2, incorrect_configuration/2]).
 
 -include("general.hrl").
 -include("riak.hrl").
@@ -125,6 +126,10 @@ forbidden(Req0, MsgCode, Groups, ReturnType) when erlang:is_integer(MsgCode), er
 	<<"content-type">> => <<"application/json">>
     }, jsx:encode([{error, MsgCode}, {groups, Groups}]), Req0),
     {ReturnType, Req1, []}.
+
+
+unauthorized(Req0, MsgCode) when erlang:is_integer(MsgCode) ->
+    unauthorized(Req0, MsgCode, stop).
 
 unauthorized(Req0, MsgCode, ReturnType) when erlang:is_integer(MsgCode) ->
     Req1 = cowboy_req:reply(401, #{

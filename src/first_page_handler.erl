@@ -90,12 +90,15 @@ validate_post(Req0) ->
 -spec error_response(any(), #general_settings{}) -> any().
 
 error_response(Req0, Settings) ->
+    error_response(Req0, "Incorrect Credentials", Settings).
+
+error_response(Req0, Message, Settings) ->
     CSRFToken0 = login_handler:new_csrf_token(),
     {ok, Body} = login_dtl:render([
 	{static_root, Settings#general_settings.static_root},
 	{root_path, Settings#general_settings.root_path},
 	{csrf_token, CSRFToken0},
-	{error, "Incorrect Credentials"}
+	{error, Message}
     ]),
     Req1 = cowboy_req:reply(200, #{
 	<<"content-type">> => <<"text/html">>
@@ -125,6 +128,7 @@ login(Req0, Settings) ->
 		    case login_handler:check_credentials(Login, Password) of
 			false -> error_response(Req0, Settings);
 			not_found -> error_response(Req0, Settings);
+			blocked -> error_response(Req0, "Login deactivated", Settings);
 			User ->
 			    UUID4 = login_handler:new_token(User#user.id, User#user.tenant_id),
 			    State = admin_users_handler:user_to_proplist(User) ++ [{token, UUID4}],

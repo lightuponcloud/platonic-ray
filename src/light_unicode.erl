@@ -56,9 +56,7 @@ open_file(FileName) ->
         Fd
     catch
         Class:Reason ->
-            io:fwrite(
-                "~w: Cannot open file ~ts. ~n",
-                [?MODULE, FileName]),
+            lager:error("~w: Cannot open file ~ts. ~n", [?MODULE, FileName]),
 	    throw(io_lib:format("Failed to open file: ~p ~p", [Class, Reason]))
     end.
 
