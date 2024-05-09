@@ -76,7 +76,7 @@ to_scale(Req0, State) ->
 		    {<<>>, Req0, []};
 		not_found -> {<<>>, Req0, []};
 		Metadata0 ->
-		    ObjExt = filename:extension(light_unicode:to_lower(ObjectKey0)),
+		    ObjExt = filename:extension(light_ets:to_lower(ObjectKey0)),
 		    IsVideo = lists:member(ObjExt, ?VIDEO_EXTENSIONS),
 		    case IsVideo of
 			true -> scale_response(Req0, BucketId, Metadata0, Width, Height, CropFlag, true, T0);

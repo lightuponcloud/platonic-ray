@@ -15,7 +15,7 @@
 	 to_binary/1, to_atom/1, to_boolean/1]).
 
 %% Ancillary
--export([mime_type/1, slugify_object_key/1, prefixed_object_key/2, alphanumeric/1,
+-export([slugify_object_key/1, prefixed_object_key/2, alphanumeric/1,
 	 trim_spaces/1, hex/1, unhex/1, unhex_path/1, join_list_with_separator/3,
 	 timestamp/0, format_timestamp/1, firstmatch/2, timestamp_to_datetime/1,
 	 translate/2, dirname/1, read_config/1, real_prefix/2]).
@@ -23,27 +23,6 @@
 -include("riak.hrl").
 -include("general.hrl").
 -include("entities.hrl").
-
-mime_types() ->
-    MimeTypesFile = "/etc/mime.types",
-    {ok, MimeTypes} = httpd_conf:load_mime_types(MimeTypesFile),
-    MimeTypes.
-
--spec mime_type(string()) -> string().
-
-mime_type(FileName) when erlang:is_list(FileName) ->
-    case filename:extension(FileName) of
-	[] -> "application/octet_stream";
-	Extension0 ->
-	    Extension1 = light_unicode:to_lower(unicode:characters_to_list(Extension0)),
-	    case Extension1 of
-		".heic" -> "image/heic";  %% nonsense from apple
-		_ ->
-		    MimeTypes = mime_types(),
-		    LookupKey = string:substr(Extension1, 2),
-		    proplists:get_value(LookupKey, MimeTypes, "application/octet_stream")
-	    end
-    end.
 
 %%
 %% Extracts letters and digits from binary.

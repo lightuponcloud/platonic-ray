@@ -1,9 +1,11 @@
 %%
-%% This server loads unicode characters to memory and provides possibility to
-%% convert characters to lowercase.
+%% This server loads the following to memory for faster access.
 %%
--module(light_unicode).
--export([start_link/0, to_lower/1]).
+%% - unicode characters ( to_lower function )
+%% - MIME types ( guessing content-type by extension )
+%%
+-module(light_ets).
+-export([start_link/0, to_lower/1, guess_content_type/1]).
 
 -behaviour(gen_server).
 
@@ -17,13 +19,16 @@
 
 -include("log.hrl").
 
--record(state, {ets = undefined}).
+-record(state, {unidata_ets = undefined, mime_ets = undefined}).
 
 %%
 %% Converts characters of a string to a lowercase format.
 %%
 to_lower(String) when erlang:is_list(String) ->
     gen_server:call(?MODULE, {to_lower, String}).
+
+guess_content_type(FileName) when erlang:is_list(FileName) ->
+    gen_server:call(?MODULE, {mime_type, FileName}).
 
 
 hex_to_int(Code) ->
@@ -101,8 +106,8 @@ read_file({Fd, Ets} = State) ->
     end.
 
 
-load_mapping() ->
-    EbinDir = filename:dirname(code:which(light_unicode)),
+load_unicode_mapping() ->
+    EbinDir = filename:dirname(code:which(light_ets)),
     AppDir = filename:dirname(EbinDir),
     FilePath = filename:join([AppDir, "priv", "UnicodeData.txt.gz"]),
     Fd = open_file(FilePath),
@@ -110,6 +115,29 @@ load_mapping() ->
     read_file({Fd, Ets}),
     file:close(FilePath),
     Ets.
+
+
+load_mime_types() ->
+    EbinDir = filename:dirname(code:which(light_ets)),
+    AppDir = filename:dirname(EbinDir),
+    MimeTypesFile = filename:join([AppDir, "priv", "mime.types"]),
+    {ok, MimeTypes} = httpd_conf:load_mime_types(MimeTypesFile),
+
+    Ets = ets:new(mime_types, [{write_concurrency, false}, {read_concurrency, true}]),
+    [ets:insert(Ets, I) || I <- MimeTypes],
+    Ets.
+
+%% This function is used in handle_call functions
+string_to_lower(Ets, String) ->
+    lists:map(
+	fun(C) ->
+	    Key = erlang:list_to_integer(io_lib:fwrite("~B", [C])),
+	    case ets:lookup(Ets, Key) of
+		[] -> Key;
+		[{Key, Val}] -> lists:nth(1, unicode:characters_to_list([Val]))
+	    end
+	end, String).
+
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -119,8 +147,9 @@ load_mapping() ->
 %% @end
 %%--------------------------------------------------------------------
 start_link() ->
-    Ets = load_mapping(),
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [Ets], []).
+    Ets0 = load_unicode_mapping(),
+    Ets1 = load_mime_types(),
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [Ets0, Ets1], []).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -137,8 +166,8 @@ start_link() ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([Ets]) ->
-    {ok, #state{ets = Ets}}.
+init([UnidataEts, MimeEts]) ->
+    {ok, #state{unidata_ets = UnidataEts, mime_ets=MimeEts}}.
 
 
 %%--------------------------------------------------------------------
@@ -156,17 +185,29 @@ init([Ets]) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({to_lower, String}, _, State0) ->
-    Ets = State0#state.ets,
+    Ets = State0#state.unidata_ets,
+    Result = string_to_lower(Ets, String),
+    {reply, Result, State0};
 
-    Result = lists:map(
-	fun(C) ->
-	    Key = erlang:list_to_integer(io_lib:fwrite("~B", [C])),
-	    case ets:lookup(Ets, Key) of
-		[] -> Key;
-		[{Key, Val}] -> lists:nth(1, unicode:characters_to_list([Val]))
-	    end
-	end, String),
+handle_call({mime_type, FileName}, _, State0) ->
+    UnidataEts = State0#state.unidata_ets,
+    MimeEts = State0#state.mime_ets,
 
+    Result =
+	case filename:extension(FileName) of
+	    [] -> "application/octet_stream";
+	    Extension0 ->
+		Extension1 = string_to_lower(UnidataEts, unicode:characters_to_list(Extension0)),
+		case Extension1 of
+		    ".heic" -> "image/heic";  %% nonsense from apple
+		    _ ->
+			LookupKey = string:substr(Extension1, 2),
+			case ets:lookup(MimeEts, LookupKey) of
+			    [] -> "application/octet_stream";
+			    [{_Key, Val}] -> Val
+			end
+		end
+	end,
     {reply, Result, State0};
 
 handle_call(_Request, _From, State) ->

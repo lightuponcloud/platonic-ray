@@ -94,7 +94,7 @@ lightbox.init();
         <div id="header_content">
 	    <div class="main-content logo-wrapper">
 		<div class="header_logo">
-		    <a class="logo desktop" href="{{ root_path }}" title="{{ tenant_name }}">{{ tenant_name }}</a>
+		    <a class="logo desktop" href="{{ root_path }}" title="{{ brand_name }}">{{ brand_name }}</a>
 		</div>
 	    </div>
   <!-- Begin Navigation -->

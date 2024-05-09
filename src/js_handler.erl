@@ -129,7 +129,7 @@ forbidden(Req0, MsgCode, Groups, ReturnType) when erlang:is_integer(MsgCode), er
 
 
 unauthorized(Req0, MsgCode) when erlang:is_integer(MsgCode) ->
-    unauthorized(Req0, MsgCode, stop).
+    unauthorized(Req0, MsgCode, ok).
 
 unauthorized(Req0, MsgCode, ReturnType) when erlang:is_integer(MsgCode) ->
     Req1 = cowboy_req:reply(401, #{

@@ -1,6 +1,6 @@
 -module(riak_api).
 
--export([list_buckets/0, create_bucket/1, create_bucket/2, delete_bucket/1, head_bucket/1,
+-export([list_buckets/0, create_bucket/1, delete_bucket/1, head_bucket/1,
 	 list_objects/1, list_objects/2, get_object/2, get_object/3, delete_object/2, head_object/2,
 	 put_object/4, put_object/5, copy_object/4, copy_object/5,
 	 get_object_metadata/2, get_object_metadata/3,
@@ -23,13 +23,6 @@
 -include("general.hrl").
 -include("entities.hrl").
 -include_lib("xmerl/include/xmerl.hrl").
-
--type s3_bucket_acl() :: private
-                       | public_read
-                       | public_read_write
-                       | authenticated_read
-                       | bucket_owner_read
-                       | bucket_owner_full_control.
 
 -define(XMLNS_S3, "http://s3.amazonaws.com/doc/2006-03-01/").
 -define(LIST_OBJECTS_MAX_KEYS, 10000).
@@ -63,8 +56,7 @@ copy_object(DestBucketId, DestKeyName, SrcBucketId, SrcKeyName, Options) ->
          {"x-amz-copy-source-if-match", proplists:get_value(if_match, Options)},
          {"x-amz-copy-source-if-none-match", proplists:get_value(if_none_match, Options)},
          {"x-amz-copy-source-if-unmodified-since", proplists:get_value(if_unmodified_since, Options)},
-         {"x-amz-copy-source-if-modified-since", proplists:get_value(if_modified_since, Options)},
-         {"x-amz-acl", encode_acl(proplists:get_value(acl, Options))}],
+         {"x-amz-copy-source-if-modified-since", proplists:get_value(if_modified_since, Options)}],
     Config = #riak_api_config{timeout=480000},  % 480000 == 8 minutes
     case s3_request(put, DestBucketId, [$/|DestKeyName], "", [], <<>>, RequestHeaders, Config) of
 	{ok, {_Status, Headers, _Body}} ->
@@ -97,27 +89,10 @@ list_buckets() ->
 
 -spec create_bucket(string()) -> ok.
 
-create_bucket(BucketId) ->
-    create_bucket(BucketId, private).
-
--spec create_bucket(string(), s3_bucket_acl()) -> ok.
-
-create_bucket(BucketId0, ACL) when erlang:is_list(BucketId0), erlang:is_atom(ACL) ->
-    Headers = case ACL of
-                  private -> [];  %% private is the default
-                  _       -> [{"x-amz-acl", encode_acl(ACL)}]
-              end,
+create_bucket(BucketId0) ->
     POSTData = <<>>,
     BucketId1 = string:to_lower(BucketId0),
-    s3_simple_request(put, BucketId1, "/", "", [], POSTData, Headers).
-
-encode_acl(undefined)                 -> undefined;
-encode_acl(private)                   -> "private";
-encode_acl(public_read)               -> "public-read";
-encode_acl(public_read_write)         -> "public-read-write";
-encode_acl(authenticated_read)        -> "authenticated-read";
-encode_acl(bucket_owner_read)         -> "bucket-owner-read";
-encode_acl(bucket_owner_full_control) -> "bucket-owner-full-control".
+    s3_simple_request(put, BucketId1, "/", "", [], POSTData, []).
 
 -spec delete_bucket(string()) -> ok.
 
@@ -429,7 +404,7 @@ pick_object_key(BucketId, Prefix, FileName, Version, UserName, IndexContent)
 	    P1 = proplists:get_value(prefix, P0),
 	    P2 = lists:last([T || T <- binary:split(P1, <<"/">>, [global]), erlang:byte_size(T) > 0]),
 	    P3 = unicode:characters_to_list(utils:unhex(P2)),
-	    light_unicode:to_lower(P3)
+	    light_ets:to_lower(P3)
 	end, proplists:get_value(dirs, IndexContent, [])),
     ExistingList = proplists:get_value(list, IndexContent, []),
     %% Lowercase original object names, used for comparison
@@ -438,7 +413,7 @@ pick_object_key(BucketId, Prefix, FileName, Version, UserName, IndexContent)
 	    OrigName1 = proplists:get_value(orig_name, I),
 	    OrigName2 = unicode:characters_to_list(OrigName1),
 	    Object = indexing:to_object(I),
-	    {light_unicode:to_lower(OrigName2), Object}
+	    {light_ets:to_lower(OrigName2), Object}
 	end || I <- ExistingList,
 	proplists:get_value(is_deleted, I) =:= false],
     pick_object_key(BucketId, Prefix, FileName, Version, UserName, ExistingDirectoryNames,
@@ -457,7 +432,7 @@ pick_object_key(BucketId, Prefix, FileName0, Version, UserName, ExistingDirector
 	    undefined -> FileName0;
 	    _ -> UniqOrigName0
 	end,
-    NewName1 = light_unicode:to_lower(unicode:characters_to_list(NewName0)),  %% lowercase
+    NewName1 = light_ets:to_lower(unicode:characters_to_list(NewName0)),  %% lowercase
     %% Transliterate filename
     ObjectKey0 =
 	case UniqKey0 of
@@ -481,7 +456,7 @@ pick_object_key(BucketId, Prefix, FileName0, Version, UserName, ExistingDirector
 	[] ->
 	    %% Check if pseudo-directory with this name exists.
 	    %% Increment filename in that case
-	    DirectoryName = light_unicode:to_lower(unicode:characters_to_list(NewName0)),
+	    DirectoryName = light_ets:to_lower(unicode:characters_to_list(NewName0)),
 	    case lists:member(DirectoryName, ExistingDirectoryNames) of
 		true ->
 		    %% Directory exists, new object name required
@@ -579,7 +554,7 @@ put_object(BucketId, Prefix, ObjectKey, BinaryData)
 	when erlang:is_list(BucketId),
 	     erlang:is_list(Prefix) orelse Prefix =:= undefined,
 	     erlang:is_list(ObjectKey), erlang:is_binary(BinaryData) ->
-    Options = [{acl, public_read}],
+    Options = [],
     put_object(BucketId, Prefix, ObjectKey, BinaryData, Options).
 
 -spec put_object(BucketId, Prefix, ObjectKey, BinaryData, Options) -> string() when
@@ -606,12 +581,11 @@ put_object(BucketId, Prefix, ObjectKey, BinaryData, Options)
 	    ?RIAK_DVV_INDEX_FILENAME -> "application/vnd.lightup";
 	    ?RIAK_LOCK_INDEX_FILENAME -> "application/vnd.lightup";
 	    ?RIAK_INDEX_FILENAME -> "application/vnd.lightup";
-	    _ -> utils:mime_type(ObjectKey)
+	    _ -> light_ets:guess_content_type(ObjectKey)
 	end,
     HTTPHeaders = [{"content-type", MimeType}],
 
-    RequestHeaders = [{"x-amz-acl", encode_acl(proplists:get_value(acl, Options))}|HTTPHeaders]
-        ++ [{"x-amz-meta-" ++ string:to_lower(MKey), MValue} ||
+    RequestHeaders = HTTPHeaders ++ [{"x-amz-meta-" ++ string:to_lower(MKey), MValue} ||
                {MKey, MValue} <- proplists:get_value(meta, Options, [])],
     Config = #riak_api_config{},
     Response = s3_request(put, BucketId, [$/|PrefixedObjectKey], "", [], BinaryData, RequestHeaders, Config),
@@ -645,8 +619,7 @@ start_multipart(BucketId, Key) when erlang:is_list(BucketId), erlang:is_list(Key
 start_multipart(BucketId, Key, Options, HTTPHeaders)
 	when erlang:is_list(BucketId), erlang:is_list(Key),
 	     erlang:is_list(Options), erlang:is_list(HTTPHeaders) ->
-    RequestHeaders = [{"x-amz-acl", encode_acl(proplists:get_value(acl, Options))}|HTTPHeaders]
-        ++ [{"x-amz-meta-" ++ string:to_lower(MKey), MValue} ||
+    RequestHeaders = [{"x-amz-meta-" ++ string:to_lower(MKey), MValue} ||
                {MKey, MValue} <- proplists:get_value(meta, Options, [])],
     POSTData = <<>>,
     Config = #riak_api_config{},
@@ -840,7 +813,7 @@ s3_request(Method, Bucket, Path, Subresource, Params, POSTData, Headers, Config,
         [{"host", HostName} | FHeaders ],
         POSTData,
         Region,
-        "s3", QueryParams),
+        "s3", QueryParams, Config),
 
     RequestURI = lists:flatten([
         Config#riak_api_config.s3_scheme,
@@ -932,6 +905,9 @@ response_httpc({ok, {{_HTTPVer, Status, StatusLine}, Headers, Body}}) ->
 		orelse _Status =:= 405 ->
 	    {error, {http_error, _Status, StatusLine, Body, Headers}};
 	_ ->
+%io:fwrite("Status: ~p~n", [Status]),
+%io:fwrite("StatusLine: ~p~n", [StatusLine]),
+%io:fwrite("Body: ~p~n", [Body]),
 	    {ok, {{Status, StatusLine}, [{string:to_lower(H), V} || {H, V} <- Headers], Body}}
     end;
 response_httpc({ok, PID}) -> {ok, PID};  %% In case stream was requested

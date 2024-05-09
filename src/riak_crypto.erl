@@ -1,25 +1,23 @@
 -module(riak_crypto).
 
--export([sign_v4/7, hash_password/1, check_password/3, uuid4/0, seed/0,
+-export([sign_v4/8, hash_password/1, check_password/3, uuid4/0, seed/0,
 	 random_string/0, random_string/1, md5/1]).
-
--include("riak.hrl").
 
 -define(SALT_LENGTH, 16).
 -define(HASH_ITERATIONS, 4096).
 -define(HASH_FUNCTION, sha256).
 
+-include("riak.hrl").
 
 -type headers() :: [{string(), string()}].
 
 %%
 %% Signs request using AWS Signature Version 4.
 %%
--spec sign_v4(atom(), list(), headers(), binary(), string(), string(), list()) -> headers().
+-spec sign_v4(atom(), list(), headers(), binary(), string(), string(), list(), #riak_api_config{}) -> headers().
 
-sign_v4(Method, Uri, Headers0, Payload, Region, Service, QueryParams) ->
+sign_v4(Method, Uri, Headers0, Payload, Region, Service, QueryParams, Config) ->
     Date = iso_8601_basic_time(),
-    Config = #riak_api_config{},
     {PayloadHash, Headers1} =
         sign_v4_content_sha256_header( [{"x-amz-date", Date} | Headers0], Payload ),
     {Request, SignedHeaders} = canonical_request(Method, Uri, QueryParams, Headers1, PayloadHash),

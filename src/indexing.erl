@@ -357,14 +357,14 @@ get_object_record(IndexContent, ObjectKey) when erlang:is_binary(ObjectKey) ->
 get_object_record_by_orig_name(IndexContent, OrigName0)
 	when erlang:is_list(IndexContent), erlang:is_binary(OrigName0) ->
     %% Get a lowercase value
-    OrigName1 = light_unicode:to_lower(unicode:characters_to_list(OrigName0)),
+    OrigName1 = light_ets:to_lower(unicode:characters_to_list(OrigName0)),
     %% Find first object with matching lowercase original name
     ExistingObjectRecord = utils:firstmatch(
 	proplists:get_value(list, IndexContent, []),
 	fun(ObjectRecord) ->
 	    OrigName2 = proplists:get_value(orig_name, ObjectRecord),
 	    OrigName3 = unicode:characters_to_list(OrigName2),
-	    light_unicode:to_lower(OrigName3) =:= OrigName1
+	    light_ets:to_lower(OrigName3) =:= OrigName1
 	end),
     case length(ExistingObjectRecord) of
 	0 -> not_found;
@@ -386,9 +386,9 @@ pseudo_directory_exists(IndexContent, DirectoryName0)
 		P1 = proplists:get_value(prefix, P0),
 		P2 = lists:last([T || T <- binary:split(P1, <<"/">>, [global]), erlang:byte_size(T) > 0]),
 		P3 = unicode:characters_to_list(utils:unhex(P2)),
-		{light_unicode:to_lower(P3), P2}
+		{light_ets:to_lower(P3), P2}
 	    end, proplists:get_value(dirs, IndexContent, [])),
-    DirectoryName1 = light_unicode:to_lower(unicode:characters_to_list(DirectoryName0)),
+    DirectoryName1 = light_ets:to_lower(unicode:characters_to_list(DirectoryName0)),
     lists:keyfind(DirectoryName1, 1, ExistingNames).
 
 %%

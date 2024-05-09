@@ -61,7 +61,7 @@ start(_Type, _Args) ->
     [video_transcoding:start_link(I) || I <- lists:seq(0, ?VIDEO_WORKERS - 1)],  %% transcodes videos
     sqlite_server:start_link(),  %% Puts changes to SQLite DB
     copy_server:start_link(),    %% Performs time-consuming copy/move operations
-    light_unicode:start_link(),  %% loads unicode characters to memory for lowercase translation
+    light_ets:start_link(),  %% loads unicode characters to memory for lowercase translation
     cleaner:start_link(),        %% Removes expired tokens
     application:ensure_all_started(oauth2c),
     middleware_sup:start_link().

@@ -908,7 +908,7 @@ upload_part(Req0, BinaryData, State0) ->
 	    ObjectKey = lists:concat([erlang:integer_to_list(PartNumber), "_", erlang:binary_to_list(Md5)]),
 	    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
 	    PrefixedUploadId = utils:prefixed_object_key(RealPrefix, UploadId),
-	    case riak_api:put_object(BucketId, PrefixedUploadId, ObjectKey, BinaryData, [{acl, public_read}]) of
+	    case riak_api:put_object(BucketId, PrefixedUploadId, ObjectKey, BinaryData, []) of
 		ok -> upload_response(Req0, GUID, UploadId, 200, State0);
 		{error, Reason} ->
 		    lager:error("[upload_handler] Can't put object ~p/~p/~p: ~p",
@@ -1068,7 +1068,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 	    {is_deleted, "false"},
 	    {bytes, utils:to_list(TotalBytes)}
 	]),
-    MimeType = utils:mime_type(ObjectKey0),
+    MimeType = light_ets:guess_content_type(ObjectKey0),
     %% get width and height of image, if it is less than 50 MB
     WidthHeight =
 	case TotalBytes > ?MAXIMUM_IMAGE_SIZE_BYTES orelse utils:starts_with(MimeType, <<"image/">>) =:= false of
@@ -1135,7 +1135,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 			    sqlite_server:add_object(BucketId, Prefix, Obj),
 
 			    %% Start video transcoding
-			    ObjExt = filename:extension(light_unicode:to_lower(ObjectKey0)),
+			    ObjExt = filename:extension(light_ets:to_lower(ObjectKey0)),
 			    IsVideo = lists:member(ObjExt, ?VIDEO_EXTENSIONS),
 			    case IsVideo of
 				true -> video_transcoding:ffmpeg(BucketId, ObjectKey0);

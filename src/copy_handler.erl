@@ -112,7 +112,7 @@ validate_src_object_keys(SrcPrefix, DstPrefix, SrcObjectMap0)
 		false ->
 		    %% Check if destination names list do not have duplicates,
 		    %% as that would copy objects over each other
-		    LowecaseList = [light_unicode:to_lower(unicode:characters_to_list(element(2, I)))
+		    LowecaseList = [light_ets:to_lower(unicode:characters_to_list(element(2, I)))
 				    || I <- SrcObjectMap1],
 		    UniqSet = sets:to_list(sets:from_list(LowecaseList)),
 		    case length(UniqSet) =:= length(SrcObjectMap1) of
