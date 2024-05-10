@@ -68,7 +68,7 @@ new_token(UserId, TenantId) ->
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
     UUID4 = utils:to_list(riak_crypto:uuid4()),
     Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4,
-				   unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
+				   unicode:characters_to_binary(XMLDocument0)),
     case Response of
 	{error, Reason} ->
 	    lager:error("[login_handler] Can't put object ~p/~p/~p: ~p", 
@@ -95,7 +95,7 @@ new_csrf_token() ->
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
     UUID4 = utils:to_list(riak_crypto:uuid4()),
     Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?CSRF_TOKEN_PREFIX, UUID4,
-	unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
+	unicode:characters_to_binary(XMLDocument0)),
     case Response of
 	{error, Reason} ->
 	    lager:error("[login_handler] Can't put object ~p/~p/~p: ~p",
@@ -178,7 +178,7 @@ check_token(UUID4) when erlang:is_list(UUID4) ->
 			    RootElement1 = #xmlElement{name=auth, content=[NewToken]},
 			    XMLDocument1 = xmerl:export_simple([RootElement1], xmerl_xml),
 			    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4,
-				unicode:characters_to_binary(XMLDocument1), [{acl, private}]),
+				unicode:characters_to_binary(XMLDocument1)),
 			    case Response of
 				{error, Reason} -> lager:error("[login_handler] Can't put object ~p/~p/~p: ~p", 
 				       [?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4, Reason]);

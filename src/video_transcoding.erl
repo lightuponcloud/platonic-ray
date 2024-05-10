@@ -174,8 +174,7 @@ process_video(BucketId, ObjectKey) ->
 					   [I, BucketId, ObjectKey]),
 				    ok;
 				{ok, BinaryData} ->
-				    Options = [{acl, public_read}],
-				    Response = riak_api:put_object(BucketId, RealPrefix, I, BinaryData, Options),
+				    Response = riak_api:put_object(BucketId, RealPrefix, I, BinaryData),
 				    case Response of
 					{error, Reason} ->
 					    ?ERROR("[video_transcoding] Can't put object ~p/~p: ~p",

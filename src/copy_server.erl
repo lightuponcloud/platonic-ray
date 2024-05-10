@@ -422,14 +422,13 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 					   {"orig-filename", utils:hex(OrigName2)}),
 	    %% Copy object metadata to destination object
 	    case riak_api:put_object(DstBucketId, DstPrefix0, ObjectKey0, <<>>,
-				     [{acl, public_read}, {meta, ObjectMeta1}]) of
+				     [{meta, ObjectMeta1}]) of
 		ok ->
 		    %% Put "stop" file on copied real object, to prevent its removal, when
 		    %% a new version uploaded ( we have just created a link to that object ).
 		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, OldGUID),
 		    StopSuffix = ?STOP_OBJECT_SUFFIX,
-		    case riak_api:put_object(OldBucketId, RealPrefix, UploadId++StopSuffix, <<>>,
-					     [{acl, public_read}]) of
+		    case riak_api:put_object(OldBucketId, RealPrefix, UploadId++StopSuffix, <<>>) of
 			ok ->
 			    IsRenamed = OrigName2 =/= OrigName0,
 			    Bytes =
@@ -581,10 +580,9 @@ copy_objects(SrcBucketId, DstBucketId, SrcPrefix, DstPrefix, ObjectKey0, NewName
 		{error, Reason} ->
 		    lager:error("[copy_handler] head_object failed ~p/~p: ~p",
 				[DstBucketId, DstActionLog, Reason]),
-		    riak_api:copy_object(DstBucketId, DstActionLog, SrcBucketId,
-					 SrcActionLog, [{acl, public_read}]);
+		    riak_api:copy_object(DstBucketId, DstActionLog, SrcBucketId, SrcActionLog);
 		not_found -> riak_api:copy_object(DstBucketId, DstActionLog, SrcBucketId,
-						  SrcActionLog, [{acl, public_read}]);
+						  SrcActionLog);
 		_ -> ok
 	    end,
 	    Copied0 = [do_copy(SrcBucketId, DstBucketId, element(1, I), NewDstPrefix,

@@ -217,8 +217,7 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, BinaryData
     case Reply0 of
 	{error, Reason2} -> js_handler:bad_request(Req0, Reason2);
 	_ ->
-	    Options = [{acl, public_read}],
-	    Response = riak_api:put_object(BucketId, utils:dirname(Prefix), CachedKey, Reply0, Options),
+	    Response = riak_api:put_object(BucketId, utils:dirname(Prefix), CachedKey, Reply0),
 	    case Response of
 		{error, Reason3} ->
 		    lager:error("[img_scale_handler] Can't put object ~p/~p/~p: ~p",
@@ -375,7 +374,7 @@ handle_post(Req0, State) ->
 		false ->
 		    {RealBucketId, _RealGUID, _RealUploadId, RealPrefix} = utils:real_prefix(BucketId, Metadata0),
 		    Meta = [{"width", Width1}, {"height", Height1}, {"md5", Md5}],
-		    Options = [{acl, public_read}, {meta, Meta}, {md5, Md5}],
+		    Options = [{meta, Meta}, {md5, Md5}],
 		    case riak_api:put_object(RealBucketId, RealPrefix, ?RIAK_THUMBNAIL_KEY, Blob, Options) of
 			ok ->
 			    Req2 = cowboy_req:reply(200, #{

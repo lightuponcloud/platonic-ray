@@ -515,7 +515,7 @@ new_tenant(Req0, Tenant0) ->
 	    RootElement0 = #xmlElement{name=tenant, content=[Tenant1]},
 	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
 	    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant0#tenant.id,
-					   unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
+					   unicode:characters_to_binary(XMLDocument0)),
 	    case Response of
 		{error, Reason} -> lager:error("[admin_tenants_handler] Can't put object ~p/~p/~p: ~p",
 					       [?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant0#tenant.id, Reason]);
@@ -556,7 +556,7 @@ edit_tenant(Req0, Tenant) ->
     RootElement0 = #xmlElement{name=tenant, content=[EditedTenant]},
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
     Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant#tenant.id,
-				   unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
+				   unicode:characters_to_binary(XMLDocument0)),
     case Response of
 	{error, Reason} ->
 	    lager:error("[admin_tenants_handler] Can't put object ~p/~p/~p: ~p",

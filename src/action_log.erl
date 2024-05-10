@@ -35,7 +35,6 @@ add_record(BucketId, Prefix, Record0) ->
     PrefixedActionLogFilename = utils:prefixed_object_key(
 	Prefix, ?RIAK_ACTION_LOG_FILENAME),
 
-    Options = [{acl, public_read}],  % TODO: public_read
     case riak_api:get_object(BucketId, PrefixedActionLogFilename) of
 	{error, Reason} ->
 	    lager:error("[action_log] get_object error ~p/~p: ~p",
@@ -46,7 +45,7 @@ add_record(BucketId, Prefix, Record0) ->
 	    RootElement0 = #xmlElement{name=action_log, content=[Record1]},
 	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
 	    Response = riak_api:put_object(BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME,
-					   unicode:characters_to_binary(XMLDocument0), Options),
+					   unicode:characters_to_binary(XMLDocument0)),
 	    case Response of
 		{error, Reason} -> lager:error("[action_log] Can't put object ~p/~p/~p: ~p",
 					       [BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME, Reason]);
@@ -61,7 +60,7 @@ add_record(BucketId, Prefix, Record0) ->
 	    XMLDocument2 = xmerl:export_simple([NewRootElement], xmerl_xml),
 
 	    Response = riak_api:put_object(BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME,
-		unicode:characters_to_binary(XMLDocument2), Options),
+		unicode:characters_to_binary(XMLDocument2)),
 	    case Response of
 		{error, Reason} -> lager:error("[action_log] Can't put object ~p/~p/~p: ~p",
 					       [BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME, Reason]);

@@ -276,7 +276,7 @@ update_db(BucketId, BucketQueue0) ->
 	    Timestamp = erlang:round(utils:timestamp()/1000),
 	    Version1 = indexing:increment_version(Version0, Timestamp, []),
 	    {ok, Blob} = file:read_file(TempFn),
-	    RiakOptions = [{acl, public_read}, {meta, [
+	    RiakOptions = [{meta, [
 		{"version", base64:encode(jsx:encode(Version1))},
 		{"bytes", byte_size(Blob)}]}],
 	    riak_api:put_object(BucketId, undefined, ?DB_VERSION_KEY, Blob, RiakOptions),
@@ -380,7 +380,7 @@ lock_db(BucketId) ->
 	    Timestamp0 = erlang:round(utils:timestamp()/1000),
 	    LockMeta0 = [{"modified-utc", Timestamp0}],
 	    Result0 = riak_api:put_object(BucketId, undefined, ?DB_VERSION_LOCK_FILENAME, <<>>,
-					  [{acl, public_read}, {meta, LockMeta0}]),
+					  [{meta, LockMeta0}]),
 	    case Result0 of
 		{error, Reason0} -> {error, Reason0};
 		_ -> ok
@@ -403,7 +403,7 @@ lock_db(BucketId) ->
 			{ok, _} ->
 			    LockMeta1 = [{"modified-utc", Timestamp1}],
 			    Result1 = riak_api:put_object(BucketId, undefined, ?DB_VERSION_LOCK_FILENAME, <<>>,
-							  [{acl, public_read}, {meta, LockMeta1}]),
+							  [{meta, LockMeta1}]),
 			    case Result1 of
 				{error, Reason1} -> {error, Reason1};
 				_ -> ok

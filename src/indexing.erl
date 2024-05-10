@@ -468,14 +468,14 @@ directory_or_object_exists(BucketId, Prefix, Name0, IndexContent)
 
 update(BucketId, Prefix) when erlang:is_list(BucketId),
 	erlang:is_list(Prefix) orelse Prefix =:= undefined ->
-    RiakOptions = [{acl, public_read}],
+    RiakOptions = [],
     update(BucketId, Prefix, [], RiakOptions).
 
 -spec update(string(), list(), proplist()) -> proplist().
 
 update(BucketId, Prefix, Options) when erlang:is_list(BucketId),
 	erlang:is_list(Prefix) orelse Prefix =:= undefined ->
-    RiakOptions = [{acl, public_read}],
+    RiakOptions = [],
     update(BucketId, Prefix, Options, RiakOptions).
 
 -spec update(string(), list(), proplist(), proplist()) -> proplist().
@@ -492,7 +492,7 @@ update(BucketId, Prefix0, Options, RiakOptions)
 	not_found ->
 	    %% Create lock file instantly
 	    LockMeta = [{"modified-utc", erlang:round(utils:timestamp()/1000)}],
-	    LockOptions = [{acl, public_read}, {meta, LockMeta}],
+	    LockOptions = [{meta, LockMeta}],
 
 	    Response = riak_api:put_object(BucketId, Prefix0, ?RIAK_LOCK_INDEX_FILENAME, <<>>, LockOptions),
 	    case Response of
@@ -652,7 +652,7 @@ remove_previous_version(BucketId, GUID, UploadId0, Version) when erlang:is_list(
 	    case remove_expired_dvv_lock(BucketId, GUID) of
 		lock -> lock;
 		ok ->
-		    RiakOptions = [{acl, public_read}],
+		    RiakOptions = [],
 		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID++"/"),
                     %% Update index
 		    Response = riak_api:put_object(BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME,
@@ -714,7 +714,7 @@ add_dvv(BucketId, GUID, UploadId, Version, UserId, UserName)
 			{last_modified_utc, VVTimestamp}
 		    ],
 		    List1 = List0 ++ [{UploadId, Record}],
-		    RiakOptions = [{acl, public_read}],
+		    RiakOptions = [],
 		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID) ++ "/",
 		    Response = riak_api:put_object(BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME,
 						   term_to_binary(List1), RiakOptions),

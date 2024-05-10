@@ -373,8 +373,7 @@ undelete(BucketId, Prefix, ObjectKey) ->
 	    LockModifiedTime =  io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
 	    Meta = parse_object_record(Metadata0, [{nlock_modified_utc, LockModifiedTime}]),
 	    IsLocked = proplists:get_value("is-locked", Meta),
-	    Response = riak_api:put_object(BucketId, Prefix, ObjectKey, <<>>,
-					   [{acl, public_read}, {meta, Meta}]),
+	    Response = riak_api:put_object(BucketId, Prefix, ObjectKey, <<>>, [{meta, Meta}]),
 	    case Response of
 		ok ->
 		    [{object_key, ObjectKey},
@@ -431,7 +430,7 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 		true ->
 		    Meta = parse_object_record(Metadata0, Options),
 		    case riak_api:put_object(BucketId, Prefix, ObjectKey, <<>>,
-					     [{acl, public_read}, {meta, Meta}]) of
+					     [{meta, Meta}]) of
 			ok ->
 			    ?INFO("Lock state changes from ~p to ~p: ~s/~s",
 				  [WasLocked, IsLocked0, BucketId, PrefixedObjectKey]),
@@ -440,7 +439,7 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 			    case IsLocked0 of
 				true ->
 				    riak_api:put_object(BucketId, Prefix, LockObjectKey, <<>>,
-							[{acl, public_read}, {meta, Meta}]),
+							[{meta, Meta}]),
 				    sqlite_server:lock_object(BucketId, Prefix, ObjectKey, true);
 				false ->
 				    PrefixedLockObjectKey = utils:prefixed_object_key(Prefix, LockObjectKey),
@@ -857,7 +856,7 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
 			Metadata0 ->
 			    Meta = parse_object_record(Metadata0, [{is_deleted, "true"}]),
 			    case riak_api:put_object(BucketId, Prefix, erlang:binary_to_list(ObjectKey), <<>>,
-						     [{acl, public_read}, {meta, Meta}]) of
+						     [{meta, Meta}]) of
 				ok ->
 				    UnicodeObjectName0 = proplists:get_value("orig-filename", Meta),
 				    UnicodeObjectName1 = utils:unhex(erlang:list_to_binary(UnicodeObjectName0)),

@@ -368,7 +368,7 @@ new_user(Req0, User0) ->
 	    RootElement0 = #xmlElement{name=user, content=[User1]},
 	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
 	    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?USER_PREFIX, User0#user.id,
-					   unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
+					   unicode:characters_to_binary(XMLDocument0)),
 	    case Response of
 		{error, Reason} ->
 		    lager:error("[admin_users_handler] Can't put object ~p/~p/~p: ~p",
@@ -426,7 +426,7 @@ edit_user(Req0, User) ->
     RootElement0 = #xmlElement{name=user, content=[EditedUser]},
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
     Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?USER_PREFIX, User#user.id,
-	unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
+	unicode:characters_to_binary(XMLDocument0)),
     case Response of
 	{error, Reason} ->
 	    lager:error("[admin_users_handler] Can't put object ~p/~p/~p: ~p",

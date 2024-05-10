@@ -171,7 +171,7 @@ copy_delete(BucketId, PrefixedSrcDirectoryName, PrefixedDstDirectoryName, Prefix
     %% We have cheked previously that destination directory do not exist
     PrefixedObjectKey2 = utils:prefixed_object_key(PrefixedDstDirectoryName, PrefixedObjectKey1),
 
-    CopyResult = riak_api:copy_object(BucketId, PrefixedObjectKey2, BucketId, PrefixedObjectKey0, [{acl, public_read}]),
+    CopyResult = riak_api:copy_object(BucketId, PrefixedObjectKey2, BucketId, PrefixedObjectKey0),
     case CopyResult of 
 	{error, _} -> PrefixedObjectKey2;
 	_ ->
@@ -353,8 +353,7 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 		{true, _} -> {error, 43};
 		{false, Metadata0} ->
 		    Meta = list_handler:parse_object_record(Metadata0, [{orig_name, utils:hex(OrigName0)}]),
-		    case riak_api:put_object(BucketId, Prefix0, ObjectKey0, <<>>,
-					     [{acl, public_read}, {meta, Meta}]) of
+		    case riak_api:put_object(BucketId, Prefix0, ObjectKey0, <<>>, [{meta, Meta}]) of
 			{error, Reason3} ->
 			    lager:error("[rename_handler] Can't put object ~p/~p/~p: ~p",
 					[BucketId, Prefix0, ObjectKey0, Reason3]),

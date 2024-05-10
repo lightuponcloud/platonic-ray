@@ -622,7 +622,7 @@ create_upload_id(undefined, State0) ->
     BucketId = proplists:get_value(bucket_id, State0),
     Prefix = proplists:get_value(prefix, State0),
     Meta2 = [{"prefix", Prefix}, {"bucket_id", BucketId}],
-    Options = [{acl, public_read}, {meta, Meta1 ++ Meta2}],
+    Options = [{meta, Meta1 ++ Meta2}],
     UploadId = erlang:binary_to_list(riak_crypto:uuid4()),
     Response = riak_api:put_object(?UPLOADS_BUCKET_NAME, undefined, UploadId, <<>>, Options),
     case Response of
@@ -979,7 +979,7 @@ complete_upload(Req0, RespCode, State0) ->
 	{"height", proplists:get_value(height, State0)},
 	{"is-locked", false}
     ],
-    Options = [{acl, public_read}, {meta, Meta0}],
+    Options = [{meta, Meta0}],
     case riak_api:put_object(BucketId, Prefix, ObjectKey0, <<>>, Options) of
 	ok ->
 	    case ExistingObject of
@@ -1098,7 +1098,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
     case indexing:add_dvv(BucketId, GUID, UploadId, Version, User#user.id, User#user.name) of
 	lock -> js_handler:too_many(Req0);
 	_ ->
-	    Options = [{acl, public_read}, {meta, Meta++WidthHeight}],
+	    Options = [{meta, Meta++WidthHeight}],
 	    case riak_api:put_object(BucketId, Prefix, ObjectKey0, <<>>, Options) of
 		ok ->
 		    %% Update pseudo-directory index for faster listing.
