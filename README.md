@@ -10,16 +10,14 @@ This middleware is used to synchronize Riak CS contents with filesystem. Also it
 
 1. **File Synchronization**
 
-    DubStack is a server side of team collagoration software.
-    It allows not only file **upload**/**download**, but also file **lock**/**unlock**,
+    DubStack is a server side of team collagoration apps. There are Windows, Android and IOS apps.
+    Windows app synchronizes files in background and allows file **lock**/**unlock**,
     **delete**/**undelete**, **copy**/**move**, differential sync and **automated conflict resolution**.
 
-2. **Gallery, thumbnails, watermarks**
+2. **Thumbnails, watermarks**
 
     Thumbnails are generated on demand by dedicated gen_server process.
     It applies watermark on thumbnails, if watermark.png found in bucket.
-
-    You can view the gallery by the link /riak/gallery/[:bucket_id]
 
 3. File and directory sharing
     This feature can be used for selling digital content.
@@ -33,24 +31,25 @@ This middleware is used to synchronize Riak CS contents with filesystem. Also it
     Objects are stored in "buckets" with names like "the-tenant-group-res"
     Only users from tenant's group can access that bucket.
 
-    Files are shared with external users by providing them temporary tokens.
-
 6. **IOS and Windows apps**
 
     You can manage objects, users, their groups and tenants using Web UI browser.
     You can manage objects using IOS App.
 
-7. **It can work for tens of years without restarts**
+7. **Oauth2**
+    Support of KeyCloak authentication / authorization.
+
+
+
+## Why Erlang
     Erlang applications are known working for tens of years without intervention.
     For example in Ericsson telecommunication hardware.
     This application is written in Erlang. Its processes are restarted automatically in case of errors.
 
-
-
-
 ## Why Riak CS
 
-I used Riak CS as a main storage backend, as it is AWS S3 compatible and very predictable on resource consumption.
+It is S3 compatible. It means it can work with Amazon S3 as well as with Riak CS.
+I used Riak CS as a main storage backend, as it is very predictable on resource consumption.
 It has recovery tools, scales automatically, it can store files > 5 TB and has multi-datacenter bidirectional replication.
 It was built using the latest academic research in the area of distributed systems.
 
@@ -94,8 +93,7 @@ location /the- {
 **tenant id** : Short identifier of tenant ( aka project ).
 
 **bucket type** : By default "res", -- restricted. Only users within the same tenant
-can access restricted buckets. Other suffixes can be "public" or "private", but they
-are not yet implemented.
+can access restricted buckets.
 
 
 ## 3. UI

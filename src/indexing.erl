@@ -441,7 +441,7 @@ directory_or_object_exists(BucketId, Prefix, Name0, IndexContent)
 %%   For example:
 %%
 %%   {copy_from, [
-%%     {bucket_id, "the-example-team-public"},
+%%     {bucket_id, "the-example-team-res"},
 %%     {prefix, "d08732/"},
 %%     {copied_names, [
 %%             [{src_prefix, "d08732/"},

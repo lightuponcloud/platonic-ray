@@ -409,15 +409,7 @@ is_authorized(Req0, _State) ->
 	    SessionCookieName = Settings#general_settings.session_cookie_name,
 	    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
 	    case login_handler:check_session_id(SessionID0) of
-		false ->
-		    case utils:is_public_bucket_id(BucketId) of
-			true ->
-			    case utils:is_valid_bucket_id(BucketId, undefined) of
-				true -> {true, Req0, [{bucket_id, BucketId}]};
-				false -> js_handler:unauthorized(Req0, 27)
-			    end;
-			false -> js_handler:unauthorized(Req0, 28)
-		    end;
+		false -> js_handler:unauthorized(Req0, 28);
 		{error, Number} -> js_handler:unauthorized(Req0, Number);
 		User ->
 		    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
@@ -443,21 +435,20 @@ is_authorized(Req0, _State) ->
 %%
 forbidden(Req0, State) ->
     User = proplists:get_value(user, State),
-    TenantId =
-	case User of
-	    undefined -> undefined;
-	    _ -> User#user.tenant_id
-	end,
     BucketId = proplists:get_value(bucket_id, State),
     IsRestricted = utils:is_restricted_bucket_id(BucketId),
-    IsPublic = utils:is_public_bucket_id(BucketId),
+    TenantId =
+       case User of
+           undefined -> undefined;
+           _ -> User#user.tenant_id
+       end,
     UserBelongsToGroup =
-	case User =:= undefined orelse IsRestricted orelse IsPublic of
-	    true -> undefined;
-	    false -> lists:any(
-		fun(Group) -> utils:is_bucket_belongs_to_group(BucketId, TenantId, Group#group.id) end,
-		User#user.groups)
-	end,
+       case User =:= undefined orelse IsRestricted of
+           true -> undefined;
+           false -> lists:any(
+               fun(Group) -> utils:is_bucket_belongs_to_group(BucketId, TenantId, Group#group.id) end,
+               User#user.groups)
+       end,
     case UserBelongsToGroup of
 	false ->
 	    PUser = admin_users_handler:user_to_proplist(User),

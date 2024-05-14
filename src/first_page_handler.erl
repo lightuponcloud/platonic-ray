@@ -33,13 +33,10 @@ init(Req0, _Opts) ->
 	{error, Code} -> js_handler:incorrect_configuration(Req0, Code);
 	User ->
 	    TenantId = User#user.tenant_id,
-	    Bits0 = [?RIAK_BACKEND_PREFIX, TenantId, ?PUBLIC_BUCKET_SUFFIX],
-	    PublicBucketId = lists:flatten(utils:join_list_with_separator(Bits0, "-", [])),
-	    Bits1 = [?RIAK_BACKEND_PREFIX, TenantId, ?RESTRICTED_BUCKET_SUFFIX],
-	    TenantBucketId = lists:flatten(utils:join_list_with_separator(Bits1, "-", [])),
+	    Bits0 = [?RIAK_BACKEND_PREFIX, TenantId, ?RESTRICTED_BUCKET_SUFFIX],
+	    TenantBucketId = lists:flatten(utils:join_list_with_separator(Bits0, "-", [])),
 	    State = admin_users_handler:user_to_proplist(User)
-		++ [{token, SessionID1}, {public_bucket_id, PublicBucketId},
-		    {tenant_bucket_id, TenantBucketId}],
+		++ [{token, SessionID1}, {tenant_bucket_id, TenantBucketId}],
 	    first_page(Req0, Settings1, State)
     end.
 
@@ -181,9 +178,6 @@ first_page(Req0, Settings, State) ->
 	    {ok, Req1, []};
 	false ->
 	    Locale = Settings#general_settings.locale,
-	    TenantId1 = erlang:binary_to_list(proplists:get_value(tenant_id, State)),
-	    Bits1 = [?RIAK_BACKEND_PREFIX, TenantId1, ?PUBLIC_BUCKET_SUFFIX],
-	    PublicBucketId = lists:flatten(utils:join_list_with_separator(Bits1, "-", [])),
 	    Title =
 		case Prefix0 of
 		    undefined -> "Files";
@@ -197,9 +191,7 @@ first_page(Req0, Settings, State) ->
 		{static_root, Settings#general_settings.static_root},
 		{root_path, Settings#general_settings.root_path},
 		{bucket_suffix, ""},
-		{private_suffix, ?PRIVATE_BUCKET_SUFFIX},
-		{public_suffix, ?PUBLIC_BUCKET_SUFFIX},
-		{public_bucket_id, PublicBucketId}
+		{private_suffix, ?PRIVATE_BUCKET_SUFFIX}
 	    ] ++ State, [{translation_fun, fun utils:translate/2}, {locale, Locale}]),
 	    Req1 = cowboy_req:reply(200, #{
 		<<"content-type">> => <<"text/html">>

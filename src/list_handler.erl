@@ -159,9 +159,7 @@ forbidden(Req0, User) ->
 		end,
 	    case UserBelongsToGroup of
 		false ->
-		    IsRestricted = utils:is_restricted_bucket_id(BucketId),
-		    IsPublic = utils:is_public_bucket_id(BucketId),
-		    case IsRestricted orelse IsPublic of
+		    case utils:is_restricted_bucket_id(BucketId) of
 			true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]};
 			false ->
 			    PUser = admin_users_handler:user_to_proplist(User),
@@ -688,7 +686,7 @@ handle_post(Req0, State0) ->
 	    case proplists:get_value(user, State0) of
 		undefined -> js_handler:unauthorized(Req0, 28);
 		User ->
-		    case utils:is_public_bucket_id(BucketId) andalso User#user.staff =:= false of
+		    case User#user.staff =:= false of
 			true -> js_handler:unauthorized(Req0, 37);
 			false ->
 			    create_pseudo_directory(Req1, [

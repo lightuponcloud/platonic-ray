@@ -337,8 +337,7 @@ handle_post(Req0, State0) ->
 	{error, Number} -> js_handler:bad_request(Req1, Number);
 	{Prefix, ObjectKey0, Version, Meta} ->
 	    ObjectKey1 = erlang:binary_to_list(ObjectKey0),
-	    case riak_api:put_object(BucketId, Prefix, ObjectKey1, <<>>,
-				     [{acl, public_read}, {meta, Meta}]) of
+	    case riak_api:put_object(BucketId, Prefix, ObjectKey1, <<>>, [{meta, Meta}]) of
 		ok ->
 		    %% Update pseudo-directory index for faster listing.
 		    case indexing:update(BucketId, Prefix, [{modified_keys, [ObjectKey1]}]) of
@@ -388,12 +387,10 @@ resource_exists(Req0, State) ->
     case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
 	true ->
 	    UserBelongsToGroup =
-		case utils:is_public_bucket_id(BucketId) of
-		    true -> User#user.staff;  %% only staff user can see the action log of public bucket
-		    false -> lists:any(fun(Group) ->
-				utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
-				User#user.groups)
-		end,
+		lists:any(
+		    fun(Group) ->
+			utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id)
+		    end, User#user.groups),
 	    case UserBelongsToGroup of
 		false ->{false, Req0, []};
 		true ->

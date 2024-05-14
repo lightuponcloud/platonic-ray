@@ -4,7 +4,7 @@
 -module(utils).
 
 %% Validations
--export([is_valid_bucket_id/2, is_public_bucket_id/1, is_restricted_bucket_id/1,
+-export([is_valid_bucket_id/2, is_restricted_bucket_id/1,
 	 is_valid_object_key/1, is_bucket_belongs_to_group/3, is_bucket_belongs_to_tenant/2,
 	 is_true/1, is_false/1, has_duplicates/1, ends_with/2, starts_with/2,
 	 even/1, validate_utf8/2, is_valid_hex_prefix/1, is_hidden_object/1,
@@ -319,7 +319,7 @@ validate_hex(_, _) -> 1.
 %%     as system do not allow to read contents of other tenants
 %% - Length of bucket is less than 63
 %%     as this is limit of Riak CS
-%% - Suffix is either private, public or restricted
+%% - Suffix is either private or restricted
 %%
 -spec is_valid_bucket_id(string(), string()|undefined) -> boolean().
 
@@ -331,7 +331,6 @@ is_valid_bucket_id(BucketId, undefined) when erlang:is_list(BucketId) ->
 	    BucketSuffix = lists:last(Bits),
 	    (BucketSuffix =:= ?PRIVATE_BUCKET_SUFFIX
 	     orelse BucketSuffix =:= ?RESTRICTED_BUCKET_SUFFIX
-	     orelse BucketSuffix =:= ?PUBLIC_BUCKET_SUFFIX
 	    ) andalso lists:prefix([?RIAK_BACKEND_PREFIX], Bits) =:= true;
 	false -> false
     end;
@@ -346,7 +345,6 @@ is_valid_bucket_id(BucketId, TenantName)
 		    BucketTenantName = string:to_lower(lists:nth(2, Bits)),
 		    BucketSuffix = lists:last(Bits),
 		    (BucketSuffix =:= ?PRIVATE_BUCKET_SUFFIX
-		     orelse BucketSuffix =:= ?PUBLIC_BUCKET_SUFFIX
 		     orelse BucketSuffix =:= ?RESTRICTED_BUCKET_SUFFIX
 		    ) andalso BucketTenantName =:= TenantName
 		    andalso lists:prefix([?RIAK_BACKEND_PREFIX], Bits) =:= true;
@@ -354,13 +352,6 @@ is_valid_bucket_id(BucketId, TenantName)
 	    end
     end;
 is_valid_bucket_id(_, _) -> false.
-
-is_public_bucket_id(BucketId) when erlang:is_list(BucketId) ->
-    Bits = string:tokens(BucketId, "-"),
-    case lists:last(Bits) of
-	?PUBLIC_BUCKET_SUFFIX -> true;
-	_ -> false
-    end.
 
 is_restricted_bucket_id(BucketId) when erlang:is_list(BucketId) ->
     Bits = string:tokens(BucketId, "-"),
@@ -394,9 +385,9 @@ is_valid_hex_prefix(undefined) -> true.
 %%
 %% Returns true, if "tenant id" and "group name", that are encoded
 %% in BucketId equal to provided TenantName and GroupName.
-%% the-projectname-groupname-public
-%% ^^^ ^^^^^^^^^^^ ^^^^^^^^
-%% prefix  bucket  group
+%% the-projectname-groupname-res
+%% ^^^ ^^^^^^^^^^^ ^^^^^^^^  ^^^
+%% prefix  bucket  group     suffix
 %%
 -spec is_bucket_belongs_to_group(string(), string(), string()) -> boolean().
 

@@ -32,15 +32,11 @@ validate_request(BucketId, undefined, PrefixedObjectKey) ->
 validate_request(BucketId, User, PrefixedObjectKey) ->
     case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
 	true ->
-	    IsRestricted = utils:is_restricted_bucket_id(BucketId),
-	    IsPublic = utils:is_public_bucket_id(BucketId),
 	    UserBelongsToGroup =
-		case IsRestricted orelse IsPublic of
-		    true -> true;  %% anyone can download from public bucket
-		    false -> lists:any(fun(Group) ->
-				utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
-				User#user.groups)
-		end,
+		lists:any(
+		    fun(Group) ->
+			utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id)
+		    end, User#user.groups),
 	    case UserBelongsToGroup of
 		false -> {error, 37};
 		true ->
@@ -77,7 +73,7 @@ validate_request(BucketId, Metadata0) ->
 %% It uses authorization token HTTP header, if provided.
 %% Otherwise it checks session cookie.
 %%
-check_privileges(Req0, BucketId) ->
+check_privileges(Req0) ->
     %% Extracts token from request headers and looks it up in "security" bucket
     case utils:get_token(Req0) of
 	undefined ->
@@ -86,11 +82,7 @@ check_privileges(Req0, BucketId) ->
 	    SessionCookieName = Settings#general_settings.session_cookie_name,
 	    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
 	    case login_handler:check_session_id(SessionID0) of
-		false ->
-		    case utils:is_public_bucket_id(BucketId) of
-			true -> undefined;
-			false -> {error, 28}
-		    end;
+		false -> {error, 28};
 		{error, Code} -> {config_error, Code};
 		User -> User
 	    end;
@@ -251,7 +243,7 @@ init(Req0, _Opts) ->
 	    <<>> -> undefined;
 	    BV -> erlang:binary_to_list(BV)
 	end,
-    case check_privileges(Req0, BucketId) of
+    case check_privileges(Req0) of
 	{error, Number} ->
 	    T1 = utils:timestamp(),
 	    Req1 = cowboy_req:reply(403, #{
