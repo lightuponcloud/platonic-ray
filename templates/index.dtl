@@ -28,55 +28,6 @@
 <script type="text/javascript" src="{{ static_root }}file_upload.js"></script>
 <script type="text/javascript" src="{{ static_root }}jquery.dvvset.js"></script>
 <script src="{{ static_root }}pdf.min.js"></script>
-
-<script type="module">
-import PhotoSwipeLightbox from '{{ static_root }}photoswipe-lightbox.esm.js';
-
-const lightbox = new PhotoSwipeLightbox({
-  gallerySelector: '#id-objects-list',
-  childSelector: 'a.gallery',
-  loop: true,
-  pswpModule: '{{ static_root }}photoswipe.esm.js'
-});
-lightbox.on('uiRegister', function() {
-  lightbox.pswp.ui.registerElement({
-    name: 'download-button',
-    order: 9,
-    isButton: false,
-    isLink: true,
-    html: function(){
-      var result='<a id="id-pwsp-download" href="#"><svg aria-hidden="true" class="pswp__icn" viewBox="0 0 32 32" width="32" height="32"><use class="pswp__icn-shadow"></use><path d="M17 12v5H3v-5H1v5a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5z"/><path d="M10 15l5-6h-4V1H9v8H5l5 6z"/></svg></a>';
-      return result;
-    },
-    onInit: (el, pswp) => {
-      lightbox.pswp.on('change', () => {
-        const currSlideElement = lightbox.pswp.currSlide.data.element;
-        var url = currSlideElement.parentElement.parentElement.querySelector('div.file-url a');
-        $('a#id-pwsp-download').attr('href', url);
-      });
-    },
-    onClick: (event, element, pswp) => {
-      return true;
-    }
-  });
-  lightbox.pswp.ui.registerElement({
-    name: 'obj-caption',
-    order: 9,
-    isButton: false,
-    appendTo: 'root',
-    html: '',
-    onInit: (el, pswp) => {
-      lightbox.pswp.on('change', () => {
-        const currSlideElement = lightbox.pswp.currSlide.data.element;
-        let captionHTML = currSlideElement.text;
-        el.innerHTML = captionHTML || '';
-      });
-    }
-  });
-});
-lightbox.init();
-</script>
-
 {% endif %}
 
 {% block extra_head %}{% endblock %}
