@@ -225,7 +225,7 @@ allowed_methods(Req, State) ->
 %%
 is_authorized(Req0, _State) ->
     case utils:get_token(Req0) of
-	undefined -> js_handler:unauthorized(Req0, 28);
+	undefined -> js_handler:unauthorized(Req0, 28, stop);
 	Token -> login_handler:get_user_or_error(Req0, Token)
     end.
 

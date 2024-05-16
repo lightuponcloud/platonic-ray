@@ -409,22 +409,22 @@ is_authorized(Req0, _State) ->
 	    SessionCookieName = Settings#general_settings.session_cookie_name,
 	    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
 	    case login_handler:check_session_id(SessionID0) of
-		false -> js_handler:unauthorized(Req0, 28);
-		{error, Number} -> js_handler:unauthorized(Req0, Number);
+		false -> js_handler:unauthorized(Req0, 28, stop);
+		{error, Number} -> js_handler:unauthorized(Req0, Number, stop);
 		User ->
 		    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
 			true -> {true, Req0, [{bucket_id, BucketId}, {user, User}]};
-			false -> js_handler:unauthorized(Req0, 27)
+			false -> js_handler:unauthorized(Req0, 27, stop)
 		    end
 	    end;
 	Token ->
 	    case login_handler:check_token(Token) of
-		not_found -> js_handler:unauthorized(Req0, 28);
-		expired -> js_handler:unauthorized(Req0, 28);
+		not_found -> js_handler:unauthorized(Req0, 28, stop);
+		expired -> js_handler:unauthorized(Req0, 28, stop);
 		User ->
 		    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
 			true -> {true, Req0, [{bucket_id, BucketId}, {user, User}]};
-			false -> js_handler:unauthorized(Req0, 27)
+			false -> js_handler:unauthorized(Req0, 27, stop)
 		    end
 	    end
     end.
