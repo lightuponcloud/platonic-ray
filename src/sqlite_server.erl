@@ -180,6 +180,9 @@ task_create_pseudo_directory(Prefix, Name, User, DbName) ->
 	    [];
 	[{columns, _}, {rows,[]}] ->
 	    %% Return SQL for creating one
+	    sql_lib:create_pseudo_directory(Prefix, Name, User);
+	{error,_,_} ->
+	    %% Table could not exist, but still return SQL for creating pseudo-dir
 	    sql_lib:create_pseudo_directory(Prefix, Name, User)
     end.
 
@@ -253,13 +256,13 @@ update_db(BucketId, BucketQueue0) ->
 						    lager:error("[sqlite_server] SQL: ~p Error: ~p", [SQL1, Reason1]),
 						    {Module, Func, Args}  %% adding it back to queue
 					    end;
-					{error, Reason0} ->
+					{error, _, Reason0} ->
 					    lager:error("[sqlite_server] SQL: ~p Error: ~p", [SQL0, Reason0]),
 					    {Module, Func, Args}  %% adding it back to queue
 				    end;
 				SQL ->
 				    case sqlite3:sql_exec(DbName, SQL) of
-					{error, Reason2} ->
+					{error, _, Reason2} ->
 					    lager:error("[sqlite_server] SQL: ~p Error: ", [SQL, Reason2]),
 					    {Module, Func, Args};  %% adding it back to queue
 					_Result -> []
