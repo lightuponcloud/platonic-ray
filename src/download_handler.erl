@@ -37,7 +37,7 @@ validate_request(BucketId, User, PrefixedObjectKey) ->
 		    fun(Group) ->
 			utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id)
 		    end, User#user.groups),
-	    case UserBelongsToGroup of
+	    case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, User#user.tenant_id) of
 		false -> {error, 37};
 		true ->
 		    case riak_api:head_object(BucketId, PrefixedObjectKey) of

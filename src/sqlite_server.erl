@@ -350,7 +350,10 @@ integrity_check(DbName, TempFn) ->
 open_db(BucketId, DbName) ->
     TempFn0 = os:cmd("/bin/mktemp --suffix=.db"),
     TempFn1 = re:replace(TempFn0, "[\r\n]", "", [global, {return, list}]),
-    case riak_api:head_object(BucketId, ?DB_VERSION_KEY) of
+    case riak_api:get_object(BucketId, ?DB_VERSION_KEY) of
+	{error, Reason0} ->
+	    ?ERROR("[sqlite_server] Failed to read existing db: ~p~n", [Reason0]),
+	    {error, TempFn1, Reason0};
 	not_found ->
 	    %% No SQLite db found, create a new one
 	    {ok, Pid0} = sqlite3:open(DbName, [{file, TempFn1}]),
@@ -360,17 +363,43 @@ open_db(BucketId, DbName) ->
 		    Timestamp = erlang:round(utils:timestamp()/1000),
 		    Version0 = indexing:increment_version(undefined, Timestamp, []),
 		    {ok, TempFn1, Pid0, Version0};
-		{error, Reason0} ->
-		    ?ERROR("[sqlite_server] Failed to create table: ~p~n", [Reason0]),
-		    {error, TempFn1, Reason0}
+		{error, Reason1} ->
+		    ?ERROR("[sqlite_server] Failed to create table: ~p~n", [Reason1]),
+		    {error, TempFn1, Reason1}
 	    end;
-	Metadata ->
-	    %% Read db, then call exec_sql
-	    {ok, Pid1} = sqlite3:open(DbName, [{file, TempFn1}]),
-	    Version1 = proplists:get_value("x-amz-meta-version", Metadata),
-	    Version2 = jsx:decode(base64:decode(Version1)),
-	    {ok, TempFn1, Pid1, Version2}
+	Object ->
+	    Content = proplists:get_value(content, Object),
+	    case riak_api:head_object(BucketId, ?DB_VERSION_KEY) of
+		not_found ->
+		    ?ERROR("[sqlite_server] DB object suddenly disappeared~n"),
+		    {error, TempFn1, "DB object suddenly disappeared"};
+		Metadata ->
+		    case file:write_file(TempFn1, Content, [write, binary]) of
+			ok ->
+			    %% Read db, then call exec_sql
+			    {ok, Pid1} = sqlite3:open(DbName, [{file, TempFn1}]),
+			    %% File could be empty for some reason, so lets create table, if it do not exist
+			    case sql_lib:create_table_if_not_exist(DbName) of
+				ok ->
+				    %% Create a new version
+				    Timestamp = erlang:round(utils:timestamp()/1000),
+				    Version0 = indexing:increment_version(undefined, Timestamp, []),
+				    {ok, TempFn1, Pid1, Version0};
+				exists ->
+				    Version1 = proplists:get_value("x-amz-meta-version", Metadata),
+				    Version2 = jsx:decode(base64:decode(Version1)),
+				    {ok, TempFn1, Pid1, Version2};
+				{error, Reason2} ->
+				    ?ERROR("[sqlite_server] Failed to create table: ~p~n", [Reason2]),
+				    {error, TempFn1, Reason2}
+			    end;
+			{error, Reason3} ->
+			    ?ERROR("[sqlite_server] Can't write to db file: ~p~n", [Reason3]),
+			    {error, TempFn1, Reason3}
+		    end
+	    end
     end.
+
 
 %%
 %% Create lock object in Riak CS

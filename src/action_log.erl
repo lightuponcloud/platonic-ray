@@ -391,7 +391,7 @@ resource_exists(Req0, State) ->
 		    fun(Group) ->
 			utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id)
 		    end, User#user.groups),
-	    case UserBelongsToGroup of
+	    case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, User#user.tenant_id) of
 		false ->{false, Req0, []};
 		true ->
 		    ParsedQs = cowboy_req:parse_qs(Req0),

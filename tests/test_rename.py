@@ -133,11 +133,8 @@ class RenameTest(TestClient):
         """
         # 1.1 create a directory and a nested directory into
         dir_names = [generate_random_name() for i in range(2)]
-        print("Test 3")
-        print("dir names: ", dir_names)
         hex_decoder = lambda x: bytes.fromhex(x).decode('utf-8')
         prefixes = encode_to_hex(dir_names=dir_names)
-        print("prefixes: ", prefixes)
         response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_names[0])
         self.assertEqual(response.status_code, 204)
         response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_names[1], prefixes[0])
@@ -148,16 +145,13 @@ class RenameTest(TestClient):
 
         # 1.3 try to rename nested deleted directory
         res = self.client.get_list(TEST_BUCKET_1, prefixes[0])
-        print("GET list:")
         pprint(res.json())
         pseudo_dir = dir_names[0]
         self.assertEqual(res.json()['dirs'], [])
 
         dst_name = generate_random_name()
-        print("dst_name: ", dst_name)
         res = self.client.rename(TEST_BUCKET_1, dir_names[0], prefixes[0])
-        print("status code: ", res.status_code, "Expected: ", 400)
-        print("result: ", res.json(), "- renamed and undelete")
+        self.assertEqual(res.status_code, 400)
 
         # Clean: delete all created
         self.client.delete(TEST_BUCKET_1, [prefixes[0]])
@@ -364,14 +358,13 @@ class RenameTest(TestClient):
         for el in res.json()['list']:
             if el['orig_name'] == orig_name:
                 object_key2 = el['object_key']
-                print(object_key2)
                 break
         else:
             raise Exception('Uploaded renamed file gone somewhere')
 
         res = self.client.rename(TEST_BUCKET_1, object_key2, object_key2)
-        print(res)
-        print(res.json())
+        # print(res)
+        # print(res.json())
 
         # 4. Check for file is not disapeared
         res = self.client.get_list(TEST_BUCKET_1)
@@ -379,7 +372,6 @@ class RenameTest(TestClient):
             if el['orig_name'] == object_key2:
                 obj = el
                 object_key3 = el['object_key']
-                print(object_key3)
                 break
         self.assertEqual(obj['orig_name'], object_key2)
 

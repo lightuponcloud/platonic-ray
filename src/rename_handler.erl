@@ -517,16 +517,11 @@ forbidden(Req0, User) ->
 	end,
     case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
 	true ->
-	    IsRestricted = utils:is_restricted_bucket_id(BucketId),
-	    UserBelongsToGroup =
-		case IsRestricted of
-		    true -> User#user.staff;  %% only staff user can upload to the public bucket
-		    false -> lists:any(
-				fun(Group) ->
-				    utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
-				    User#user.groups)
-				end,
-	    case UserBelongsToGroup of
+	    UserBelongsToGroup = lists:any(
+		fun(Group) ->
+		    utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id)
+		end, User#user.groups),
+	    case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, User#user.tenant_id) of
 		false ->
 		    PUser = admin_users_handler:user_to_proplist(User),
 		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser), stop);

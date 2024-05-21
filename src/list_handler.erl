@@ -157,7 +157,7 @@ forbidden(Req0, User) ->
 			    fun(Group) -> utils:is_bucket_belongs_to_group(BucketId, TenantId, Group#group.id) end,
 			    User#user.groups)
 		end,
-	    case UserBelongsToGroup of
+	    case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, TenantId) of
 		false ->
 		    case utils:is_restricted_bucket_id(BucketId) of
 			true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]};

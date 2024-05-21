@@ -40,9 +40,10 @@ create_table_if_not_exist(DbName) ->
 	    case sqlite3:create_table(DbName, items, TableInfo) of
 		ok -> ok;
 		{error, _, Reason} ->
-		    lager:error("[sql_lib] error creating table: ~p", [Reason])
+		    lager:error("[sql_lib] error creating table: ~p", [Reason]),
+		    {error, Reason}
 	    end;
-	_ -> ok  %% table exists
+	_ -> exists  %% table exists
     end.
 
 

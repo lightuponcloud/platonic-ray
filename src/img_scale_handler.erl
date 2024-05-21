@@ -151,9 +151,12 @@ get_binary_data(BucketId, Prefix, StartByte, EndByte) ->
 		fun(K) ->
 		    ObjectKey1 = proplists:get_value(key, K),
 		    Tokens = lists:last(string:tokens(ObjectKey1, "/")),
-		    [N,_] = string:tokens(Tokens, "_"),
-		    case utils:to_integer(N) of
-			I when I >= PartNumStart, I =< PartNumEnd -> {true, ObjectKey1};
+		    case string:tokens(Tokens, "_") of
+			[N,_] ->
+			    case utils:to_integer(N) of
+				I when I >= PartNumStart, I =< PartNumEnd -> {true, ObjectKey1};
+				_ -> false
+			    end;
 			_ -> false
 		    end
 		end, Contents),
@@ -449,7 +452,7 @@ forbidden(Req0, State) ->
                fun(Group) -> utils:is_bucket_belongs_to_group(BucketId, TenantId, Group#group.id) end,
                User#user.groups)
        end,
-    case UserBelongsToGroup of
+    case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, TenantId) of
 	false ->
 	    PUser = admin_users_handler:user_to_proplist(User),
 	    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser), stop);

@@ -52,7 +52,7 @@ class UploadTest(TestClient):
         self.assertEqual(response.status_code, 200)
 
         response_md5 = hashlib.md5(response.content).hexdigest()
-        self.assertEqual(response_md5, 'da4167ccf8313947448fbf97999c9f9f')
+        self.assertEqual(response_md5, '274a1939f67a3f036c8d0ab763d67c65')
 
         t2 = time.time()
         print("Upload thumbnail {}".format(int(t2-t1)))

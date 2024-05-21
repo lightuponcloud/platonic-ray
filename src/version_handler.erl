@@ -41,15 +41,11 @@ check_privileges(Req0, BucketId) ->
 check_user_access(BucketId, User) ->
     case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
 	true ->
-	    IsRestricted = utils:is_restricted_bucket_id(BucketId),
-	    UserBelongsToGroup =
-		case IsRestricted of
-		    true -> true;  %% anyone can download from public bucket
-		    false -> lists:any(fun(Group) ->
-			utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
-			User#user.groups)
-		end,
-	    case UserBelongsToGroup of
+	    UserBelongsToGroup = lists:any(
+		fun(Group) ->
+		    utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id)
+		end, User#user.groups),
+	    case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, User#user.tenant_id) of
 		false -> {error, 37};
 		true -> User
 	    end;
