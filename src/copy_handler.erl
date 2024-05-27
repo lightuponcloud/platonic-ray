@@ -245,12 +245,7 @@ copy_forbidden(Req0, User0) ->
 			User0#user.groups),
 		case UserBelongsToSrcGroup of
 		    true -> true;
-		    false ->
-			IsSrcRestricted = utils:is_restricted_bucket_id(SrcBucketId),
-			case IsSrcRestricted of
-			    true -> User0#user.staff;
-			    false -> false
-			end
+		    false -> User0#user.staff
 		end
 	end,
     case IsCopyAllowed of
@@ -276,11 +271,7 @@ copy_forbidden(Req0, User0) ->
 				    User0#user.groups),
 				case UserBelongsToDstGroup of
 				    true -> true;
-				    false ->
-					case utils:is_restricted_bucket_id(DstBucketId0) of
-					    true -> User0#user.staff;  %% Only staff user can copy to restricted bucket
-					    false -> false
-					end
+				    false -> User0#user.staff  %% If user is not in group, check if this is staff user
 				end
 			end,
 		    case DstBucketCanBeModified of

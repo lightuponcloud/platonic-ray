@@ -439,19 +439,15 @@ is_authorized(Req0, _State) ->
 forbidden(Req0, State) ->
     User = proplists:get_value(user, State),
     BucketId = proplists:get_value(bucket_id, State),
-    IsRestricted = utils:is_restricted_bucket_id(BucketId),
     TenantId =
        case User of
            undefined -> undefined;
            _ -> User#user.tenant_id
        end,
-    UserBelongsToGroup =
-       case User =:= undefined orelse IsRestricted of
-           true -> undefined;
-           false -> lists:any(
-               fun(Group) -> utils:is_bucket_belongs_to_group(BucketId, TenantId, Group#group.id) end,
-               User#user.groups)
-       end,
+    UserBelongsToGroup = lists:any(
+	fun(Group) ->
+	    utils:is_bucket_belongs_to_group(BucketId, TenantId, Group#group.id)
+	end, User#user.groups),
     case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, TenantId) of
 	false ->
 	    PUser = admin_users_handler:user_to_proplist(User),
