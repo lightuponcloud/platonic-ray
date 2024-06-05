@@ -905,9 +905,6 @@ response_httpc({ok, {{_HTTPVer, Status, StatusLine}, Headers, Body}}) ->
 		orelse _Status =:= 405 ->
 	    {error, {http_error, _Status, StatusLine, Body, Headers}};
 	_ ->
-%io:fwrite("Status: ~p~n", [Status]),
-%io:fwrite("StatusLine: ~p~n", [StatusLine]),
-%io:fwrite("Body: ~p~n", [Body]),
 	    {ok, {{Status, StatusLine}, [{string:to_lower(H), V} || {H, V} <- Headers], Body}}
     end;
 response_httpc({ok, PID}) -> {ok, PID};  %% In case stream was requested

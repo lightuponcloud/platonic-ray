@@ -228,7 +228,11 @@ parse_object_record(Metadata, Options) ->
 				string:strip(Etag, both, $");
 			    _ -> proplists:get_value(MetaName, Metadata)
 			end;
-		    true -> proplists:get_value(OptionName, Options)
+		    true ->
+			case proplists:get_value(OptionName, Options) of
+			    undefined -> proplists:get_value(MetaName, Metadata);
+			    V -> V
+			end
 		end,
 	    {OutputName, Value}
         end, OptionMetaMap).
@@ -369,7 +373,7 @@ undelete(BucketId, Prefix, ObjectKey) ->
 	not_found -> not_found;
 	Metadata0 ->
 	    LockModifiedTime =  io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
-	    Meta = parse_object_record(Metadata0, [{nlock_modified_utc, LockModifiedTime}]),
+	    Meta = parse_object_record(Metadata0, [{lock_modified_utc, LockModifiedTime}]),
 	    IsLocked = proplists:get_value("is-locked", Meta),
 	    Response = riak_api:put_object(BucketId, Prefix, ObjectKey, <<>>, [{meta, Meta}]),
 	    case Response of
@@ -436,8 +440,7 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 			    LockObjectKey = ObjectKey ++ ?RIAK_LOCK_SUFFIX,
 			    case IsLocked0 of
 				true ->
-				    riak_api:put_object(BucketId, Prefix, LockObjectKey, <<>>,
-							[{meta, Meta}]),
+				    riak_api:put_object(BucketId, Prefix, LockObjectKey, <<>>, [{meta, Meta}]),
 				    sqlite_server:lock_object(BucketId, Prefix, ObjectKey, true);
 				false ->
 				    PrefixedLockObjectKey = utils:prefixed_object_key(Prefix, LockObjectKey),
