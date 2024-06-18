@@ -29,7 +29,9 @@
     root_path => string(),
     static_root => string(),
     http_listen_port => integer(),
-    locale => string()
+    locale => string(),
+    admin_api_key => string() %% If set, admin key allows applications to perform CRUD operations on tenants and users.
+
 }.
 
 -record(general_settings, {
@@ -38,9 +40,10 @@
     admin_email="support@xentime.com"::string(),
     session_cookie_name=midsessionid::atom(),
     root_path="/riak/"::string(),
-    static_root="/riak-media/"::string(),  %% This default path is used when APP_SERVICE_BASE_URL env var is not set
+    static_root="/riak-media/"::string(),  %% This default path is used when STATIC_BASE_URL env var is not set
     http_listen_port=8081,
-    locale="uk"
+    locale="uk",
+    admin_api_key=""
 }).
 
 -define(DEFAULT_LANGUAGE_TAG, "en").
