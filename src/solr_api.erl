@@ -8,7 +8,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3, start_link/0]).
 
--include("riak.hrl").
+-include("storage.hrl").
 -include("solr.hrl").
 -include("log.hrl").
 
@@ -88,18 +88,18 @@ index(BucketId, Prefix, ObjectKey, ContentType) ->
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
     EncodedPrefixedObjectKey = erlcloud_http:url_encode_loose(PrefixedObjectKey),
     UniqueId = lists:flatten(io_lib:format("~s/~s", [BucketId, EncodedPrefixedObjectKey])),
-    ObjectURL = riak_api:get_object_url(BucketId, EncodedPrefixedObjectKey),
-    Config0 = #riak_api_config{},
+    ObjectURL = s3_api:get_object_url(BucketId, EncodedPrefixedObjectKey),
+    Config0 = #api_config{},
     %% Download object from Riak CS
-    Response = riak_api:request_httpc(ObjectURL, get, [{"content-type", "*/*"}], <<>>, Config0),
+    Response = s3_api:request_httpc(ObjectURL, get, [{"content-type", "*/*"}], <<>>, Config0),
     case Response of
 	{error, _} ->
 	    {error, "Object not found"};
 	{ok, {_Status, _Headers, RequestBody}} ->
 	    Headers = [{"content-type", ContentType}],
 	    %% Upload object to Solr
-	    Config1 = #riak_api_config{s3_proxy_host=undefined, s3_proxy_port=undefined},
-	    Metadata = riak_api:get_object_metadata(BucketId, PrefixedObjectKey),
+	    Config1 = #api_config{s3_proxy_host=undefined, s3_proxy_port=undefined},
+	    Metadata = s3_api:get_object_metadata(BucketId, PrefixedObjectKey),
 	    OrigName = 
 		case erlcloud_http:url_encode(proplists:get_value("x-amz-meta-orig-filename", Metadata, ObjectKey)) of
 		    undefined -> ObjectKey;
@@ -107,7 +107,7 @@ index(BucketId, Prefix, ObjectKey, ContentType) ->
 		end,
 	    SolrURL = lists:flatten(io_lib:format("http://127.0.0.1:~s~s/~s~s?wt=json&literal._yz_id=~s&literal.bucket_id=~s&literal.orig_name=~s&commit=true&resource.name=~s",
 		[integer_to_list(?SOLR_PORT), ?SOLR_HOST_CONTEXT, ?SOLR_INDEX_NAME, "/update/extract", UniqueId, BucketId, OrigName, OrigName])),
-	    case riak_api:request_httpc(SolrURL, post, Headers, RequestBody, Config1) of
+	    case s3_api:request_httpc(SolrURL, post, Headers, RequestBody, Config1) of
 		{ok, {_,_,ResponseBody}} ->
 		    ?INFO("Solr response: ~p~n", [ResponseBody]);
 		{error, {http_error, _, StatusLine,Body,_}} ->

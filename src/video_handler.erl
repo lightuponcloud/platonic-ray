@@ -9,7 +9,7 @@
 	 to_response/2]).
 
 -include("general.hrl").
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 -include("media.hrl").
 
@@ -48,7 +48,7 @@ prefix_chunks([], _Prefix, Acc) -> Acc.
 get_playlist(BucketId, RealPrefix, Prefix, ObjectKey0) ->
     PrefixedPlaylist = utils:prefixed_object_key(utils:dirname(RealPrefix), ?HLS_PLAYLIST_OBJECT_KEY),
     BinaryData =
-	case riak_api:get_object(BucketId, PrefixedPlaylist) of
+	case s3_api:get_object(BucketId, PrefixedPlaylist) of
 	    {error, _} -> <<>>;
 	    not_found -> <<>>;
 	    PlaylistBinary -> proplists:get_value(content, PlaylistBinary)
@@ -67,7 +67,7 @@ get_playlist(BucketId, RealPrefix, Prefix, ObjectKey0) ->
 %%
 get_hls_part(BucketId, RealPrefix, Name) ->
     PrefixedPart = utils:prefixed_object_key(utils:dirname(RealPrefix), Name),
-    case riak_api:get_object(BucketId, PrefixedPart) of
+    case s3_api:get_object(BucketId, PrefixedPart) of
 	{error, _} -> <<>>;
 	not_found -> <<>>;
 	Data -> proplists:get_value(content, Data)
@@ -93,7 +93,7 @@ to_response(Req0, State) ->
 	{error, Number} -> js_handler:bad_request(Req0, Number);
 	false ->
 	    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey0),
-	    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+	    case s3_api:head_object(BucketId, PrefixedObjectKey) of
 		{error, Reason} ->
 		    lager:error("[video_handler] head_object failed ~p/~p: ~p",
 				[BucketId, PrefixedObjectKey, Reason]),

@@ -9,7 +9,7 @@
 	 handle_post/2, copy_forbidden/2, validate_copy_parameters/1,
 	 validate_dst_prefix/1]).
 
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 -include("action_log.hrl").
 
@@ -84,7 +84,7 @@ validate_dst_name(DstPrefix, ObjectKey0, DstName0) ->
 		false -> {error, 12};
 		true ->
 		    %% Someone could have changed default real object prefix to hex value
-		    case utils:starts_with(DstName1, erlang:list_to_binary(?RIAK_REAL_OBJECT_PREFIX))
+		    case utils:starts_with(DstName1, erlang:list_to_binary(?REAL_OBJECT_PREFIX))
 			    andalso DstPrefix =:= undefined of
 			true -> {error, 10};
 			false -> {ObjectKey0, DstName1}

@@ -20,7 +20,7 @@
 	 timestamp/0, format_timestamp/1, firstmatch/2, timestamp_to_datetime/1,
 	 translate/2, dirname/1, read_config/1, real_prefix/2]).
 
--include("riak.hrl").
+-include("storage.hrl").
 -include("general.hrl").
 -include("entities.hrl").
 
@@ -126,10 +126,10 @@ real_prefix(BucketId, Metadata) ->
 	end,
     case OldGUID =/= undefined andalso OldGUID =/= GUID of
 	true ->
-	    RealPrefix1 = prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, OldGUID),
+	    RealPrefix1 = prefixed_object_key(?REAL_OBJECT_PREFIX, OldGUID),
 	    {OldBucketId, OldGUID, OldUploadId, prefixed_object_key(RealPrefix1, OldUploadId)};
 	false ->
-	    PrefixedGUID0 = prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+	    PrefixedGUID0 = prefixed_object_key(?REAL_OBJECT_PREFIX, GUID),
 	    {BucketId, GUID, UploadId, prefixed_object_key(PrefixedGUID0, UploadId)}
     end.
 
@@ -331,7 +331,7 @@ is_valid_bucket_id(BucketId, undefined) when erlang:is_list(BucketId) ->
 	    BucketSuffix = lists:last(Bits),
 	    (BucketSuffix =:= ?PRIVATE_BUCKET_SUFFIX
 	     orelse BucketSuffix =:= ?RESTRICTED_BUCKET_SUFFIX
-	    ) andalso lists:prefix([?RIAK_BACKEND_PREFIX], Bits) =:= true;
+	    ) andalso lists:prefix([?BACKEND_PREFIX], Bits) =:= true;
 	false -> false
     end;
 is_valid_bucket_id(BucketId, TenantName)
@@ -347,7 +347,7 @@ is_valid_bucket_id(BucketId, TenantName)
 		    (BucketSuffix =:= ?PRIVATE_BUCKET_SUFFIX
 		     orelse BucketSuffix =:= ?RESTRICTED_BUCKET_SUFFIX
 		    ) andalso BucketTenantName =:= TenantName
-		    andalso lists:prefix([?RIAK_BACKEND_PREFIX], Bits) =:= true;
+		    andalso lists:prefix([?BACKEND_PREFIX], Bits) =:= true;
 		false -> false
 	    end
     end;
@@ -502,10 +502,10 @@ is_hidden_object(ObjInfo) ->
     case proplists:get_value(key, ObjInfo) of
         undefined -> true;  %% .stop file or something
         ObjectKey ->
-	    lists:suffix(?RIAK_INDEX_FILENAME, ObjectKey) =:= true orelse 
-	    lists:suffix(?RIAK_ACTION_LOG_FILENAME, ObjectKey) =:= true orelse
-	    lists:suffix(?RIAK_LOCK_INDEX_FILENAME, ObjectKey) =:= true orelse
-	    lists:suffix(?RIAK_LOCK_SUFFIX, ObjectKey) =:= true orelse
+	    lists:suffix(?INDEX_FILENAME, ObjectKey) =:= true orelse 
+	    lists:suffix(?ACTION_LOG_FILENAME, ObjectKey) =:= true orelse
+	    lists:suffix(?LOCK_INDEX_FILENAME, ObjectKey) =:= true orelse
+	    lists:suffix(?LOCK_SUFFIX, ObjectKey) =:= true orelse
 	    lists:suffix(?DB_VERSION_KEY, ObjectKey) =:= true orelse
 	    lists:suffix(?DB_VERSION_LOCK_FILENAME, ObjectKey) =:= true
     end.
@@ -516,8 +516,8 @@ is_hidden_object(ObjInfo) ->
 -spec is_hidden_prefix(list()) -> boolean().
 
 is_hidden_prefix(Prefix) when erlang:is_list(Prefix) ->
-    lists:prefix(?RIAK_REAL_OBJECT_PREFIX, Prefix) =:= true orelse 
-    lists:prefix(?RIAK_REAL_OBJECT_PREFIX, Prefix) =:= true.
+    lists:prefix(?REAL_OBJECT_PREFIX, Prefix) =:= true orelse 
+    lists:prefix(?REAL_OBJECT_PREFIX, Prefix) =:= true.
 
 %%
 %% Joins a list of elements adding a separator between each of them.

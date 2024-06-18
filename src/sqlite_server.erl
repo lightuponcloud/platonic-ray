@@ -24,7 +24,7 @@
          code_change/3]).
 
 -include("log.hrl").
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 
 -define(SQLITE_DB_UPDATE_INTERVAL, 1000).  %% 1 second -- db updated every 1 second, if there were changes
@@ -226,7 +226,7 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 update_db(BucketId, BucketQueue0) ->
-    DbName = erlang:list_to_atom(riak_crypto:random_string()),
+    DbName = erlang:list_to_atom(crypto_utils:random_string()),
     case open_db(BucketId, DbName) of
 	{error, TempFn, _Reason} ->
 	    %% leave queue as is
@@ -282,14 +282,14 @@ update_db(BucketId, BucketQueue0) ->
 	    RiakOptions = [{meta, [
 		{"version", base64:encode(jsx:encode(Version1))},
 		{"bytes", byte_size(Blob)}]}],
-	    riak_api:put_object(BucketId, undefined, ?DB_VERSION_KEY, Blob, RiakOptions),
+	    s3_api:put_object(BucketId, undefined, ?DB_VERSION_KEY, Blob, RiakOptions),
 	    %% Remove lock object
 	    %% remove temporary db file
-	    riak_api:delete_object(BucketId, ?DB_VERSION_LOCK_FILENAME),
+	    s3_api:delete_object(BucketId, ?DB_VERSION_LOCK_FILENAME),
 	    file:delete(TempFn),
 
 	    %% Send notification to bucket subscribers
-	    AtomicId = erlang:binary_to_list(riak_crypto:uuid4()),
+	    AtomicId = erlang:binary_to_list(crypto_utils:uuid4()),
 	    Msg = jsx:encode([{version, Version1}, {bucket_id, erlang:list_to_binary(BucketId)},
 			      {timestamp, Timestamp}]),
 	    events_server_sup:send_message(BucketId, AtomicId, Msg),
@@ -350,7 +350,7 @@ integrity_check(DbName, TempFn) ->
 open_db(BucketId, DbName) ->
     TempFn0 = os:cmd("/bin/mktemp --suffix=.db"),
     TempFn1 = re:replace(TempFn0, "[\r\n]", "", [global, {return, list}]),
-    case riak_api:get_object(BucketId, ?DB_VERSION_KEY) of
+    case s3_api:get_object(BucketId, ?DB_VERSION_KEY) of
 	{error, Reason0} ->
 	    ?ERROR("[sqlite_server] Failed to read existing db: ~p~n", [Reason0]),
 	    {error, TempFn1, Reason0};
@@ -369,7 +369,7 @@ open_db(BucketId, DbName) ->
 	    end;
 	Object ->
 	    Content = proplists:get_value(content, Object),
-	    case riak_api:head_object(BucketId, ?DB_VERSION_KEY) of
+	    case s3_api:head_object(BucketId, ?DB_VERSION_KEY) of
 		not_found ->
 		    ?ERROR("[sqlite_server] DB object suddenly disappeared~n"),
 		    {error, TempFn1, "DB object suddenly disappeared"};
@@ -406,12 +406,12 @@ open_db(BucketId, DbName) ->
 %%
 lock_db(BucketId) ->
     %% Check lock file first
-    case riak_api:head_object(BucketId, ?DB_VERSION_LOCK_FILENAME) of
+    case s3_api:head_object(BucketId, ?DB_VERSION_LOCK_FILENAME) of
 	not_found ->
 	    %% Create lock file instantly
 	    Timestamp0 = erlang:round(utils:timestamp()/1000),
 	    LockMeta0 = [{"modified-utc", Timestamp0}],
-	    Result0 = riak_api:put_object(BucketId, undefined, ?DB_VERSION_LOCK_FILENAME, <<>>,
+	    Result0 = s3_api:put_object(BucketId, undefined, ?DB_VERSION_LOCK_FILENAME, <<>>,
 					  [{meta, LockMeta0}]),
 	    case Result0 of
 		{error, Reason0} -> {error, Reason0};
@@ -428,13 +428,13 @@ lock_db(BucketId) ->
 	    case DeltaSeconds > ?DB_VERSION_LOCK_COOLOFF_TIME of
 		true ->
 		    %% Remove previous lock object, create a new one
-		    case riak_api:delete_object(BucketId, ?DB_VERSION_LOCK_FILENAME) of
+		    case s3_api:delete_object(BucketId, ?DB_VERSION_LOCK_FILENAME) of
 			{error, Reason} ->
 			    lager:error("Failed removing lock ~p/~p", [BucketId, ?DB_VERSION_LOCK_FILENAME]),
 			    {error, Reason};
 			{ok, _} ->
 			    LockMeta1 = [{"modified-utc", Timestamp1}],
-			    Result1 = riak_api:put_object(BucketId, undefined, ?DB_VERSION_LOCK_FILENAME, <<>>,
+			    Result1 = s3_api:put_object(BucketId, undefined, ?DB_VERSION_LOCK_FILENAME, <<>>,
 							  [{meta, LockMeta1}]),
 			    case Result1 of
 				{error, Reason1} -> {error, Reason1};

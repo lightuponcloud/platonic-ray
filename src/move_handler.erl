@@ -8,7 +8,7 @@
 	 to_json/2, allowed_methods/2, is_authorized/2, forbidden/2,
 	 handle_post/2]).
 
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 -include("action_log.hrl").
 

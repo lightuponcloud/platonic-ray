@@ -6,7 +6,7 @@
 -export([init/2, validate_range/2]).
 
 -include("general.hrl").
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 -include("log.hrl").
 
@@ -19,7 +19,7 @@
 validate_request(BucketId, undefined, PrefixedObjectKey) ->
     case utils:is_valid_bucket_id(BucketId, undefined) of
 	true ->
-	    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+	    case s3_api:head_object(BucketId, PrefixedObjectKey) of
 		not_found -> not_found;
 		{error, Reason} ->
 		    lager:error("[download_handler] head_object ~p/~p: ~p",
@@ -40,7 +40,7 @@ validate_request(BucketId, User, PrefixedObjectKey) ->
 	    case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, User#user.tenant_id) of
 		false -> {error, 37};
 		true ->
-		    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+		    case s3_api:head_object(BucketId, PrefixedObjectKey) of
 			{error, Reason} ->
 			    lager:error("[download_handler] head_object ~p/~p: ~p",
 					[BucketId, PrefixedObjectKey, Reason]),
@@ -130,7 +130,7 @@ receive_streamed_body(Req0, RequestId0, Pid0, BucketId, NextObjectKeys0) ->
 		[] -> cowboy_req:stream_body(<<>>, fin, Req0);
 		[CurrentObjectKey|NextObjectKeys1] ->
 		    %% stream next chunk
-		    case riak_api:get_object(BucketId, CurrentObjectKey, stream) of
+		    case s3_api:get_object(BucketId, CurrentObjectKey, stream) of
 			not_found ->
 			    ?ERROR("[download_handler] error: part not found: ~p/~p", [BucketId, CurrentObjectKey]),
 			    cowboy_req:stream_body(<<>>, fin, Req0);
@@ -161,7 +161,7 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 	    _ -> (EndByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1
 	end,
     T0 = utils:timestamp(), %% measure time of request
-    case riak_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix ++ "/"}]) of
+    case s3_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix ++ "/"}]) of
 	not_found ->
 	    Req1 = cowboy_req:reply(404, #{
 		<<"content-type">> => <<"text/html">>
@@ -173,7 +173,7 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 	    List0 = lists:filtermap(
 		fun(K) ->
 		    ObjectKey = proplists:get_value(key, K),
-		    case utils:ends_with(ObjectKey, erlang:list_to_binary(?RIAK_THUMBNAIL_KEY)) of
+		    case utils:ends_with(ObjectKey, erlang:list_to_binary(?THUMBNAIL_KEY)) of
 			true -> false;
 			false ->
 			    Tokens = lists:last(string:tokens(ObjectKey, "/")),
@@ -214,7 +214,7 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 			<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 		    },
 		    Req3 = cowboy_req:stream_reply(200, Headers0, Req0),
-		    case riak_api:get_object(BucketId, PrefixedObjectKey, stream) of
+		    case s3_api:get_object(BucketId, PrefixedObjectKey, stream) of
 			not_found ->
 			    Req4 = cowboy_req:reply(404, #{
 				<<"content-type">> => <<"text/html">>,

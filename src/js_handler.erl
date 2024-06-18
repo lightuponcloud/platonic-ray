@@ -9,7 +9,7 @@
 	 redirect_to_login/2, incorrect_configuration/2]).
 
 -include("general.hrl").
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 
 %%

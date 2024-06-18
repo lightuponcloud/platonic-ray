@@ -17,7 +17,7 @@
          code_change/3]).
 
 -include("log.hrl").
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 -include("action_log.hrl").
 
@@ -119,7 +119,7 @@ handle_cast({copy, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
     %% Add action log record
     %%
     {CopiedDirectories, CopiedObjects} = prepare_action_log(Copied0),
-    ActionLogRecord0 = #riak_action_log_record{
+    ActionLogRecord0 = #action_log_record{
 	action="copy",
 	user_name=User#user.name,
 	tenant_name=User#user.tenant_name,
@@ -132,7 +132,7 @@ handle_cast({copy, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 	end,
     Summary0 = lists:flatten([["Copied"], CopiedDirectories ++ CopiedObjects,
 			     ["\" from \"", SrcPrefix1, "\"."]]),
-    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
     action_log:add_record(DstBucketId, DstPrefix0, ActionLogRecord1),
     DstPrefix1 =
 	case DstPrefix0 of
@@ -146,7 +146,7 @@ handle_cast({copy, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 	false ->
 	    Summary1 = lists:flatten([["Copied"], CopiedDirectories ++ CopiedObjects,
 				      [" to \""], [DstPrefix1, "\"."]]),
-	    ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
+	    ActionLogRecord2 = ActionLogRecord0#action_log_record{details=Summary1},
 	    action_log:add_record(SrcBucketId, SrcPrefix0, ActionLogRecord2)
     end,
     {noreply, State};
@@ -193,13 +193,13 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 			    %% Delete source object only if not locked by another user
 			    case (IsSrcLocked =:= true andalso LockUserId =:= User#user.id) orelse IsSrcLocked =:= false of
 				true ->
-				    case riak_api:delete_object(SrcBucketId, PrefixedObjectKey) of
+				    case s3_api:delete_object(SrcBucketId, PrefixedObjectKey) of
 					{error, Reason} ->
 					    lager:error("[move_handler] Can't delete ~p/~p: ~p",
 							[SrcBucketId, PrefixedObjectKey, Reason]);
 					{ok, _} -> sqlite_server:delete_object(SrcBucketId, SrcPrefix1, unicode:characters_to_list(OldKey0))
 				    end,
-				    riak_api:delete_object(SrcBucketId, PrefixedObjectKey ++ ?RIAK_LOCK_SUFFIX);
+				    s3_api:delete_object(SrcBucketId, PrefixedObjectKey ++ ?LOCK_SUFFIX);
 				false -> ok
 			    end
 		    end;
@@ -237,7 +237,7 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 	    %% Add action log record
 	    %%
 	    {CopiedDirectories, CopiedObjects} = prepare_action_log(Copied0),
-	    ActionLogRecord0 = #riak_action_log_record{
+	    ActionLogRecord0 = #action_log_record{
 		action="move",
 		user_name=User#user.name,
 		tenant_name=User#user.tenant_name,
@@ -250,7 +250,7 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 		end,
 	    Summary0 = lists:flatten([["Moved"], CopiedDirectories ++ CopiedObjects,
 				      ["\" from \"", SrcPrefix2, "\"."]]),
-	    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+	    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
 	    action_log:add_record(DstBucketId, DstPrefix0, ActionLogRecord1),
 	    DstPrefix1 =
 		case DstPrefix0 of
@@ -264,7 +264,7 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 		false ->
 		    Summary1 = lists:flatten([["Moved"], CopiedDirectories ++ CopiedObjects,
 					      [" to \""], [DstPrefix1, "\"."]]),
-		    ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
+		    ActionLogRecord2 = ActionLogRecord0#action_log_record{details=Summary1},
 		    action_log:add_record(SrcBucketId, SrcPrefix0, ActionLogRecord2)
 	    end
     end,
@@ -327,7 +327,7 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 	    P -> unicode:characters_to_binary(P)
 	end,
     OldKey = filename:basename(PrefixedObjectKey0),
-    case riak_api:head_object(SrcBucketId, PrefixedObjectKey0) of
+    case s3_api:head_object(SrcBucketId, PrefixedObjectKey0) of
 	{error, Reason} ->
 	    lager:error("[copy_handler] head_object failed ~p/~p: ~p",
 			[SrcBucketId, PrefixedObjectKey0, Reason]),
@@ -363,7 +363,7 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 	    undefined -> SrcBucketId;
 	    CopyFromBucket -> CopyFromBucket
 	end,
-    NewGUID = erlang:binary_to_list(riak_crypto:uuid4()),
+    NewGUID = erlang:binary_to_list(crypto_utils:uuid4()),
     ObjectMeta0 = list_handler:parse_object_record(Metadata0, [{guid, NewGUID},
 							       {copy_from_guid, OldGUID},
 							       {copy_from_bucket_id, OldBucketId},
@@ -381,7 +381,7 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 	end,
     %% Determine destination object name, as directory with the same name might exist
     UserName = utils:unhex(erlang:list_to_binary(User#user.name)),
-    {ObjectKey0, OrigName2, _IsNewVersion, ExistingObject0, _IsConflict} = riak_api:pick_object_key(
+    {ObjectKey0, OrigName2, _IsNewVersion, ExistingObject0, _IsConflict} = s3_api:pick_object_key(
 	    DstBucketId, DstPrefix0, OrigName1, undefined, UserName, DstIndexContent),
     %% Do not copy over locked file.
     %% If file is overwritten by copy, its previous version still can be restored.
@@ -421,14 +421,14 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 	    ObjectMeta1 = lists:keyreplace("orig-filename", 1, ObjectMeta0,
 					   {"orig-filename", utils:hex(OrigName2)}),
 	    %% Copy object metadata to destination object
-	    case riak_api:put_object(DstBucketId, DstPrefix0, ObjectKey0, <<>>,
+	    case s3_api:put_object(DstBucketId, DstPrefix0, ObjectKey0, <<>>,
 				     [{meta, ObjectMeta1}]) of
 		ok ->
 		    %% Put "stop" file on copied real object, to prevent its removal, when
 		    %% a new version uploaded ( we have just created a link to that object ).
-		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, OldGUID),
+		    RealPrefix = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, OldGUID),
 		    StopSuffix = ?STOP_OBJECT_SUFFIX,
-		    case riak_api:put_object(OldBucketId, RealPrefix, UploadId++StopSuffix, <<>>) of
+		    case s3_api:put_object(OldBucketId, RealPrefix, UploadId++StopSuffix, <<>>) of
 			ok ->
 			    IsRenamed = OrigName2 =/= OrigName0,
 			    Bytes =
@@ -520,10 +520,10 @@ to_dst_prefix(DstBucketId, SrcPrefix, DstPrefix, CurrentPath, NewName, DstIndexC
 		    false -> ShortPrefix0;
 		    {directory, ExistingDirName} ->
 			ConflictedName0 = utils:unhex(ExistingDirName),
-			ConflictedName1 = riak_api:mark_filename_conflict(ConflictedName0, UserName),
+			ConflictedName1 = s3_api:mark_filename_conflict(ConflictedName0, UserName),
 			utils:join_list_with_separator([utils:hex(ConflictedName1)] ++ RestTokens, "/", []);
 		    {object, OrigName} ->
-			ConflictedName1 = riak_api:mark_filename_conflict(OrigName, UserName),
+			ConflictedName1 = s3_api:mark_filename_conflict(OrigName, UserName),
 			utils:join_list_with_separator([utils:hex(ConflictedName1)] ++ RestTokens, "/", [])
 		end
 	end,
@@ -546,7 +546,7 @@ copy_objects(SrcBucketId, DstBucketId, SrcPrefix, DstPrefix, ObjectKey0, NewName
 		%% We expect "/" at the end of prefixes
 		%% to save time on processing and make the code less complex
 		ON = string:to_lower(ObjectKey1),  %% lowercase hex prefix
-		Paths = riak_api:recursively_list_pseudo_dir(SrcBucketId, utils:prefixed_object_key(SrcPrefix, ON)),
+		Paths = s3_api:recursively_list_pseudo_dir(SrcBucketId, utils:prefixed_object_key(SrcPrefix, ON)),
 		UserName = utils:unhex(erlang:list_to_binary(User#user.name)),
 		lists:map(
 		    fun(CurrentPath) ->
@@ -559,12 +559,12 @@ copy_objects(SrcBucketId, DstBucketId, SrcPrefix, DstPrefix, ObjectKey0, NewName
 		ShortPrefix2 = shorten_prefix(SrcPrefix, PrefixedObjectKey),
 		%% No need to check if target object exist, as new target object name will be picked later
 		DstNewPrefix = utils:prefixed_object_key(DstPrefix, ShortPrefix2),
-		SrcIndexPath = utils:prefixed_object_key(SrcPrefix, ?RIAK_INDEX_FILENAME),
-		DstIndexPath = utils:prefixed_object_key(DstPrefix, ?RIAK_INDEX_FILENAME),
+		SrcIndexPath = utils:prefixed_object_key(SrcPrefix, ?INDEX_FILENAME),
+		DstIndexPath = utils:prefixed_object_key(DstPrefix, ?INDEX_FILENAME),
 		[{PrefixedObjectKey, utils:prefixed_object_key(DstNewPrefix, ObjectKey1), NewName0},
 		 {SrcIndexPath, DstIndexPath}]
 	end,
-    SrcIndexPaths = [I || I <- NewPaths, lists:suffix(?RIAK_INDEX_FILENAME, element(1, I))],
+    SrcIndexPaths = [I || I <- NewPaths, lists:suffix(?INDEX_FILENAME, element(1, I))],
     %% Copy objects directory by directory
     CopiedObjects0 = lists:map(
 	fun(SrcDstPath) ->
@@ -574,14 +574,14 @@ copy_objects(SrcBucketId, DstBucketId, SrcPrefix, DstPrefix, ObjectKey0, NewName
 	    NewDstIndexContent = indexing:get_index(DstBucketId, NewDstPrefix),
 	    %% Copy action log, if it absent in destination directory
 	    %% Reason: someone could destroy log of actions by copying/moving directories otherwise
-	    SrcActionLog = utils:prefixed_object_key(CurrentPrefix, ?RIAK_ACTION_LOG_FILENAME),
-	    DstActionLog = utils:prefixed_object_key(NewDstPrefix, ?RIAK_ACTION_LOG_FILENAME),
-	    case riak_api:head_object(DstBucketId, DstActionLog) of
+	    SrcActionLog = utils:prefixed_object_key(CurrentPrefix, ?ACTION_LOG_FILENAME),
+	    DstActionLog = utils:prefixed_object_key(NewDstPrefix, ?ACTION_LOG_FILENAME),
+	    case s3_api:head_object(DstBucketId, DstActionLog) of
 		{error, Reason} ->
 		    lager:error("[copy_handler] head_object failed ~p/~p: ~p",
 				[DstBucketId, DstActionLog, Reason]),
-		    riak_api:copy_object(DstBucketId, DstActionLog, SrcBucketId, SrcActionLog);
-		not_found -> riak_api:copy_object(DstBucketId, DstActionLog, SrcBucketId,
+		    s3_api:copy_object(DstBucketId, DstActionLog, SrcBucketId, SrcActionLog);
+		not_found -> s3_api:copy_object(DstBucketId, DstActionLog, SrcBucketId,
 						  SrcActionLog);
 		_ -> ok
 	    end,
@@ -669,16 +669,16 @@ delete_pseudo_directory(BucketId, Prefix0, CopiedObjects, UserId) ->
 			    case LockUserId =/= UserId of
 				false -> ok; %% don't delete source object, as someone's editing it
 				true ->
-				    case riak_api:delete_object(BucketId, PrefixedObjectKey) of
+				    case s3_api:delete_object(BucketId, PrefixedObjectKey) of
 					{error, Reason} ->
 					    lager:error("[move_handler] Can't delete object ~p/~p: ~p",
 							[BucketId, PrefixedObjectKey, Reason]);
 					{ok, _} -> sql_server:delete_object(BucketId, SrcPrefix, OldKey)
 				    end,
-				    riak_api:delete_object(BucketId, PrefixedObjectKey ++ ?RIAK_LOCK_SUFFIX)
+				    s3_api:delete_object(BucketId, PrefixedObjectKey ++ ?LOCK_SUFFIX)
 			    end;
 			false ->
-			    case riak_api:delete_object(BucketId, PrefixedObjectKey) of
+			    case s3_api:delete_object(BucketId, PrefixedObjectKey) of
 				{error, Reason} ->
 				    lager:error("[move_handler] Can't delete object ~p/~p: ~p",
 						[BucketId, PrefixedObjectKey, Reason]);
@@ -695,15 +695,15 @@ delete_pseudo_directory(BucketId, Prefix0, CopiedObjects, UserId) ->
 	end,
     case HasSkipped of
 	[] ->
-	    PrefixedIndexKey = utils:prefixed_object_key(Prefix1, ?RIAK_INDEX_FILENAME),
-	    case riak_api:delete_object(BucketId, PrefixedIndexKey) of
+	    PrefixedIndexKey = utils:prefixed_object_key(Prefix1, ?INDEX_FILENAME),
+	    case s3_api:delete_object(BucketId, PrefixedIndexKey) of
 		{error, Reason} ->
 		    lager:error("[move_handler] Can't delete object ~p/~p: ~p",
 				[BucketId, PrefixedIndexKey, Reason]);
 		{ok, _} -> ok
 	    end,
-	    PrefixedActionLogKey = utils:prefixed_object_key(Prefix1, ?RIAK_ACTION_LOG_FILENAME),
-	    riak_api:delete_object(BucketId, PrefixedActionLogKey),
+	    PrefixedActionLogKey = utils:prefixed_object_key(Prefix1, ?ACTION_LOG_FILENAME),
+	    s3_api:delete_object(BucketId, PrefixedActionLogKey),
 	    %% Mark deleted in SQLite db
 	    DirName = utils:unhex(erlang:list_to_binary(filename:basename(Prefix1))),
 	    sqlite_server:delete_pseudo_directory(BucketId, utils:dirname(Prefix1),

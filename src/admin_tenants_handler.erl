@@ -16,7 +16,7 @@
 	 get_tenant/1, tenant_to_proplist/1]).
 
 -include_lib("xmerl/include/xmerl.hrl").
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 -include("general.hrl").
 
@@ -60,7 +60,7 @@ tenant_to_proplist(Tenant) ->
 	    [{id, erlang:list_to_binary(G#group.id)},
 	    {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))},
 	    {available_bytes, -1},  %% TODO: to store and display used and available bytes
-	    {bucket_id, erlang:list_to_binary(lists:concat([?RIAK_BACKEND_PREFIX, "-", Tenant#tenant.id, "-", G#group.id, "-", ?RESTRICTED_BUCKET_SUFFIX]))}
+	    {bucket_id, erlang:list_to_binary(lists:concat([?BACKEND_PREFIX, "-", Tenant#tenant.id, "-", G#group.id, "-", ?RESTRICTED_BUCKET_SUFFIX]))}
 	    ] || G <- Tenant#tenant.groups]}
     ].
 
@@ -70,11 +70,11 @@ tenant_to_proplist(Tenant) ->
 -spec get_tenant(string()|undefined) -> tenant().
 
 get_tenant(TenantId0) when erlang:is_list(TenantId0) ->
-    case riak_api:head_bucket(?SECURITY_BUCKET_NAME) of
+    case s3_api:head_bucket(?SECURITY_BUCKET_NAME) of
 	not_found -> not_found;
 	_ ->
 	    PrefixedTenantId = utils:prefixed_object_key(?TENANT_PREFIX, TenantId0),
-	    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedTenantId) of
+	    case s3_api:get_object(?SECURITY_BUCKET_NAME, PrefixedTenantId) of
 		{error, Reason} ->
 		    lager:error("[admin_tenants_handler] get_object error ~p/~p: ~p",
 				[?SECURITY_BUCKET_NAME, PrefixedTenantId, Reason]),
@@ -122,7 +122,7 @@ content_types_provided(Req, State) ->
     ], Req, State}.
 
 get_tenants_list(TenantList0, Marker0) ->
-    RiakResponse = riak_api:list_objects(?SECURITY_BUCKET_NAME, [{prefix, ?TENANT_PREFIX}, {marker, Marker0}]),
+    RiakResponse = s3_api:list_objects(?SECURITY_BUCKET_NAME, [{prefix, ?TENANT_PREFIX}, {marker, Marker0}]),
     case RiakResponse of
 	not_found -> [];  %% bucket not found
 	_ ->
@@ -203,7 +203,6 @@ to_html(Req0, State) ->
 
 %%
 %% Checks if provided token is correct.
-%% Allows request in case ANONYMOUS_USER_CREATION is set to true
 %%
 %% ( called after 'allowed_methods()' )
 %%
@@ -214,33 +213,21 @@ forbidden(Req0, _State) ->
 	    false ->  Settings0#general_settings.static_root;
 	    V -> V
 	end,
-    Settings1 = Settings0#general_settings{static_root = StaticRoot},
+    AdminApiKey =
+	case os:getenv("ADMIN_API_KEY") of
+	    false ->  Settings0#general_settings.admin_api_key;
+	    K -> K
+	end,
+    Settings1 = Settings0#general_settings{static_root = StaticRoot, admin_api_key = AdminApiKey},
     State1 =
 	case utils:get_token(Req0) of
 	    undefined ->
 		SessionCookieName = Settings1#general_settings.session_cookie_name,
 		#{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
-		%% Response depends on content type
-		case ?ANONYMOUS_USER_CREATION of
-		    true ->
-			Login = utils:hex(erlang:list_to_binary(Settings1#general_settings.admin_email)),
-			User0 = #user{
-			    id = "admin",
-			    name = "41646d696e6973747261746f72",  % Administrator
-			    tenant_id = "nonexistent",
-			    tenant_name = "4e6f6e2d6578697374656e74", % Non-existent
-			    tenant_enabled = true,
-			    login = Login,
-			    enabled = true,
-			    staff = true
-			},
-			[{session_id, SessionID0}, {user, User0}];
-		    false ->
-			case login_handler:check_session_id(SessionID0) of
-			    false -> js_handler:redirect_to_login(Req0);
-			    {error, Code} -> js_handler:incorrect_configuration(Req0, Code);
-			    User1 -> [{session_id, SessionID0}, {user, User1}]
-			end
+		case login_handler:check_session_id(SessionID0) of
+		    false -> js_handler:redirect_to_login(Req0);
+		    {error, Code} -> js_handler:incorrect_configuration(Req0, Code);
+		    User1 -> [{session_id, SessionID0}, {user, User1}]
 		end;
 	    Token ->
 		%% Extracts token from request headers and looks it up in "security" bucket
@@ -248,7 +235,7 @@ forbidden(Req0, _State) ->
 		    not_found -> not_found;
 		    expired -> expired;
 		    User2 ->
-			case User2#user.staff of
+			case User2#user.staff orelse Token =:= AdminApiKey of
 			    true -> [{user, User2}];
 			    false -> not_staff
 			end
@@ -490,12 +477,12 @@ validate_patch(Tenant, Body) ->
 -spec new_tenant(any(), tenant()) -> any().
 
 new_tenant(Req0, Tenant0) ->
-    case riak_api:head_bucket(?SECURITY_BUCKET_NAME) of
-	not_found -> riak_api:create_bucket(?SECURITY_BUCKET_NAME);
+    case s3_api:head_bucket(?SECURITY_BUCKET_NAME) of
+	not_found -> s3_api:create_bucket(?SECURITY_BUCKET_NAME);
 	_ -> ok
     end,
     PrefixedTenantId = utils:prefixed_object_key(?TENANT_PREFIX, Tenant0#tenant.id),
-    ExistingTenantObject = riak_api:head_object(?SECURITY_BUCKET_NAME, PrefixedTenantId),
+    ExistingTenantObject = s3_api:head_object(?SECURITY_BUCKET_NAME, PrefixedTenantId),
     case ExistingTenantObject of
 	{error, Reason} ->
 	    lager:error("[download_handler] head_object ~p/~p: ~p",
@@ -514,7 +501,7 @@ new_tenant(Req0, Tenant0) ->
 	    ]},
 	    RootElement0 = #xmlElement{name=tenant, content=[Tenant1]},
 	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-	    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant0#tenant.id,
+	    Response = s3_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant0#tenant.id,
 					   unicode:characters_to_binary(XMLDocument0)),
 	    case Response of
 		{error, Reason} -> lager:error("[admin_tenants_handler] Can't put object ~p/~p/~p: ~p",
@@ -555,7 +542,7 @@ edit_tenant(Req0, Tenant) ->
 	]},
     RootElement0 = #xmlElement{name=tenant, content=[EditedTenant]},
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant#tenant.id,
+    Response = s3_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant#tenant.id,
 				   unicode:characters_to_binary(XMLDocument0)),
     case Response of
 	{error, Reason} ->
@@ -639,7 +626,7 @@ delete_resource(Req0, _State) ->
 	TenantId1 ->
 	    TenantId2 = erlang:binary_to_list(TenantId1),
 	    PrefixedTenantId = utils:prefixed_object_key(?TENANT_PREFIX, TenantId2),
-	    riak_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedTenantId)
+	    s3_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedTenantId)
     end.
 
 delete_completed(Req0, State) ->

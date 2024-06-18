@@ -19,7 +19,7 @@
          terminate/2,
          code_change/3]).
 
--include("riak.hrl").
+-include("storage.hrl").
 
 -define(TOKENS_CLEANUP_INTERVAL, 15000).
 -define(CSRF_TOKENS_CLEANUP_INTERVAL, 30000).
@@ -81,7 +81,7 @@ handle_info(tokens_cleanup, State) ->
     lists:foreach(
 	fun(PrefixedToken) ->
 	    case check_token(PrefixedToken) of
-		expired -> riak_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedToken);
+		expired -> s3_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedToken);
 		_ -> ok
 	    end
 	end, Tokens),
@@ -93,15 +93,15 @@ handle_info(csrf_tokens_cleanup, State) ->
 	fun(PrefixedToken) ->
 	    UUID = filename:basename(PrefixedToken),
 	    case login_handler:check_csrf_token(erlang:list_to_binary(UUID)) of
-		expired -> riak_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedToken);
+		expired -> s3_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedToken);
 		_ -> ok
 	    end
 	end, Tokens),
     {noreply, State};
 
 handle_info(deleted_files_cleanup, State) ->
-    %List0 = riak_api:recursively_list_pseudo_dir(BucketId, undefined),
-    %IndexName1 = erlang:list_to_binary(?RIAK_INDEX_FILENAME),
+    %List0 = s3_api:recursively_list_pseudo_dir(BucketId, undefined),
+    %IndexName1 = erlang:list_to_binary(?INDEX_FILENAME),
     {noreply, State};
 
 
@@ -110,7 +110,7 @@ handle_info(_Info, State) ->
 
 
 get_tokens_list(Prefix, TokensList0, Marker0) ->
-    RiakResponse = riak_api:list_objects(?SECURITY_BUCKET_NAME, [{prefix, Prefix}, {marker, Marker0}]),
+    RiakResponse = s3_api:list_objects(?SECURITY_BUCKET_NAME, [{prefix, Prefix}, {marker, Marker0}]),
     case RiakResponse of
 	not_found -> [];  %% bucket not found
 	_ ->
@@ -126,7 +126,7 @@ get_tokens_list(Prefix, TokensList0, Marker0) ->
 
 
 check_token(PrefixedToken) when erlang:is_list(PrefixedToken) ->
-    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedToken) of
+    case s3_api:get_object(?SECURITY_BUCKET_NAME, PrefixedToken) of
 	{error, _Reason} -> not_found;
 	not_found -> not_found;
 	TokenObject ->

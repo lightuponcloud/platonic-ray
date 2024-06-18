@@ -1,4 +1,4 @@
--record(riak_action_log_record, {
+-record(action_log_record, {
     action=""::string(),
     details=""::list(), % unicode-encoded characters list
     user_name=""::string(),
@@ -6,7 +6,7 @@
     timestamp=undefined
 }).
 
--type riak_action_log_record() :: #{
+-type action_log_record() :: #{
     action => string(),
     details => list(),
     user_name => string(),

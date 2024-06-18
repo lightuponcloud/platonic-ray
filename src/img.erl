@@ -10,7 +10,7 @@
          code_change/3]).
 
 -include("log.hrl").
--include("riak.hrl").
+-include("storage.hrl").
 
 -record(state, {port :: undefined | port(),
 		links = sets:new() :: sets:set(),

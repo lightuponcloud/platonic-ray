@@ -10,7 +10,7 @@
 	 to_json/2, allowed_methods/2, forbidden/2, is_authorized/2,
 	 handle_post/2, rename_pseudo_directory/6, rename_pseudo_directory/5]).
 
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 -include("action_log.hrl").
 
@@ -59,8 +59,8 @@ validate_src_object_key(BucketId, Prefix0, SrcObjectKey0) ->
 %% Check if correct source directory provided
 %%
 check_src_dir(BucketId, Prefix) ->
-    PrefixedIndexFilename = utils:prefixed_object_key(Prefix, ?RIAK_INDEX_FILENAME),
-    case riak_api:get_object(BucketId, PrefixedIndexFilename) of
+    PrefixedIndexFilename = utils:prefixed_object_key(Prefix, ?INDEX_FILENAME),
+    case s3_api:get_object(BucketId, PrefixedIndexFilename) of
 	{error, Reason} ->
 	    lager:error("[rename_handler] get_object error ~p/~p: ~p",
 			[BucketId, PrefixedIndexFilename, Reason]),
@@ -171,7 +171,7 @@ copy_delete(BucketId, PrefixedSrcDirectoryName, PrefixedDstDirectoryName, Prefix
     %% We have cheked previously that destination directory do not exist
     PrefixedObjectKey2 = utils:prefixed_object_key(PrefixedDstDirectoryName, PrefixedObjectKey1),
 
-    CopyResult = riak_api:copy_object(BucketId, PrefixedObjectKey2, BucketId, PrefixedObjectKey0),
+    CopyResult = s3_api:copy_object(BucketId, PrefixedObjectKey2, BucketId, PrefixedObjectKey0),
     case CopyResult of 
 	{error, _} -> PrefixedObjectKey2;
 	_ ->
@@ -179,7 +179,7 @@ copy_delete(BucketId, PrefixedSrcDirectoryName, PrefixedDstDirectoryName, Prefix
 		true -> PrefixedObjectKey2;
 		false ->
 		    %% Delete regular object
-		    case riak_api:delete_object(BucketId, PrefixedObjectKey0) of
+		    case s3_api:delete_object(BucketId, PrefixedObjectKey0) of
 			{error, Reason} -> lager:error("[rename_handler] Can't delete object ~p/~p: ~p", [BucketId, PrefixedObjectKey0, Reason]);
 			{ok, _} -> ok
 		    end,
@@ -215,37 +215,22 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
     PrefixedSrcDirectoryName :: string(),
     PrefixedDstDirectoryName0 :: string(),  %% prefixed hex-encoded directory name
     DstDirectoryName :: binary(),           %% original directory name
-    ActionLogRecord :: riak_action_log_record().
+    ActionLogRecord :: action_log_record().
 
 rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirectoryName0,
 			PrefixedDstDirectoryName0, ActionLogRecord0)
 	when erlang:is_list(BucketId), erlang:is_list(Prefix0) orelse Prefix0 =:= undefined,
 	     erlang:is_list(PrefixedSrcDirectoryName), erlang:is_binary(DstDirectoryName0) ->
-    List0 = riak_api:recursively_list_pseudo_dir(BucketId, PrefixedSrcDirectoryName),
-    %% Move only not locked object keys.
-    %% Leave locked ones where they are.
+    List0 = s3_api:recursively_list_pseudo_dir(BucketId, PrefixedSrcDirectoryName),
     RenameResult0 = [copy_delete(BucketId, PrefixedSrcDirectoryName,
 				 PrefixedDstDirectoryName0, PrefixedObjectKey)
 		     || PrefixedObjectKey <- List0,
 		     utils:is_hidden_prefix(PrefixedObjectKey) =:= false andalso
-		     lists:suffix(?RIAK_INDEX_FILENAME, PrefixedObjectKey) =/= true andalso
-		     lists:member(PrefixedObjectKey ++ ?RIAK_LOCK_SUFFIX, List0) =:= false],
-    LockedPaths0 = [filename:dirname(PrefixedObjectKey) || PrefixedObjectKey <- List0,
-        utils:is_hidden_prefix(PrefixedObjectKey) =:= false andalso
-	lists:member(PrefixedObjectKey ++ ?RIAK_LOCK_SUFFIX, List0) =:= true],
-    %% generate list of paths to keep
-    LockedPaths1 = lists:map(
-        fun(P) ->
-            Bits = string:tokens(P, "/"),
-            lists:flatten([lists:foldr(
-                fun (A, B) ->
-                    lists:join("/", [A, B])
-                end, [], lists:sublist(Bits, I)) || I <- lists:seq(1, length(Bits))])
-        end, LockedPaths0),
+		     lists:suffix(?INDEX_FILENAME, PrefixedObjectKey) =/= true],
     %% Update indices for nested pseudo-directories
     PseudoDirectoryMoveResult = lists:map(
 	fun(PrefixedObjectKey) ->
-	    case lists:suffix(?RIAK_INDEX_FILENAME, PrefixedObjectKey) of
+	    case lists:suffix(?INDEX_FILENAME, PrefixedObjectKey) of
 		false -> ok;
 		true ->
 		    SrcPrefix =
@@ -268,18 +253,11 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 					 {bucket_id, BucketId}, {prefix, SrcPrefix}]}]) of
 			lock -> filename:dirname(PrefixedObjectKey);
 			_ ->
-			    case lists:member(filename:dirname(PrefixedObjectKey)++"/", LockedPaths1) of
-				true -> 
-				    case indexing:update(BucketId, filename:dirname(PrefixedObjectKey)++"/") of
-					lock -> filename:dirname(PrefixedObjectKey);
-					_ -> ok
-				    end;
-				false ->
-				    case riak_api:delete_object(BucketId, PrefixedObjectKey) of
-					{error, Reason} -> lager:error("[rename_handler] Can't delete object ~p/~p: ~p", [BucketId, PrefixedObjectKey, Reason]);
-					{ok, _} -> ok
-				    end,
-				    ok
+			    case s3_api:delete_object(BucketId, PrefixedObjectKey) of
+				{error, Reason} ->
+				    lager:error("[rename_handler] Can't delete object ~p/~p: ~p", [BucketId, PrefixedObjectKey, Reason]),
+				    ok;
+				{ok, _} -> ok
 			    end
 		    end
 	    end
@@ -290,14 +268,14 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 	false -> {accepted, {RenameErrors1, RenameErrors2}};
 	true ->
 	    DstDirectoryName1 = utils:hex(DstDirectoryName0),
-	    case ActionLogRecord0#riak_action_log_record.action of
+	    case ActionLogRecord0#action_log_record.action of
 		"delete" ->
 		    %%
 		    %% This function can be called when user deletes directory
 		    %% In this case we might need to rename directory, in order
 		    %% to allow "undelete" operation later.
 		    %%
-		    Timestamp = ActionLogRecord0#riak_action_log_record.timestamp,
+		    Timestamp = ActionLogRecord0#action_log_record.timestamp,
 		    case indexing:update(BucketId, Prefix0, [{to_delete,
 					 [{erlang:list_to_binary(DstDirectoryName1++"/"), Timestamp}]}]) of
 			lock ->
@@ -307,7 +285,7 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 			_ ->
 			    DstDirectoryName2 = unicode:characters_to_list(DstDirectoryName0),
 			    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName2, ["/\"."]]),
-			    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+			    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
 			    action_log:add_record(BucketId, Prefix0, ActionLogRecord1),
 			    {dir_name, DstDirectoryName0}
 		    end;
@@ -323,7 +301,7 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 			    SrcObjectKey1 = unicode:characters_to_list(utils:unhex(erlang:list_to_binary(SrcObjectKey0))),
 			    DstDirectoryName2 = unicode:characters_to_list(DstDirectoryName0),
 			    Summary0 = lists:flatten([["Renamed \""], [SrcObjectKey1, "\" to \"", DstDirectoryName2, "\""]]),
-			    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+			    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
 			    action_log:add_record(BucketId, Prefix0, ActionLogRecord1),
 			    {dir_name, DstDirectoryName0}
 		    end
@@ -340,7 +318,7 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
     %% would complain "object exist". Provided they have the same object name.
     UserName = utils:unhex(erlang:list_to_binary(User#user.name)),
 
-    {ObjectKey0, OrigName0, _IsNewVersion, ExistingObject0, _IsConflict} = riak_api:pick_object_key(
+    {ObjectKey0, OrigName0, _IsNewVersion, ExistingObject0, _IsConflict} = s3_api:pick_object_key(
 	    BucketId, Prefix0, DstObjectName0, undefined, UserName, IndexContent),
     %% Check if target object exists
     %% If not, check if source object is locked.
@@ -353,7 +331,7 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 		{true, _} -> {error, 43};
 		{false, Metadata0} ->
 		    Meta = list_handler:parse_object_record(Metadata0, [{orig_name, utils:hex(OrigName0)}]),
-		    case riak_api:put_object(BucketId, Prefix0, ObjectKey0, <<>>, [{meta, Meta}]) of
+		    case s3_api:put_object(BucketId, Prefix0, ObjectKey0, <<>>, [{meta, Meta}]) of
 			{error, Reason3} ->
 			    lager:error("[rename_handler] Can't put object ~p/~p/~p: ~p",
 					[BucketId, Prefix0, ObjectKey0, Reason3]),
@@ -363,7 +341,7 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 				true -> ok;  %% Don't delete object
 				false ->
 				    %% Delete a source object object
-				    case riak_api:delete_object(BucketId, PrefixedSrcObjectKey) of
+				    case s3_api:delete_object(BucketId, PrefixedSrcObjectKey) of
 					{error, Reason1} ->
 					    lager:error("[rename_handler] Can't delete object ~p/~p: ~p",
 							[BucketId, PrefixedSrcObjectKey, Reason1]);
@@ -372,12 +350,12 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 					    ok
 				    end,
 				    %% Rename lock object key, if exsits, as the name changed
-				    PrefixedSrcLockKey1 = PrefixedSrcObjectKey ++ ?RIAK_LOCK_SUFFIX,
-				    PrefixedDstLockKey = utils:prefixed_object_key(Prefix0, ObjectKey0 ++ ?RIAK_LOCK_SUFFIX),
-				    case riak_api:copy_object(BucketId, PrefixedSrcLockKey1, BucketId, PrefixedDstLockKey) of
+				    PrefixedSrcLockKey1 = PrefixedSrcObjectKey ++ ?LOCK_SUFFIX,
+				    PrefixedDstLockKey = utils:prefixed_object_key(Prefix0, ObjectKey0 ++ ?LOCK_SUFFIX),
+				    case s3_api:copy_object(BucketId, PrefixedSrcLockKey1, BucketId, PrefixedDstLockKey) of
 					{error, _} -> ok;
 					_ ->
-					    case riak_api:delete_object(BucketId, PrefixedSrcLockKey1) of
+					    case s3_api:delete_object(BucketId, PrefixedSrcLockKey1) of
 						{error, Reason2} ->
 						    lager:error("[rename_handler] Can't delete object ~p/~p: ~p",
 								[BucketId, PrefixedSrcLockKey1, Reason2]);
@@ -402,7 +380,7 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 				    OrigName2 = unicode:characters_to_list(OrigName0),
 				    Summary1 = lists:flatten([["Renamed \""], [PreviousOrigName], ["\" to \""],
 							     [OrigName2], ["\""]]),
-				    ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
+				    ActionLogRecord2 = ActionLogRecord0#action_log_record{details=Summary1},
 				    action_log:add_record(BucketId, Prefix0, ActionLogRecord2),
 				    Metadata1 = list_handler:parse_object_record(Metadata0, [
 					{orig_name, unicode:characters_to_binary(OrigName2)}]),
@@ -419,7 +397,7 @@ rename(Req0, BucketId, State, IndexContent) ->
     DstObjectName0 = proplists:get_value(dst_object_name, State),
     PrefixedDstDirectoryName = proplists:get_value(prefixed_dst_directory_name, State),
     User = proplists:get_value(user, State),
-    ActionLogRecord0 = #riak_action_log_record{
+    ActionLogRecord0 = #action_log_record{
 	action="rename",
 	user_name=User#user.name,
 	tenant_name=User#user.tenant_name,

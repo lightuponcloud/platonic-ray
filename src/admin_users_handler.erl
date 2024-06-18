@@ -18,7 +18,7 @@
 
 -include_lib("xmerl/include/xmerl.hrl").
 -include("general.hrl").
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 
 init(Req, Opts) ->
@@ -83,7 +83,7 @@ user_to_proplist(User) ->
 	    [{id, erlang:list_to_binary(G#group.id)},
 	     {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))},
 	     {available_bytes, -1},  %% TODO: to store and display used and available bytes
-	     {bucket_id, erlang:list_to_binary(lists:concat([?RIAK_BACKEND_PREFIX, "-", User#user.tenant_id, "-", G#group.id, "-", ?RESTRICTED_BUCKET_SUFFIX]))},
+	     {bucket_id, erlang:list_to_binary(lists:concat([?BACKEND_PREFIX, "-", User#user.tenant_id, "-", G#group.id, "-", ?RESTRICTED_BUCKET_SUFFIX]))},
 	     {bucket_suffix, erlang:list_to_binary(?RESTRICTED_BUCKET_SUFFIX)}
 	    ] || G <- User#user.groups]}
     ].
@@ -158,7 +158,7 @@ to_html(Req0, State0) ->
 			[erlang:binary_to_list(proplists:get_value(tenant_id, U)) || U <- UsersList])),
 		    Tenants = admin_tenants_handler:get_tenants_by_ids(TenantIDs),
 
-		    State1 = admin_users_handler:user_to_proplist(User),
+		    State1 = user_to_proplist(User),
 		    {ok, Body} = admin_users_dtl:render([
 			{brand_name, Settings1#general_settings.brand_name},
 			{static_root, Settings1#general_settings.static_root},
@@ -214,7 +214,7 @@ parse_user(RootElement) ->
 
 get_user(UserId) when erlang:is_list(UserId) ->
     PrefixedUserId = utils:prefixed_object_key(?USER_PREFIX, UserId),
-    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedUserId) of
+    case s3_api:get_object(?SECURITY_BUCKET_NAME, PrefixedUserId) of
 	{error, Reason0} ->
 	    lager:error("[admin_users_handler] get_object failed: ~p/~p: ~p",
 			[?SECURITY_BUCKET_NAME, PrefixedUserId, Reason0]),
@@ -225,7 +225,7 @@ get_user(UserId) when erlang:is_list(UserId) ->
 	    {RootElement0, _} = xmerl_scan:string(XMLDocument0),
             User0 = parse_user(RootElement0),
 	    PrefixedTenantId = utils:prefixed_object_key(?TENANT_PREFIX, User0#user.tenant_id),
-	    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedTenantId) of
+	    case s3_api:get_object(?SECURITY_BUCKET_NAME, PrefixedTenantId) of
 		{error, Reason1} ->
 		    lager:error("[admin_users_handler] get_object failed: ~p/~p: ~p",
 				[?SECURITY_BUCKET_NAME, PrefixedTenantId, Reason1]),
@@ -258,7 +258,7 @@ get_full_users_list(Tenant) ->
     get_full_users_list(Tenant, [], undefined).
 
 get_full_users_list(Tenant, UsersList0, Marker0) ->
-    RiakResponse = riak_api:list_objects(?SECURITY_BUCKET_NAME, [{prefix, ?USER_PREFIX}, {marker, Marker0}]),
+    RiakResponse = s3_api:list_objects(?SECURITY_BUCKET_NAME, [{prefix, ?USER_PREFIX}, {marker, Marker0}]),
     case RiakResponse of
 	not_found -> [];  %% bucket do not exist
 	_ ->
@@ -337,7 +337,7 @@ resource_exists(Req0, State) ->
 
 new_user(Req0, User0) ->
     PrefixedUserId = utils:prefixed_object_key(?USER_PREFIX, User0#user.id),
-    case riak_api:head_object(?SECURITY_BUCKET_NAME, PrefixedUserId) of
+    case s3_api:head_object(?SECURITY_BUCKET_NAME, PrefixedUserId) of
 	not_found ->
 	    %% Create User
 	    Timestamp = io_lib:format("~p", [utils:timestamp()]),
@@ -367,7 +367,7 @@ new_user(Req0, User0) ->
 	    ]},
 	    RootElement0 = #xmlElement{name=user, content=[User1]},
 	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-	    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?USER_PREFIX, User0#user.id,
+	    Response = s3_api:put_object(?SECURITY_BUCKET_NAME, ?USER_PREFIX, User0#user.id,
 					   unicode:characters_to_binary(XMLDocument0)),
 	    case Response of
 		{error, Reason} ->
@@ -425,7 +425,7 @@ edit_user(Req0, User) ->
 	]},
     RootElement0 = #xmlElement{name=user, content=[EditedUser]},
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?USER_PREFIX, User#user.id,
+    Response = s3_api:put_object(?SECURITY_BUCKET_NAME, ?USER_PREFIX, User#user.id,
 	unicode:characters_to_binary(XMLDocument0)),
     case Response of
 	{error, Reason} ->
@@ -480,7 +480,7 @@ validate_login(Login0, IsLoginRequired) when erlang:is_binary(Login0) ->
 	false ->
 	    UserId = utils:hex(erlang:md5(Login0)),  %% User ID is md5(login)
 	    PrefixedLogin = utils:prefixed_object_key(?USER_PREFIX, UserId),
-	    case riak_api:head_object(?SECURITY_BUCKET_NAME, PrefixedLogin) of
+	    case s3_api:head_object(?SECURITY_BUCKET_NAME, PrefixedLogin) of
 		not_found -> {UserId, utils:hex(Login0)};
 		{error, Reason} ->
 		    lager:error("[admin_users_handler] head_object failed ~p/~p: ~p",
@@ -503,7 +503,7 @@ validate_password(Password0) when erlang:is_binary(Password0) ->
     case PasswordLength > 30 orelse PasswordLength < 4 of
 	true -> {error, {password, <<"Password length should be between 4 and 30 characters.">>}};
 	false ->
-	    {ok, Password1, Salt} = riak_crypto:hash_password(Password0),
+	    {ok, Password1, Salt} = crypto_utils:hash_password(Password0),
 	    {?AUTH_NAME, Salt, Password1}
     end.
 
@@ -708,7 +708,7 @@ delete_resource(Req0, State) ->
 	    {stop, Req1, []};
 	false ->
 	    PrefixedUserId = utils:prefixed_object_key(?USER_PREFIX, User0#user.id),
-	    riak_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedUserId),
+	    s3_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedUserId),
 	    {true, Req0, []}
     end.
 

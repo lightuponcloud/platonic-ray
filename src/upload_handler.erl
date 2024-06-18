@@ -12,7 +12,7 @@
 -export([to_json/2, extract_rfc2231_filename/1, validate_version/1, validate_md5/1,
 	 acc_multipart/2, stream_body/2, validate_integer_field/1]).
 
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 -include("action_log.hrl").
 -include("media.hrl").
@@ -145,7 +145,7 @@ validate_filename(FileName) ->
 			false ->
 			    %% Test if it ends with prohibited character
 			    ProhibitedTrailingChrs = [<<".">>, <<" ">>,
-				erlang:list_to_binary(?RIAK_LOCK_SUFFIX)],
+				erlang:list_to_binary(?LOCK_SUFFIX)],
 			    NoProhibitedTrailingChrs = lists:all(
 				fun(C) ->
 				    utils:ends_with(FileName, C) =:= false
@@ -271,7 +271,7 @@ add_action_log_record(State) ->
     OrigName = proplists:get_value(orig_name, State),  %% generated name
     TotalBytes = proplists:get_value(total_bytes, State),
     UploadTime = proplists:get_value(upload_time, State),
-    ActionLogRecord0 = #riak_action_log_record{
+    ActionLogRecord0 = #action_log_record{
 	action="upload",
 	user_name=User#user.name,
 	tenant_name=User#user.tenant_name,
@@ -280,7 +280,7 @@ add_action_log_record(State) ->
     UnicodeObjectKey = unicode:characters_to_list(OrigName),
     Summary = lists:flatten([["Uploaded \""], [UnicodeObjectKey],
 	[io_lib:format("\" ( ~p B )", [TotalBytes])]]),
-    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary},
+    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary},
     action_log:add_record(BucketId, Prefix, ActionLogRecord1).
 
 %%
@@ -459,7 +459,7 @@ get_object_lock(_ExistingObject, _UserId) -> undefined.
     ExistingGUID :: string(), %% GUID from existing object, found by pick_object_key()
     IsConflict :: boolean().  %% flag indicating a conflicted version
 
-get_guid(undefined, undefined, false) -> erlang:binary_to_list(riak_crypto:uuid4());
+get_guid(undefined, undefined, false) -> erlang:binary_to_list(crypto_utils:uuid4());
 get_guid(undefined, ExistingGUID, false) -> ExistingGUID;
 get_guid(GUID, undefined, false) -> GUID;
 get_guid(GUID, GUID, false) -> GUID;
@@ -467,7 +467,7 @@ get_guid(GUID, GUID, false) -> GUID;
 get_guid(_GUID, ExistingGUID, false) -> ExistingGUID;
 
 %% Conflict detected when client tried to upload file
-get_guid(undefined, _ExistingGUID, true) -> erlang:binary_to_list(riak_crypto:uuid4());
+get_guid(undefined, _ExistingGUID, true) -> erlang:binary_to_list(crypto_utils:uuid4());
 get_guid(GUID, _ExistingGUID, true) -> GUID.
 
 %%
@@ -477,7 +477,7 @@ get_guid(GUID, _ExistingGUID, true) -> GUID.
 existing_guid(_BucketId, _Prefix, undefined) -> undefined;
 existing_guid(BucketId, Prefix, ExistingObject) ->
     ObjectKey = ExistingObject#object.key,
-    case riak_api:head_object(BucketId, utils:prefixed_object_key(Prefix, ObjectKey)) of
+    case s3_api:head_object(BucketId, utils:prefixed_object_key(Prefix, ObjectKey)) of
 	{error, Reason} ->
 	    lager:error("[upload_handler] head_object failed ~p/~p: ~p",
 			[BucketId, utils:prefixed_object_key(Prefix, ObjectKey), Reason]),
@@ -498,7 +498,7 @@ lock_check(Req0, State0, BinaryData) ->
     IndexContent = indexing:get_index(BucketId, Prefix),
     User = proplists:get_value(user, State0),
     UserName = utils:unhex(erlang:list_to_binary(User#user.name)),
-    {_ObjectKey, _OrigName, _IsNewVersion, ExistingObject, IsConflict} = riak_api:pick_object_key(
+    {_ObjectKey, _OrigName, _IsNewVersion, ExistingObject, IsConflict} = s3_api:pick_object_key(
 	BucketId, Prefix, FileName, Version, UserName, IndexContent),
     case get_object_lock(ExistingObject, User#user.id) of
 	undefined ->
@@ -529,7 +529,7 @@ check_upload_id(undefined, State) -> State;
 check_upload_id(null, State) -> State;
 check_upload_id([], State) -> State;
 check_upload_id(UploadId, State0) ->
-    case riak_api:head_object(?UPLOADS_BUCKET_NAME, UploadId) of
+    case s3_api:head_object(?UPLOADS_BUCKET_NAME, UploadId) of
 	{error, _} -> {error, 5};
 	not_found -> {error, 5};
 	Meta ->
@@ -601,7 +601,7 @@ create_upload_id(undefined, State0) ->
     UploadTime = proplists:get_value(upload_time, State0),
     GUID =
 	case proplists:get_value(guid, State0) of
-	    undefined -> erlang:binary_to_list(riak_crypto:uuid4());
+	    undefined -> erlang:binary_to_list(crypto_utils:uuid4());
 	    G -> G
 	end,
     User = proplists:get_value(user, State0),
@@ -623,8 +623,8 @@ create_upload_id(undefined, State0) ->
     Prefix = proplists:get_value(prefix, State0),
     Meta2 = [{"prefix", Prefix}, {"bucket_id", BucketId}],
     Options = [{meta, Meta1 ++ Meta2}],
-    UploadId = erlang:binary_to_list(riak_crypto:uuid4()),
-    Response = riak_api:put_object(?UPLOADS_BUCKET_NAME, undefined, UploadId, <<>>, Options),
+    UploadId = erlang:binary_to_list(crypto_utils:uuid4()),
+    Response = s3_api:put_object(?UPLOADS_BUCKET_NAME, undefined, UploadId, <<>>, Options),
     case Response of
 	{error, Reason} ->
 	    lager:error("[upload_handler] Can't put object ~p/~p: ~p",
@@ -640,8 +640,8 @@ create_upload_id(UploadId, State) ->
 %% Check if we have file part with that md5 already. Copy that part in that case.
 %%
 check_part(Req0, <<>>, State0) ->
-    case riak_api:head_bucket(?UPLOADS_BUCKET_NAME) of
-    	not_found -> riak_api:create_bucket(?UPLOADS_BUCKET_NAME);
+    case s3_api:head_bucket(?UPLOADS_BUCKET_NAME) of
+    	not_found -> s3_api:create_bucket(?UPLOADS_BUCKET_NAME);
 	_ -> ok
     end,
     BucketId = proplists:get_value(bucket_id, State0),
@@ -673,7 +673,7 @@ check_part(Req0, BinaryData, State0) ->
 	case proplists:get_value(md5, State0) of
 	    undefined -> false;
 	    Md5 ->
-		Checksum = utils:hex(riak_crypto:md5(BinaryData)),
+		Checksum = utils:hex(crypto_utils:md5(BinaryData)),
 		erlang:list_to_binary(Checksum) =:= Md5
 	end,
     case IsCorrectMd5 of
@@ -698,10 +698,10 @@ find_chunk(_BucketId, undefined, _Md5) -> [];
 find_chunk(BucketId, GUID, Md5) ->
     find_chunk(BucketId, GUID, <<>>, Md5).
 find_chunk(BucketId, GUID, UploadId, Md5) ->
-    PrefixedGUID = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID) ++ "/",
+    PrefixedGUID = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID) ++ "/",
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
     %% go through GUIDs ( object history history unique identifiers )
-    case riak_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, PrefixedGUID}]) of
+    case s3_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, PrefixedGUID}]) of
 	not_found -> [];
 	RiakResponse0 ->
 	    lists:filtermap(
@@ -712,7 +712,7 @@ find_chunk(BucketId, GUID, UploadId, Md5) ->
 			UploadId -> false;  %% do not look at the current upload chunks
 			_ ->
 			    %% iterate through upload ids within history
-			    RiakResponse1 = riak_api:list_objects(BucketId,
+			    RiakResponse1 = s3_api:list_objects(BucketId,
 				    [{prefix, Prefix}, {max_keys, MaxKeys}]),
 			    Contents =
 				case RiakResponse1 of
@@ -799,7 +799,7 @@ upload_response(Req0, OrigName, IsLocked, LockModifiedTime, LockedUserId, Locked
 	    _ -> unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(User#user.tel)))
 	end,
     UploadId = proplists:get_value(upload_id, State0),
-    case riak_api:delete_object(?UPLOADS_BUCKET_NAME, UploadId) of
+    case s3_api:delete_object(?UPLOADS_BUCKET_NAME, UploadId) of
 	{error, Reason} -> lager:error("[upload_handler] failed to delete upload id ~p: ~p",
 					[UploadId, Reason]);
 	{ok, _} -> ok
@@ -837,7 +837,7 @@ upload_response(Req0, OrigName, IsLocked, LockModifiedTime, LockedUserId, Locked
 upload_part(Req0, <<>>, [], State0) ->
     GUID =
 	case proplists:get_value(guid, State0) of
-	    undefined -> erlang:binary_to_list(riak_crypto:uuid4());
+	    undefined -> erlang:binary_to_list(crypto_utils:uuid4());
 	    G -> G
 	end,
     EndByte = proplists:get_value(end_byte, State0),
@@ -868,11 +868,11 @@ upload_part(Req0, <<>>, [PrefixedSrcObjectKey|_], State0) ->
 	    Md5 = proplists:get_value(md5, State0),
 	    PartNumber = proplists:get_value(part_number, State0),
 
-	    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+	    RealPrefix = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID),
 	    DstRealPrefix = utils:prefixed_object_key(RealPrefix, UploadId),
 	    DstObjectKey = lists:concat([erlang:integer_to_list(PartNumber), "_", erlang:binary_to_list(Md5)]),
 	    PrefixedDstObjectKey = utils:prefixed_object_key(DstRealPrefix, DstObjectKey),
-	    CopyResult = riak_api:copy_object(BucketId, PrefixedDstObjectKey,
+	    CopyResult = s3_api:copy_object(BucketId, PrefixedDstObjectKey,
 					      BucketId, PrefixedSrcObjectKey),
 	    case CopyResult of
 		[{content_length,_}] ->
@@ -899,16 +899,16 @@ upload_part(Req0, BinaryData, State0) ->
     BucketId = proplists:get_value(bucket_id, State0),
     Md5 = proplists:get_value(md5, State0),
     PartNumber = proplists:get_value(part_number, State0),
-    case riak_api:head_bucket(BucketId) of
-    	not_found -> riak_api:create_bucket(BucketId);
+    case s3_api:head_bucket(BucketId) of
+    	not_found -> s3_api:create_bucket(BucketId);
 	_ -> ok
     end,
     case create_upload_id(proplists:get_value(upload_id, State0), State0) of
 	{GUID, UploadId, ok} ->
 	    ObjectKey = lists:concat([erlang:integer_to_list(PartNumber), "_", erlang:binary_to_list(Md5)]),
-	    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+	    RealPrefix = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID),
 	    PrefixedUploadId = utils:prefixed_object_key(RealPrefix, UploadId),
-	    case riak_api:put_object(BucketId, PrefixedUploadId, ObjectKey, BinaryData, []) of
+	    case s3_api:put_object(BucketId, PrefixedUploadId, ObjectKey, BinaryData, []) of
 		ok -> upload_response(Req0, GUID, UploadId, 200, State0);
 		{error, Reason} ->
 		    lager:error("[upload_handler] Can't put object ~p/~p/~p: ~p",
@@ -925,10 +925,10 @@ complete_upload(Req0, Etags0, RespCode, State0) ->
     BucketId = proplists:get_value(bucket_id, State0),
     GUID = proplists:get_value(guid, State0),
     UploadId = proplists:get_value(upload_id, State0),
-    PrefixedGUID = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+    PrefixedGUID = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID),
     PrefixedUploadId = utils:prefixed_object_key(PrefixedGUID, UploadId) ++ "/",
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
-    case riak_api:list_objects(BucketId, [{prefix, PrefixedUploadId}, {max_keys, MaxKeys}]) of
+    case s3_api:list_objects(BucketId, [{prefix, PrefixedUploadId}, {max_keys, MaxKeys}]) of
 	not_found ->
 	    lager:warning("[upload_handler] Upload id not found: ~p/~p", [BucketId, PrefixedUploadId]),
 	    js_handler:too_many(Req0);
@@ -963,7 +963,7 @@ complete_upload(Req0, RespCode, State0) ->
     ExistingObject = proplists:get_value(object, State0),
 
     IndexContent = indexing:get_index(BucketId, Prefix),
-    {ObjectKey0, OrigName0, _IsNewVersion, _ExistingObject, IsConflict} = riak_api:pick_object_key(BucketId, Prefix,
+    {ObjectKey0, OrigName0, _IsNewVersion, _ExistingObject, IsConflict} = s3_api:pick_object_key(BucketId, Prefix,
 	FileName, Version0, UserName, IndexContent),
     Meta0 = [
 	{"orig-filename", utils:hex(OrigName0)},
@@ -980,7 +980,7 @@ complete_upload(Req0, RespCode, State0) ->
 	{"is-locked", false}
     ],
     Options = [{meta, Meta0}],
-    case riak_api:put_object(BucketId, Prefix, ObjectKey0, <<>>, Options) of
+    case s3_api:put_object(BucketId, Prefix, ObjectKey0, <<>>, Options) of
 	ok ->
 	    case ExistingObject of
 		undefined -> ok;
@@ -1076,7 +1076,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 		[{"width", proplists:get_value(width, State0)},
 		 {"height", proplists:get_value(height, State0)}];
 	    false ->
-		case riak_api:get_object(BucketId, GUID, UploadId) of
+		case s3_api:get_object(BucketId, GUID, UploadId) of
 		    {error, Reason0} ->
 			lager:error("[upload_handler] get_object error ~p/~p: ~p",
 				    [BucketId, GUID, Reason0]),
@@ -1099,7 +1099,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 	lock -> js_handler:too_many(Req0);
 	_ ->
 	    Options = [{meta, Meta++WidthHeight}],
-	    case riak_api:put_object(BucketId, Prefix, ObjectKey0, <<>>, Options) of
+	    case s3_api:put_object(BucketId, Prefix, ObjectKey0, <<>>, Options) of
 		ok ->
 		    %% Update pseudo-directory index for faster listing.
 		    case indexing:update(BucketId, Prefix, [{modified_keys, [ObjectKey0]}]) of
@@ -1166,10 +1166,10 @@ delete_previous_one(BucketId, GUID, UploadId, Version) ->
 	undefined -> ok;  %% No previous upload was found
 	_ ->
 	    %% Check whether we can remove an old upload
-	    PrefixedGUID = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+	    PrefixedGUID = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID),
 	    StopObjectName = RemovedUploadId ++ ?STOP_OBJECT_SUFFIX,
 	    PrefixedStopSignName = utils:prefixed_object_key(PrefixedGUID, StopObjectName),
-	    case riak_api:head_object(BucketId, PrefixedStopSignName) of
+	    case s3_api:head_object(BucketId, PrefixedStopSignName) of
 		{error, Reason} ->
 		    lager:error("[upload_handler] head_object failed ~p/~p: ~p",
 				[BucketId, PrefixedStopSignName, Reason]),
@@ -1178,10 +1178,10 @@ delete_previous_one(BucketId, GUID, UploadId, Version) ->
 		    %% Delete previous upload for the same day
 		    MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
 		    PrefixedUploadId = utils:prefixed_object_key(PrefixedGUID, RemovedUploadId) ++ "/",
-		    RiakResponse0 = riak_api:list_objects(BucketId, [{prefix, PrefixedUploadId}, {max_keys, MaxKeys}]),
+		    RiakResponse0 = s3_api:list_objects(BucketId, [{prefix, PrefixedUploadId}, {max_keys, MaxKeys}]),
 		    List0 = [proplists:get_value(key, I) || I <- proplists:get_value(contents, RiakResponse0)],
 		    lager:warning("Removing ~p~n", [PrefixedUploadId]),
-		    [riak_api:delete_object(BucketId, I) || I <- List0];
+		    [s3_api:delete_object(BucketId, I) || I <- List0];
 		    %% Now delete thumbnails, if ther'a any
 		    %% TODO
 		_ -> ok

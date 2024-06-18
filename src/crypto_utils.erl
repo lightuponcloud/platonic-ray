@@ -1,4 +1,4 @@
--module(riak_crypto).
+-module(crypto_utils).
 
 -export([sign_v4/8, hash_password/1, check_password/3, uuid4/0, seed/0,
 	 random_string/0, random_string/1, md5/1]).
@@ -7,14 +7,14 @@
 -define(HASH_ITERATIONS, 4096).
 -define(HASH_FUNCTION, sha256).
 
--include("riak.hrl").
+-include("storage.hrl").
 
 -type headers() :: [{string(), string()}].
 
 %%
 %% Signs request using AWS Signature Version 4.
 %%
--spec sign_v4(atom(), list(), headers(), binary(), string(), string(), list(), #riak_api_config{}) -> headers().
+-spec sign_v4(atom(), list(), headers(), binary(), string(), string(), list(), #api_config{}) -> headers().
 
 sign_v4(Method, Uri, Headers0, Payload, Region, Service, QueryParams, Config) ->
     Date = iso_8601_basic_time(),
@@ -26,14 +26,14 @@ sign_v4(Method, Uri, Headers0, Payload, Region, Service, QueryParams, Config) ->
     CredentialScope = [DateOnly, $/, Region, $/, Service, "/aws4_request"],
     ToSign = ["AWS4-HMAC-SHA256\n", Date, $\n, CredentialScope, $\n, hash_encode(Request)],
     %% TODO cache the signing key so we don't have to recompute for every request
-    KDate = sha256_mac( "AWS4" ++ Config#riak_api_config.secret_access_key, DateOnly),
+    KDate = sha256_mac( "AWS4" ++ Config#api_config.secret_access_key, DateOnly),
     KRegion = sha256_mac( KDate, Region),
     KService = sha256_mac( KRegion, Service),
     SigningKey = sha256_mac( KService, "aws4_request"),
 
     Signature = base16(sha256_mac( SigningKey, ToSign)),
     Authorization = ["AWS4-HMAC-SHA256"
-     " Credential=", Config#riak_api_config.access_key_id, $/, CredentialScope, $,,
+     " Credential=", Config#api_config.access_key_id, $/, CredentialScope, $,,
      " SignedHeaders=", SignedHeaders, $,,
      " Signature=", Signature],
     [{"Authorization", lists:flatten(Authorization)} | Headers1].
@@ -183,7 +183,7 @@ random_string(Length) ->
             try [lists:nth(rand:uniform(length(AllowedChars)), AllowedChars)] of
 		Value -> Value ++ Acc
 	    catch error:low_entropy ->
-		riak_crypto:seed(),
+		crypto_utils:seed(),
                 [lists:nth(rand:uniform(length(AllowedChars)), AllowedChars)] ++ Acc
 	    end
 	end, [], lists:seq(1, Length)).

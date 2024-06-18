@@ -8,7 +8,7 @@
 	 content_types_accepted/2, bad_request/1]).
 
 -include("general.hrl").
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 
 
@@ -33,7 +33,7 @@ init(Req0, _Opts) ->
 	{error, Code} -> js_handler:incorrect_configuration(Req0, Code);
 	User ->
 	    TenantId = User#user.tenant_id,
-	    Bits0 = [?RIAK_BACKEND_PREFIX, TenantId, ?RESTRICTED_BUCKET_SUFFIX],
+	    Bits0 = [?BACKEND_PREFIX, TenantId, ?RESTRICTED_BUCKET_SUFFIX],
 	    TenantBucketId = lists:flatten(utils:join_list_with_separator(Bits0, "-", [])),
 	    State = admin_users_handler:user_to_proplist(User)
 		++ [{token, SessionID1}, {tenant_bucket_id, TenantBucketId}],
@@ -161,7 +161,7 @@ first_page(Req0, Settings, State) ->
 			Group = lists:nth(1, UserGroups),
 			GroupId = erlang:binary_to_list(proplists:get_value(id, Group)),
 			TenantId0 = erlang:binary_to_list(proplists:get_value(tenant_id, State)),
-			Bits0 = [?RIAK_BACKEND_PREFIX, TenantId0, GroupId, ?RESTRICTED_BUCKET_SUFFIX],
+			Bits0 = [?BACKEND_PREFIX, TenantId0, GroupId, ?RESTRICTED_BUCKET_SUFFIX],
 			lists:flatten(utils:join_list_with_separator(Bits0, "-", []));
 		    false -> undefined
 		end;

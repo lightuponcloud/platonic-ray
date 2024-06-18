@@ -8,12 +8,7 @@
 	 get_object_record_by_orig_name/2, get_object_index/2, add_dvv/6,
 	 increment_version/3, remove_previous_version/4]).
 
--include_lib("xmerl/include/xmerl.hrl").
-
--import(xmerl_xs,
-    [ xslapply/2, value_of/1, select/2, built_in_rules/2 ]).
-
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 
 %%
@@ -224,8 +219,8 @@ get_diff_list(BucketId, Prefix0, List0, DeletedObjects0, ModifiedKeys, IsUncommi
 			utils:prefixed_object_key(Prefix0, erlang:binary_to_list(K)),
 			ActualListContents) andalso
 		    (utils:ends_with(K, <<"/">>) =:= false andalso
-			utils:ends_with(K, erlang:list_to_binary(?RIAK_ACTION_LOG_FILENAME)) =:= false andalso
-			utils:ends_with(K, erlang:list_to_binary(?RIAK_LOCK_INDEX_FILENAME)) =:= false)
+			utils:ends_with(K, erlang:list_to_binary(?ACTION_LOG_FILENAME)) =:= false andalso
+			utils:ends_with(K, erlang:list_to_binary(?LOCK_INDEX_FILENAME)) =:= false)
 		 ] ++ [{K, proplists:get_value(K, DeletedObjects0)}
 		    || K <- proplists:get_keys(DeletedObjects0),
 		    lists:member(utils:prefixed_object_key(Prefix0, erlang:binary_to_list(K)), PrefixList0)]
@@ -253,7 +248,7 @@ get_diff_list(BucketId, Prefix0, List0, DeletedObjects0, ModifiedKeys, IsUncommi
 	    case lists:member(element(1, R), IndexKeys) of
 		true -> false;
 		false ->
-		    Metadata0 = riak_api:get_object_metadata(BucketId, element(1, R)),
+		    Metadata0 = s3_api:get_object_metadata(BucketId, element(1, R)),
 		    case proplists:get_value("x-amz-meta-upload-id", Metadata0) of
 			undefined -> false;  %% skipping objects that are still uploading
 			_ ->
@@ -270,7 +265,7 @@ get_diff_list(BucketId, Prefix0, List0, DeletedObjects0, ModifiedKeys, IsUncommi
 		    {is_deleted, proplists:is_defined(erlang:list_to_binary(filename:basename(I)++"/"),
 						      DeletedObjects1)}
 		  ] ||  I <- PrefixList0,
-		    utils:starts_with(I, erlang:list_to_binary(?RIAK_REAL_OBJECT_PREFIX)) =/= true],
+		    utils:starts_with(I, erlang:list_to_binary(?REAL_OBJECT_PREFIX)) =/= true],
     [{dirs, PrefixList1},
      {list, List2 ++ List3},
      {to_delete, DeletedObjects1},
@@ -289,8 +284,8 @@ fetch_full_list(BucketId, Prefix, ObjectList0, Marker0)
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
     RiakResponse =
 	case Prefix of
-	    undefined -> riak_api:list_objects(BucketId, [{marker, Marker0}, {max_keys, MaxKeys}]);
-	    _ -> riak_api:list_objects(BucketId, [{prefix, Prefix}, {marker, Marker0}, {max_keys, MaxKeys}])
+	    undefined -> s3_api:list_objects(BucketId, [{marker, Marker0}, {max_keys, MaxKeys}]);
+	    _ -> s3_api:list_objects(BucketId, [{prefix, Prefix}, {marker, Marker0}, {max_keys, MaxKeys}])
 	end,
     case RiakResponse of
 	not_found -> [{dirs, []}, {list, []}, {renamed, []}, {to_delete, []}];  %% bucket not found
@@ -317,14 +312,14 @@ fetch_full_list(BucketId, Prefix, ObjectList0, Marker0)
 %%
 %% Returns contents of existing index.
 %%
--spec get_index(list(), list()) -> list().
+-spec get_index(string(), string()) -> list().
 
 get_index(BucketId, Prefix0)
 	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix0) orelse Prefix0 =:= undefined ->
-    PrefixedIndexFilename = utils:prefixed_object_key(Prefix0, ?RIAK_INDEX_FILENAME),
+    PrefixedIndexFilename = utils:prefixed_object_key(Prefix0, ?INDEX_FILENAME),
     %% Get index object in destination directory
-    case riak_api:get_object(BucketId, PrefixedIndexFilename) of
-	{error, Reason} ->
+    case s3_api:get_object(BucketId, PrefixedIndexFilename) of
+        {error, Reason} ->
 	    lager:error("[indexing] get_object error ~p/~p: ~p",
 			[BucketId, PrefixedIndexFilename, Reason]),
 	    [{dirs, []}, {list, []}, {renamed, []}, {to_delete, []}];
@@ -468,23 +463,21 @@ directory_or_object_exists(BucketId, Prefix, Name0, IndexContent)
 
 update(BucketId, Prefix) when erlang:is_list(BucketId),
 	erlang:is_list(Prefix) orelse Prefix =:= undefined ->
-    RiakOptions = [],
-    update(BucketId, Prefix, [], RiakOptions).
+    update(BucketId, Prefix, [], []).
 
 -spec update(string(), list(), proplist()) -> proplist().
 
 update(BucketId, Prefix, Options) when erlang:is_list(BucketId),
 	erlang:is_list(Prefix) orelse Prefix =:= undefined ->
-    RiakOptions = [],
-    update(BucketId, Prefix, Options, RiakOptions).
+    update(BucketId, Prefix, Options, []).
 
 -spec update(string(), list(), proplist(), proplist()) -> proplist().
 
 update(BucketId, Prefix0, Options, RiakOptions)
 	when erlang:is_list(BucketId),
 	     erlang:is_list(Prefix0) orelse Prefix0 =:= undefined ->
-    PrefixedLockFilename = utils:prefixed_object_key(Prefix0, ?RIAK_LOCK_INDEX_FILENAME),
-    case riak_api:head_object(BucketId, PrefixedLockFilename) of
+    PrefixedLockFilename = utils:prefixed_object_key(Prefix0, ?LOCK_INDEX_FILENAME),
+    case s3_api:head_object(BucketId, PrefixedLockFilename) of
 	{error, Reason0} ->
 	    lager:error("[indexing] head_object failed ~p/~p: ~p",
 			[BucketId, PrefixedLockFilename, Reason0]),
@@ -494,10 +487,10 @@ update(BucketId, Prefix0, Options, RiakOptions)
 	    LockMeta = [{"modified-utc", erlang:round(utils:timestamp()/1000)}],
 	    LockOptions = [{meta, LockMeta}],
 
-	    Response = riak_api:put_object(BucketId, Prefix0, ?RIAK_LOCK_INDEX_FILENAME, <<>>, LockOptions),
+	    Response = s3_api:put_object(BucketId, Prefix0, ?LOCK_INDEX_FILENAME, <<>>, LockOptions),
 	    case Response of
 		{error, Reason1} -> lager:error("[indexing] Can't put object ~p/~p/~p: ~p",
-					       [BucketId, Prefix0, ?RIAK_LOCK_INDEX_FILENAME, Reason1]);
+					       [BucketId, Prefix0, ?LOCK_INDEX_FILENAME, Reason1]);
 		_ -> ok
 	    end,
 	    %% Retrieve existing index object first
@@ -515,8 +508,8 @@ update(BucketId, Prefix0, Options, RiakOptions)
 		    CopyFrom ->
 			SrcBucketId = proplists:get_value(bucket_id, CopyFrom),
 			SrcPrefix = proplists:get_value(prefix, CopyFrom),
-			PrefixedSrcIndexFilename = utils:prefixed_object_key(SrcPrefix, ?RIAK_INDEX_FILENAME),
-			case riak_api:get_object(SrcBucketId, PrefixedSrcIndexFilename) of
+			PrefixedSrcIndexFilename = utils:prefixed_object_key(SrcPrefix, ?INDEX_FILENAME),
+			case s3_api:get_object(SrcBucketId, PrefixedSrcIndexFilename) of
 			    {error, Reason} ->
 				lager:error("[indexing] get_object error ~p/~p: ~p",
 					    [SrcBucketId, PrefixedSrcIndexFilename, Reason]),
@@ -544,14 +537,14 @@ update(BucketId, Prefix0, Options, RiakOptions)
 	    List2 = get_diff_list(BucketId, Prefix0, List1,
 				  DeletedObjects2 ++ DeletedObjects3,
 				  ModifiedKeys2, IsUncommitted),
-	    Response = riak_api:put_object(BucketId, Prefix0, ?RIAK_INDEX_FILENAME, term_to_binary(List2), RiakOptions),
+	    Response = s3_api:put_object(BucketId, Prefix0, ?INDEX_FILENAME, term_to_binary(List2), RiakOptions),
 	    case Response of
 		{error, Reason2} -> lager:error("[indexing] Can't put object ~p/~p/~p: ~p",
-					       [BucketId, Prefix0, ?RIAK_INDEX_FILENAME, Reason2]);
+					       [BucketId, Prefix0, ?INDEX_FILENAME, Reason2]);
 		_ -> ok
 	    end,
 	    %% Remove lock
-	    riak_api:delete_object(BucketId, PrefixedLockFilename),
+	    s3_api:delete_object(BucketId, PrefixedLockFilename),
 	    List2; %% necessary for pseudo_directory_exists()
 	IndexLockMeta ->
 	    %% Check for stale index
@@ -560,9 +553,9 @@ update(BucketId, Prefix0, Options, RiakOptions)
 		    undefined -> 0;
 		    T -> erlang:round(utils:timestamp()/1000) - utils:to_integer(T)
 		end,
-	    case DeltaSeconds > ?RIAK_LOCK_INDEX_COOLOFF_TIME of
+	    case DeltaSeconds > ?LOCK_INDEX_COOLOFF_TIME of
 		true ->
-		    riak_api:delete_object(BucketId, PrefixedLockFilename),
+		    s3_api:delete_object(BucketId, PrefixedLockFilename),
 		    update(BucketId, Prefix0, Options, RiakOptions);
 		false -> lock
 	    end
@@ -574,11 +567,11 @@ update(BucketId, Prefix0, Options, RiakOptions)
 -spec get_object_index(list(), list()) -> list().
 
 get_object_index(BucketId, GUID) when erlang:is_list(BucketId), erlang:is_list(GUID) ->
-    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID++"/"),
-    PrefixedDVVObjectName = utils:prefixed_object_key(RealPrefix, ?RIAK_DVV_INDEX_FILENAME),
+    RealPrefix = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID++"/"),
+    PrefixedDVVObjectName = utils:prefixed_object_key(RealPrefix, ?DVV_INDEX_FILENAME),
 
     %% Get dotted version vectors object in destination pseudo-directory
-    case riak_api:get_object(BucketId, PrefixedDVVObjectName) of
+    case s3_api:get_object(BucketId, PrefixedDVVObjectName) of
 	{error, Reason} ->
 	    lager:error("[indexing] get_object error ~p/~p: ~p",
 			[BucketId, PrefixedDVVObjectName, Reason]),
@@ -592,9 +585,9 @@ get_object_index(BucketId, GUID) when erlang:is_list(BucketId), erlang:is_list(G
 %% This function removes expired lock object.
 %%
 remove_expired_dvv_lock(BucketId, GUID) ->
-    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID++"/"),
-    PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?RIAK_LOCK_DVV_INDEX_FILENAME),
-    case riak_api:head_object(BucketId, PrefixedLockFilename) of
+    RealPrefix = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID++"/"),
+    PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?LOCK_DVV_INDEX_FILENAME),
+    case s3_api:head_object(BucketId, PrefixedLockFilename) of
 	{error, Reason} ->
 	    lager:error("[indexing] head_object failed ~p/~p: ~p",
 			[BucketId, PrefixedLockFilename, Reason]),
@@ -607,9 +600,9 @@ remove_expired_dvv_lock(BucketId, GUID) ->
 		    undefined -> 0;
 		    T -> erlang:round(utils:timestamp()/1000) - utils:to_integer(T)
 		end,
-	    case DeltaSeconds > ?RIAK_LOCK_DVV_COOLOFF_TIME of
+	    case DeltaSeconds > ?LOCK_DVV_COOLOFF_TIME of
 		true ->
-		    riak_api:delete_object(BucketId, PrefixedLockFilename),
+		    s3_api:delete_object(BucketId, PrefixedLockFilename),
 		    remove_expired_dvv_lock(BucketId, GUID);
 		false -> lock
 	    end
@@ -652,19 +645,18 @@ remove_previous_version(BucketId, GUID, UploadId0, Version) when erlang:is_list(
 	    case remove_expired_dvv_lock(BucketId, GUID) of
 		lock -> lock;
 		ok ->
-		    RiakOptions = [],
-		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID++"/"),
+		    RealPrefix = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID++"/"),
                     %% Update index
-		    Response = riak_api:put_object(BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME,
-						 term_to_binary(NewDVVs), RiakOptions),
+		    Response = s3_api:put_object(BucketId, RealPrefix, ?DVV_INDEX_FILENAME,
+						 term_to_binary(NewDVVs), []),
 		    case Response of
 			{error, Reason} -> lager:error("[indexing] Can't put object ~p/~p/~p: ~p",
-						       [BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME, Reason]);
+						       [BucketId, RealPrefix, ?DVV_INDEX_FILENAME, Reason]);
 			_ -> ok
 		    end,
 		    %% Remove lock
-		    PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?RIAK_LOCK_DVV_INDEX_FILENAME),
-		    riak_api:delete_object(BucketId, PrefixedLockFilename),
+		    PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?LOCK_DVV_INDEX_FILENAME),
+		    s3_api:delete_object(BucketId, PrefixedLockFilename),
 		    UploadId2
 	    end;
 	[] -> undefined
@@ -714,17 +706,16 @@ add_dvv(BucketId, GUID, UploadId, Version, UserId, UserName)
 			{last_modified_utc, VVTimestamp}
 		    ],
 		    List1 = List0 ++ [{UploadId, Record}],
-		    RiakOptions = [],
-		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID) ++ "/",
-		    Response = riak_api:put_object(BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME,
-						   term_to_binary(List1), RiakOptions),
+		    RealPrefix = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID) ++ "/",
+		    Response = s3_api:put_object(BucketId, RealPrefix, ?DVV_INDEX_FILENAME,
+						   term_to_binary(List1), []),
 		    %% Remove lock
-		    PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?RIAK_LOCK_DVV_INDEX_FILENAME),
-		    riak_api:delete_object(BucketId, PrefixedLockFilename),
+		    PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?LOCK_DVV_INDEX_FILENAME),
+		    s3_api:delete_object(BucketId, PrefixedLockFilename),
 		    case Response of
 			{error, Reason} ->
 			    lager:error("[indexing] Can't put object ~p/~p/~p: ~p",
-					[BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME, Reason]),
+					[BucketId, RealPrefix, ?DVV_INDEX_FILENAME, Reason]),
 			    {error, Reason};
 			_ -> {UploadId, List0}
 		    end

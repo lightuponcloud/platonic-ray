@@ -9,7 +9,7 @@
     is_authorized/2, forbidden/2, resource_exists/2, previously_existed/2]).
 
 -include("general.hrl").
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 -include("media.hrl").
 
@@ -69,7 +69,7 @@ to_scale(Req0, State) ->
 	false ->
 	    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey0),
 	    T0 = utils:timestamp(),
-	    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+	    case s3_api:head_object(BucketId, PrefixedObjectKey) of
 		{error, Reason} ->
 		    lager:error("[img_scale_handler] head_object failed ~p/~p: ~p",
 				[BucketId, PrefixedObjectKey, Reason]),
@@ -117,7 +117,7 @@ receive_streamed_body(RequestId0, Pid0, BucketId, NextObjectKeys0, Acc) ->
 		[] -> Acc;
 		[CurrentObjectKey|NextObjectKeys1] ->
 		    %% stream next chunk
-		    case riak_api:get_object(BucketId, CurrentObjectKey, stream) of
+		    case s3_api:get_object(BucketId, CurrentObjectKey, stream) of
 			not_found ->
 			    lager:error("[img_scale_handler] part not found: ~p/~p", [BucketId, CurrentObjectKey]),
 			    <<>>;
@@ -142,7 +142,7 @@ get_binary_data(BucketId, Prefix, StartByte, EndByte) ->
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
     PartNumStart = (StartByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1,
     PartNumEnd = (EndByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1,
-    case riak_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, Prefix ++ "/"}]) of
+    case s3_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, Prefix ++ "/"}]) of
 	not_found -> <<>>;
 	RiakResponse0 ->
 	    Contents = proplists:get_value(contents, RiakResponse0),
@@ -171,7 +171,7 @@ get_binary_data(BucketId, Prefix, StartByte, EndByte) ->
 	    case List1 of
 		 [] -> <<>>;
 		 [PrefixedObjectKey | NextKeys] ->
-		    case riak_api:get_object(BucketId, PrefixedObjectKey, stream) of
+		    case s3_api:get_object(BucketId, PrefixedObjectKey, stream) of
 			not_found -> <<>>;
 			{ok, RequestId} ->
 			    receive
@@ -195,7 +195,7 @@ serve_img(Req0, _BucketId, _Prefix, _CachedKey, _Width, _Height, _CropFlag, <<>>
 
 serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, BinaryData, T0) ->
     Watermark =
-	case riak_api:head_object(BucketId, ?WATERMARK_OBJECT_KEY) of
+	case s3_api:head_object(BucketId, ?WATERMARK_OBJECT_KEY) of
 	    {error, Reason1} ->
 		lager:error("[img_scale_handler] head_object failed ~p/~p: ~p",
 			    [BucketId, ?WATERMARK_OBJECT_KEY, Reason1]),
@@ -204,7 +204,7 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, BinaryData
 	    WatermarkResponse ->
 		WatermarkGUID = proplists:get_value("x-amz-meta-guid", WatermarkResponse),
 		WatermarkUploadId = proplists:get_value("x-amz-meta-upload-id", WatermarkResponse),
-		case riak_api:get_object(BucketId, WatermarkGUID, WatermarkUploadId) of
+		case s3_api:get_object(BucketId, WatermarkGUID, WatermarkUploadId) of
 		    not_found -> [];
 		    {error, _} -> [];
 		    WatermarkBinaryData -> [{watermark, WatermarkBinaryData}]
@@ -220,7 +220,7 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, BinaryData
     case Reply0 of
 	{error, Reason2} -> js_handler:bad_request(Req0, Reason2);
 	_ ->
-	    Response = riak_api:put_object(BucketId, utils:dirname(Prefix), CachedKey, Reply0),
+	    Response = s3_api:put_object(BucketId, utils:dirname(Prefix), CachedKey, Reply0),
 	    case Response of
 		{error, Reason3} ->
 		    lager:error("[img_scale_handler] Can't put object ~p/~p/~p: ~p",
@@ -244,9 +244,9 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, BinaryData
 scale_response(Req0, BucketId, Metadata, Width, Height, CropFlag, true, T0) ->
     {RealBucketId, _RealGUID, RealUploadId, RealPrefix0} = utils:real_prefix(BucketId, Metadata),
     CachedKey = RealUploadId ++ "_" ++ erlang:integer_to_list(Width) ++ "x" ++ erlang:integer_to_list(Height),
-    PrefixedThumbnail = utils:prefixed_object_key(RealPrefix0, ?RIAK_THUMBNAIL_KEY),
+    PrefixedThumbnail = utils:prefixed_object_key(RealPrefix0, ?THUMBNAIL_KEY),
     BinaryData =
-	case riak_api:get_object(BucketId, PrefixedThumbnail) of
+	case s3_api:get_object(BucketId, PrefixedThumbnail) of
 	    {error, _} -> <<>>;
 	    not_found -> <<>>;
 	    ThumbnailBinary -> proplists:get_value(content, ThumbnailBinary)
@@ -259,12 +259,12 @@ scale_response(Req0, BucketId, Metadata, Width, Height, CropFlag, true, T0) ->
 %%
 scale_response(Req0, BucketId, Metadata, Width, Height, CropFlag, false, T0) ->
     {RealBucketId, RealGUID, RealUploadId, RealPrefix0} = utils:real_prefix(BucketId, Metadata),
-    PrefixedGUID1 = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, RealGUID),
+    PrefixedGUID1 = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, RealGUID),
     CachedKey = RealUploadId ++ "_" ++ erlang:integer_to_list(Width) ++ "x" ++ erlang:integer_to_list(Height),
     PrefixedCachedKey = utils:prefixed_object_key(PrefixedGUID1, CachedKey),
 
     %% First check if cached image exists already.
-    case riak_api:get_object(RealBucketId, PrefixedCachedKey) of
+    case s3_api:get_object(RealBucketId, PrefixedCachedKey) of
 	{error, Reason} ->
             %% Miss
 	    lager:error("[img_scale_handler] get_object failed ~p/~p: ~p",
@@ -340,7 +340,7 @@ handle_post(Req0, State) ->
 		    undefined -> {error, 9};
 		    _ ->
 			PrefixedObjectKey = utils:prefixed_object_key(Prefix0, erlang:binary_to_list(ObjectKey0)),
-			case riak_api:head_object(BucketId, PrefixedObjectKey) of
+			case s3_api:head_object(BucketId, PrefixedObjectKey) of
 			    {error, _} -> {error, 9};
 			    not_found -> {error, 9};
 			    Metadata1 -> {Metadata1, ObjectKey0}
@@ -378,7 +378,7 @@ handle_post(Req0, State) ->
 		    {RealBucketId, _RealGUID, _RealUploadId, RealPrefix} = utils:real_prefix(BucketId, Metadata0),
 		    Meta = [{"width", Width1}, {"height", Height1}, {"md5", Md5}],
 		    Options = [{meta, Meta}, {md5, Md5}],
-		    case riak_api:put_object(RealBucketId, RealPrefix, ?RIAK_THUMBNAIL_KEY, Blob, Options) of
+		    case s3_api:put_object(RealBucketId, RealPrefix, ?THUMBNAIL_KEY, Blob, Options) of
 			ok ->
 			    Req2 = cowboy_req:reply(200, #{
 				<<"content-type">> => <<"application/json">>

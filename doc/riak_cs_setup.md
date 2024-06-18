@@ -1,3 +1,16 @@
+## Why Riak CS
+
+It is compatible with AWS S3 protocol, a defacto standard in industry.
+It means it can work with Amazon S3 as well as with other providers.
+I used Riak CS as a main storage backend, as it is very predictable on resource consumption.
+It has recovery tools, scales automatically, it can store files > 5 TB and has multi-datacenter bidirectional replication.
+It was built using the latest academic research in the area of distributed systems.
+
+The list of companies who use Riak CS, -- object storage software, used with DubStack:
+"Yahoo! Japan", Booking.com, UK National Health System, TI Tokyo, Bloomberg, Klarna, 
+Bet365, EE.co.uk, Bleacher Report, Derivco, etc.
+
+
 # How to install Riak CS ?
 
 ## 1. Install the following packages

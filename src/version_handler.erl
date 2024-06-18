@@ -12,7 +12,7 @@
 
 -export([init/2]).
 
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 -include("general.hrl").
 -include("action_log.hrl").
@@ -84,7 +84,7 @@ stream_db(Req0, BucketId0, Bytes, StartByte0) ->
 	<<"range">> => << "bytes=", StartByte1/binary, "-" >>
     },
     Req1 = cowboy_req:stream_reply(200, Headers0, Req0),
-    case riak_api:get_object(BucketId0, ?DB_VERSION_KEY, stream) of
+    case s3_api:get_object(BucketId0, ?DB_VERSION_KEY, stream) of
 	not_found ->
 	    %% The bucket could have disappeared between checks (unlikely)
 	    Req2 = cowboy_req:set_resp_body(<<>>, Req1),
@@ -118,7 +118,7 @@ first_version(Req0, UserId) ->
 %% POST request uploads a new version of SQLite DB.
 %%
 response(Req0, <<"HEAD">>, BucketId, UserId) ->
-    case riak_api:head_object(BucketId, ?DB_VERSION_KEY) of
+    case s3_api:head_object(BucketId, ?DB_VERSION_KEY) of
 	{error, Reason} ->
 	    lager:error("[version_handler] head_object failed ~p/~p: ~p", [BucketId, ?DB_VERSION_KEY, Reason]),
 	    first_version(Req0, UserId);
@@ -134,7 +134,7 @@ response(Req0, <<"HEAD">>, BucketId, UserId) ->
     end;
 
 response(Req0, <<"GET">>, BucketId, _UserId) ->
-    case riak_api:head_object(BucketId, ?DB_VERSION_KEY) of
+    case s3_api:head_object(BucketId, ?DB_VERSION_KEY) of
 	{error, Reason} ->
 	    lager:error("[version_handler] get_object failed ~p/~p: ~p", [BucketId, ?DB_VERSION_KEY, Reason]),
 	    Req1 = cowboy_req:set_resp_body(<<>>, Req0),

@@ -7,7 +7,7 @@
 -export([init/2, content_types_provided/2, to_json/2, allowed_methods/2,
 	 is_authorized/2, forbidden/2]).
 
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 -include("log.hrl").
 
@@ -36,7 +36,7 @@ get_riak_object(RiakURL) ->
     ObjectKey = proplists:get_value(object_key, URLInfo),
 
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
-    Metadata = riak_api:get_object_metadata(BucketId, PrefixedObjectKey),
+    Metadata = s3_api:get_object_metadata(BucketId, PrefixedObjectKey),
 
     OrigName =
 	case proplists:get_value("x-amz-meta-orig-filename", Metadata, ObjectKey) of
@@ -71,8 +71,8 @@ search(_BucketId, _Prefix, Term0) ->
     Term1 = erlcloud_http:url_encode_loose(Term0),
     %% Solr do not scale the same way as Riak CS, -- search query should be made to external URL
     SolrURL = lists:flatten(io_lib:format("http://127.0.0.1:8093/internal_solr/binary_objects/select?q=~s&wt=json&indent=false", [Term1])),
-    Config = #riak_api_config{s3_proxy_host=undefined, s3_proxy_port=undefined},
-    case riak_api:request_httpc(SolrURL, get, [], <<>>, Config) of
+    Config = #api_config{s3_proxy_host=undefined, s3_proxy_port=undefined},
+    case s3_api:request_httpc(SolrURL, get, [], <<>>, Config) of
 	{ok, {_,_,ResponseBody}} ->
 	    SearchResult = proplists:get_value(<<"response">>, jsx:decode(ResponseBody)),
 	    RiakURLs = [binary_to_list(proplists:get_value(<<"_yz_id">>, I, <<"">>)) || I <- proplists:get_value(<<"docs">>, SearchResult)],

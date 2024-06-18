@@ -7,7 +7,7 @@
 -export([init/2]).
 
 -include("general.hrl").
--include("riak.hrl").
+-include("storage.hrl").
 
 %%
 %% Deletes auth token from DB
@@ -22,7 +22,7 @@ revoke_token(SessionId0) when erlang:is_binary(SessionId0) ->
 	_User ->
 	    UUID4 = erlang:binary_to_list(SessionId0),
 	    PrefixedToken = utils:prefixed_object_key(?TOKEN_PREFIX, UUID4),
-	    riak_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedToken),
+	    s3_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedToken),
 	    ok
     end;
 

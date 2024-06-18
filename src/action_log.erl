@@ -12,7 +12,7 @@
 
 -include_lib("xmerl/include/xmerl.hrl").
 
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 -include("action_log.hrl").
 
@@ -22,33 +22,33 @@
 %%
 %% Adds action log record to XML document, stored in Riak CS
 %%
--spec add_record(string(), string(), #riak_action_log_record{}) -> proplist().
+-spec add_record(string(), string(), #action_log_record{}) -> proplist().
 
 add_record(BucketId, Prefix, Record0) ->
     Record1 = {record, [
-	{action, [Record0#riak_action_log_record.action]},
-	{details, [Record0#riak_action_log_record.details]},
-	{user_name, [Record0#riak_action_log_record.user_name]},
-	{tenant_name, [Record0#riak_action_log_record.tenant_name]},
-	{timestamp, [Record0#riak_action_log_record.timestamp]}
+	{action, [Record0#action_log_record.action]},
+	{details, [Record0#action_log_record.details]},
+	{user_name, [Record0#action_log_record.user_name]},
+	{tenant_name, [Record0#action_log_record.tenant_name]},
+	{timestamp, [Record0#action_log_record.timestamp]}
 	]},
     PrefixedActionLogFilename = utils:prefixed_object_key(
-	Prefix, ?RIAK_ACTION_LOG_FILENAME),
+	Prefix, ?ACTION_LOG_FILENAME),
 
-    case riak_api:get_object(BucketId, PrefixedActionLogFilename) of
+    case s3_api:get_object(BucketId, PrefixedActionLogFilename) of
 	{error, Reason} ->
 	    lager:error("[action_log] get_object error ~p/~p: ~p",
 			[BucketId, PrefixedActionLogFilename, Reason]),
 	    not_found;
 	not_found ->
-	    %% Create .riak_action_log.xml
+	    %% Create .action_log.xml
 	    RootElement0 = #xmlElement{name=action_log, content=[Record1]},
 	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-	    Response = riak_api:put_object(BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME,
+	    Response = s3_api:put_object(BucketId, Prefix, ?ACTION_LOG_FILENAME,
 					   unicode:characters_to_binary(XMLDocument0)),
 	    case Response of
 		{error, Reason} -> lager:error("[action_log] Can't put object ~p/~p/~p: ~p",
-					       [BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME, Reason]);
+					       [BucketId, Prefix, ?ACTION_LOG_FILENAME, Reason]);
 		_ -> ok
 	    end;
 	ExistingObject ->
@@ -59,11 +59,11 @@ add_record(BucketId, Prefix, Record0) ->
 	    NewRootElement = RootElement1#xmlElement{content=NewContent},
 	    XMLDocument2 = xmerl:export_simple([NewRootElement], xmerl_xml),
 
-	    Response = riak_api:put_object(BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME,
+	    Response = s3_api:put_object(BucketId, Prefix, ?ACTION_LOG_FILENAME,
 		unicode:characters_to_binary(XMLDocument2)),
 	    case Response of
 		{error, Reason} -> lager:error("[action_log] Can't put object ~p/~p/~p: ~p",
-					       [BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME, Reason]);
+					       [BucketId, Prefix, ?ACTION_LOG_FILENAME, Reason]);
 		_ -> ok
 	    end
     end.
@@ -112,8 +112,8 @@ template(E) -> built_in_rules(fun template/1, E).
 %%
 get_action_log(Req0, State, BucketId, Prefix) ->
     PrefixedActionLogFilename = utils:prefixed_object_key(
-	Prefix, ?RIAK_ACTION_LOG_FILENAME),
-    ExistingObject0 = riak_api:head_object(BucketId, PrefixedActionLogFilename),
+	Prefix, ?ACTION_LOG_FILENAME),
+    ExistingObject0 = s3_api:head_object(BucketId, PrefixedActionLogFilename),
     case ExistingObject0 of
 	{error, Reason} ->
 	    lager:error("[action_log] head_object failed ~p/~p: ~p",
@@ -121,7 +121,7 @@ get_action_log(Req0, State, BucketId, Prefix) ->
 	    {<<"[]">>, Req0, State};
 	not_found -> {<<"[]">>, Req0, State};
 	_ ->
-	    case riak_api:get_object(BucketId, PrefixedActionLogFilename) of
+	    case s3_api:get_object(BucketId, PrefixedActionLogFilename) of
 		{error, Reason} ->
 		    lager:error("[action_log] get_object failed ~p/~p: ~p",
 				[BucketId, PrefixedActionLogFilename, Reason]),
@@ -148,8 +148,8 @@ fetch_full_object_history(BucketId, GUID)
 
 fetch_full_object_history(BucketId, GUID, ObjectList0, Marker0)
 	when erlang:is_list(BucketId), erlang:is_list(ObjectList0), erlang:is_list(GUID) ->
-    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID++"/"),
-    RiakResponse = riak_api:list_objects(BucketId, [{prefix, RealPrefix}, {marker, Marker0}]),
+    RealPrefix = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID++"/"),
+    RiakResponse = s3_api:list_objects(BucketId, [{prefix, RealPrefix}, {marker, Marker0}]),
     case RiakResponse of
 	not_found -> [];  %% bucket not found
 	_ ->
@@ -169,7 +169,7 @@ fetch_full_object_history(BucketId, GUID, ObjectList0, Marker0)
 %%
 get_object_changelog(Req0, State, BucketId, Prefix, ObjectKey) ->
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
-    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+    case s3_api:head_object(BucketId, PrefixedObjectKey) of
 	{error, Reason} ->
 	    lager:error("[action_log] head_object failed ~p/~p: ~p",
 			[BucketId, PrefixedObjectKey, Reason]),
@@ -177,7 +177,7 @@ get_object_changelog(Req0, State, BucketId, Prefix, ObjectKey) ->
 	not_found -> js_handler:not_found(Req0);
 	RiakResponse0 ->
 	    GUID = proplists:get_value("x-amz-meta-guid", RiakResponse0),
-	    ObjectList0 = [list_handler:parse_object_record(riak_api:head_object(BucketId, I), [])
+	    ObjectList0 = [list_handler:parse_object_record(s3_api:head_object(BucketId, I), [])
 			   || I <- fetch_full_object_history(BucketId, GUID),
 			   utils:is_hidden_object(I) =:= false],
 	    ObjectList1 = lists:map(
@@ -224,7 +224,7 @@ log_restore_action(State) ->
     OrigName = proplists:get_value(orig_name, State),
     PrevDate = proplists:get_value(prev_date, State),
     Timestamp = io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
-    ActionLogRecord0 = #riak_action_log_record{
+    ActionLogRecord0 = #action_log_record{
 	action="restored",
 	user_name=User#user.name,
 	tenant_name=User#user.tenant_name,
@@ -232,7 +232,7 @@ log_restore_action(State) ->
     },
     UnicodeObjectKey = unicode:characters_to_list(OrigName),
     Summary = lists:flatten([["Restored \""], [UnicodeObjectKey], ["\" to version from "], [PrevDate]]),
-    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary},
+    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary},
     action_log:add_record(BucketId, Prefix, ActionLogRecord1).
 
 %%
@@ -264,7 +264,7 @@ validate_object_key(BucketId, Prefix, ObjectKey, Version)
 	when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
 	     erlang:is_binary(ObjectKey), erlang:is_list(Version) ->
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(ObjectKey)),
-    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+    case s3_api:head_object(BucketId, PrefixedObjectKey) of
 	{error, Reason} ->
 	    lager:error("[action_log] head_object failed ~p/~p: ~p",
 			[BucketId, PrefixedObjectKey, Reason]),
@@ -337,7 +337,7 @@ handle_post(Req0, State0) ->
 	{error, Number} -> js_handler:bad_request(Req1, Number);
 	{Prefix, ObjectKey0, Version, Meta} ->
 	    ObjectKey1 = erlang:binary_to_list(ObjectKey0),
-	    case riak_api:put_object(BucketId, Prefix, ObjectKey1, <<>>, [{meta, Meta}]) of
+	    case s3_api:put_object(BucketId, Prefix, ObjectKey1, <<>>, [{meta, Meta}]) of
 		ok ->
 		    %% Update pseudo-directory index for faster listing.
 		    case indexing:update(BucketId, Prefix, [{modified_keys, [ObjectKey1]}]) of

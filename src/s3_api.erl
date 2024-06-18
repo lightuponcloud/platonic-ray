@@ -1,4 +1,4 @@
--module(riak_api).
+-module(s3_api).
 
 -export([list_buckets/0, create_bucket/1, delete_bucket/1, head_bucket/1,
 	 list_objects/1, list_objects/2, get_object/2, get_object/3, delete_object/2, head_object/2,
@@ -19,7 +19,7 @@
 	 mark_filename_conflict/2
         ]).
 
--include("riak.hrl").
+-include("storage.hrl").
 -include("general.hrl").
 -include("entities.hrl").
 -include_lib("xmerl/include/xmerl.hrl").
@@ -57,7 +57,7 @@ copy_object(DestBucketId, DestKeyName, SrcBucketId, SrcKeyName, Options) ->
          {"x-amz-copy-source-if-none-match", proplists:get_value(if_none_match, Options)},
          {"x-amz-copy-source-if-unmodified-since", proplists:get_value(if_unmodified_since, Options)},
          {"x-amz-copy-source-if-modified-since", proplists:get_value(if_modified_since, Options)}],
-    Config = #riak_api_config{timeout=480000},  % 480000 == 8 minutes
+    Config = #api_config{timeout=480000},  % 480000 == 8 minutes
     case s3_request(put, DestBucketId, [$/|DestKeyName], "", [], <<>>, RequestHeaders, Config) of
 	{ok, {_Status, Headers, _Body}} ->
 	    [{content_length, proplists:get_value("content-length", Headers, "0")}];
@@ -73,7 +73,7 @@ list_buckets() ->
               {"marker", proplists:get_value(marker, Options)},
               {"max-keys", proplists:get_value(max_keys, Options, ?LIST_OBJECTS_MAX_KEYS)},
               {"prefix", proplists:get_value(prefix, Options)}],
-    Config = #riak_api_config{},
+    Config = #api_config{},
     case s3_xml_request(get, "", "/", "", Params, <<>>, [], Config) of
 	{ok, Doc} ->
 	    Attributes = [{prefix, "Bucket", text},
@@ -102,7 +102,7 @@ delete_bucket(BucketId) ->
 -spec delete_object(string(), string()) -> proplist().
 
 delete_object(BucketId, Key) when erlang:is_list(BucketId), erlang:is_list(Key) ->
-    Config = #riak_api_config{},
+    Config = #api_config{},
     case s3_request(delete, BucketId, [$/|Key], "", [], <<>>, [], Config) of
 	{error, {Reason,_,_,_,_}} -> {error, Reason};
 	{ok, {_Status, Headers, _Body}} ->
@@ -124,7 +124,7 @@ list_objects(BucketId, Options) when erlang:is_list(BucketId), erlang:is_list(Op
               {"marker", proplists:get_value(marker, Options)},
               {"max-keys", proplists:get_value(max_keys, Options, ?LIST_OBJECTS_MAX_KEYS)},
               {"prefix", proplists:get_value(prefix, Options)}],
-    Config = #riak_api_config{},
+    Config = #api_config{},
     case s3_xml_request(get, BucketId, "/", "", Params, <<>>, [], Config) of
 	{ok, Doc} ->
 	    Attributes = [{name, "Name", text},
@@ -176,7 +176,7 @@ extract_user([Node]) ->
 -spec head_bucket(string()) -> proplist() | not_found.
 
 head_bucket(BucketId) when erlang:is_list(BucketId) ->
-    Config = #riak_api_config{},
+    Config = #api_config{},
     case s3_xml_request(get, BucketId, "/", "acl", [], <<>>, [], Config) of
 	{ok, Doc} ->
 	    Attributes = [{owner, "Owner", fun extract_user/1}],
@@ -208,7 +208,7 @@ get_object(BucketId, Key, stream)
 %%
 get_object(BucketId, GUID, UploadId)
 	when erlang:is_list(BucketId), erlang:is_list(GUID), erlang:is_list(UploadId) ->
-    RealPrefix0 = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+    RealPrefix0 = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID),
     RealPrefix1 = utils:prefixed_object_key(RealPrefix0, UploadId) ++ "/",
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
     case list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix1}]) of
@@ -246,7 +246,7 @@ fetch_object(MethodName, BucketId, Key, Options0)
                       undefined -> "";
                       Version   -> ["versionId=", Version]
                   end,
-    Config = #riak_api_config{},
+    Config = #api_config{},
     Response =
 	case proplists:get_value(stream, Options0) of
 	    undefined ->
@@ -524,7 +524,7 @@ get_object_metadata(BucketId, Key, Options)
 	    undefined -> "";
 	    Version   -> ["versionId=", Version]
         end,
-    Config = #riak_api_config{},
+    Config = #api_config{},
     case s3_request(head, BucketId, [$/|Key], Subresource, [], <<>>, RequestHeaders, Config) of
 	{error, _} -> [];
 	{ok, {_Status, Headers, _Body}} ->
@@ -576,23 +576,23 @@ put_object(BucketId, Prefix, ObjectKey, BinaryData, Options)
 	    ?DB_VERSION_KEY -> "application/vnd.sqlite3";
 	    ?DB_VERSION_LOCK_FILENAME -> "application/vnd.lightup";
 	    ?WATERMARK_OBJECT_KEY -> "image/png";
-	    ?RIAK_ACTION_LOG_FILENAME -> "application/xml";
-	    ?RIAK_LOCK_DVV_INDEX_FILENAME -> "application/vnd.lightup";
-	    ?RIAK_DVV_INDEX_FILENAME -> "application/vnd.lightup";
-	    ?RIAK_LOCK_INDEX_FILENAME -> "application/vnd.lightup";
-	    ?RIAK_INDEX_FILENAME -> "application/vnd.lightup";
+	    ?ACTION_LOG_FILENAME -> "application/xml";
+	    ?LOCK_DVV_INDEX_FILENAME -> "application/vnd.lightup";
+	    ?DVV_INDEX_FILENAME -> "application/vnd.lightup";
+	    ?LOCK_INDEX_FILENAME -> "application/vnd.lightup";
+	    ?INDEX_FILENAME -> "application/vnd.lightup";
 	    _ -> light_ets:guess_content_type(ObjectKey)
 	end,
     HTTPHeaders = [{"content-type", MimeType}],
 
     RequestHeaders = HTTPHeaders ++ [{"x-amz-meta-" ++ string:to_lower(MKey), MValue} ||
                {MKey, MValue} <- proplists:get_value(meta, Options, [])],
-    Config = #riak_api_config{},
+    Config = #api_config{},
     Response = s3_request(put, BucketId, [$/|PrefixedObjectKey], "", [], BinaryData, RequestHeaders, Config),
     case Response of
 	{ok, {_Status, _Headers, _Body}} -> ok;
 	{error, Reason} ->
-	    lager:error("[riak_api] Failed to put object ~p/~p/~p: ~p",
+	    lager:error("[s3_api] Failed to put object ~p/~p/~p: ~p",
 			[BucketId, Prefix, ObjectKey, Reason]),
 	    {error, Reason}
     end.
@@ -600,8 +600,8 @@ put_object(BucketId, Prefix, ObjectKey, BinaryData, Options)
 -spec get_object_url(string(), string()) -> string().
 
 get_object_url(BucketId, Key) ->
-    Config = #riak_api_config{},
-    lists:flatten([Config#riak_api_config.s3_scheme, BucketId, ".", Config#riak_api_config.s3_host, port_spec(Config), "/", Key]).
+    Config = #api_config{},
+    lists:flatten([Config#api_config.s3_scheme, BucketId, ".", Config#api_config.s3_host, port_spec(Config), "/", Key]).
 
 -spec start_multipart(BucketId, Key) -> {ok, proplist()} | {error, any()} when
     BucketId :: string(),
@@ -622,7 +622,7 @@ start_multipart(BucketId, Key, Options, HTTPHeaders)
     RequestHeaders = [{"x-amz-meta-" ++ string:to_lower(MKey), MValue} ||
                {MKey, MValue} <- proplists:get_value(meta, Options, [])],
     POSTData = <<>>,
-    Config = #riak_api_config{},
+    Config = #api_config{},
     case s3_xml_request2(post, BucketId, [$/|Key], "uploads", [], POSTData, RequestHeaders, Config) of
         {ok, Doc} ->
             Attributes = [{uploadId, "UploadId", text}],
@@ -641,7 +641,7 @@ start_multipart(BucketId, Key, Options, HTTPHeaders)
 validate_upload_id(BucketId, ObjectKey0, UploadId0)
 	when erlang:is_list(BucketId), erlang:is_list(ObjectKey0),
 	     erlang:is_list(UploadId0) ->
-    Config = #riak_api_config{},
+    Config = #api_config{},
     case s3_xml_request2(get, BucketId, [$/|ObjectKey0], [], [{"uploadId", UploadId0}], <<>>, [], Config) of
         {ok, Doc} ->
             Attributes = [{uploadId, "UploadId", text}],
@@ -676,7 +676,7 @@ upload_part(BucketId, Key, UploadId, PartNumber, Value, HTTPHeaders)
   when erlang:is_list(BucketId), erlang:is_list(Key), erlang:is_list(UploadId),
        erlang:is_integer(PartNumber), erlang:is_binary(Value), erlang:is_list(HTTPHeaders) ->
     POSTData = erlang:iolist_to_binary(Value),
-    Config = #riak_api_config{},
+    Config = #api_config{},
     case s3_request(put, BucketId, [$/|Key], [], [{"uploadId", UploadId},
                     {"partNumber", integer_to_list(PartNumber)}],
                     POSTData, HTTPHeaders, Config) of
@@ -710,7 +710,7 @@ complete_multipart(BucketId, Key, UploadId, ETags, HTTPHeaders)
                                                     [{'Part',
                                                       [{'PartNumber', [integer_to_list(Num)]},
                                                        {'ETag', [ETag]}] } || {Num, ETag} <- ETags]}], xmerl_xml)),
-    Config = #riak_api_config{},
+    Config = #api_config{},
     case s3_request(post, BucketId, [$/|Key], [], [{"uploadId", UploadId}],
                      POSTData, HTTPHeaders, Config) of
         {ok, {_Status, _Headers, _Body}} ->
@@ -737,7 +737,7 @@ abort_multipart(BucketId, Key, UploadId)
 abort_multipart(BucketId, Key, UploadId, Options, HTTPHeaders)
 	when erlang:is_list(BucketId), erlang:is_list(Key), erlang:is_list(UploadId),
 	     erlang:is_list(Options), erlang:is_list(HTTPHeaders) ->
-    Config = #riak_api_config{},
+    Config = #api_config{},
     case s3_request(delete, BucketId, [$/|Key], [], [{"uploadId", UploadId}],
                      <<>>, HTTPHeaders, Config) of
         {ok, _} -> ok;
@@ -745,7 +745,7 @@ abort_multipart(BucketId, Key, UploadId, Options, HTTPHeaders)
     end.
 
 s3_simple_request(Method, Host, Path, Subresource, Params, POSTData, Headers) ->
-    Config = #riak_api_config{},
+    Config = #api_config{},
     case s3_request(Method, Host, Path, Subresource, Params, POSTData, Headers, Config) of
         {ok, {_Status, _Headers, <<>>}} -> ok;
         {ok, {_Status, _Headers, Body}} ->
@@ -786,7 +786,7 @@ s3_xml_request(Method, Host, Path, Subresource, Params, POSTData, Headers, Confi
     Params :: proplist(),
     POSTData :: binary(),
     Headers :: proplist(),
-    Config :: riak_api_config().
+    Config :: api_config().
 
 s3_request(Method, Bucket, Path, Subresource, Params, POSTData, Headers, Config) ->
     Options = [{body_format, binary}],
@@ -802,13 +802,13 @@ s3_request(Method, Bucket, Path, Subresource, Params, POSTData, Headers, Config,
         "" -> FParams;
         _ -> [{Subresource, ""} | FParams]
     end,
-    S3Host = Config#riak_api_config.s3_host,
-    Region = Config#riak_api_config.s3_region,
+    S3Host = Config#api_config.s3_host,
+    Region = Config#api_config.s3_region,
     EscapedPath = erlcloud_http:url_encode_loose(Path),
     HostName = lists:flatten(
 	[case Bucket of "" -> ""; _ -> [Bucket, $.] end, S3Host]),
 
-    RequestHeaders = riak_crypto:sign_v4(
+    RequestHeaders = crypto_utils:sign_v4(
         Method, EscapedPath,
         [{"host", HostName} | FHeaders ],
         POSTData,
@@ -816,7 +816,7 @@ s3_request(Method, Bucket, Path, Subresource, Params, POSTData, Headers, Config,
         "s3", QueryParams, Config),
 
     RequestURI = lists:flatten([
-        Config#riak_api_config.s3_scheme,
+        Config#api_config.s3_scheme,
         HostName, port_spec(Config),
         EscapedPath,
         case Subresource of "" -> ""; _ -> [$?, Subresource] end,
@@ -859,8 +859,8 @@ s3_xml_request2(Method, Host, Path, Subresource, Params, POSTData, Headers, Conf
             Error
     end.
 
-port_spec(#riak_api_config{s3_port=80}) -> "";
-port_spec(#riak_api_config{s3_port=Port}) -> [":", erlang:integer_to_list(Port)].
+port_spec(#api_config{s3_port=80}) -> "";
+port_spec(#api_config{s3_port=Port}) -> [":", erlang:integer_to_list(Port)].
 
 %% Guard clause protects against empty bodied requests from being
 %% unable to find a matching httpc:request call.
@@ -911,17 +911,17 @@ response_httpc({ok, PID}) -> {ok, PID};  %% In case stream was requested
 response_httpc({error, _} = Error) ->
     Error.
 
-get_timeout(#riak_api_config{timeout = undefined}) ->
+get_timeout(#api_config{timeout = undefined}) ->
     ?DEFAULT_TIMEOUT;
-get_timeout(#riak_api_config{timeout = Timeout}) ->
+get_timeout(#api_config{timeout = Timeout}) ->
     Timeout.
 
 httpc_reset_proxy() ->
   httpc_manager:set_options([{proxy, {undefined, []}}], httpc:profile_name(default)).
 
 maybe_set_proxy(Config) ->
-    ProxyHost = Config#riak_api_config.s3_proxy_host,
-    ProxyPort = Config#riak_api_config.s3_proxy_port,
+    ProxyHost = Config#api_config.s3_proxy_host,
+    ProxyPort = Config#api_config.s3_proxy_port,
     case ProxyHost of
 	undefined -> httpc_reset_proxy();
 	_ ->

@@ -3,28 +3,71 @@
 %%
 %% Configuration variables of Riak CS connection
 %%
--record(riak_api_config, {
-          s3_scheme="https://"::string(),
-          s3_host="s3.us-east-2.amazonaws.com"::string(),
-	  s3_region="us-east-2",
-          s3_port=443::non_neg_integer(),
-	  s3_proxy_host=undefined,
-	  s3_proxy_port=undefined,
-          s3_follow_redirect=false::boolean(),
-          s3_follow_redirect_count=2::non_neg_integer(),
+-record(api_config, {
+	  s3_scheme="http://"::string(),
+	  s3_host="s3.amazonaws.com"::string(),
+	  s3_region="US",
+	  s3_port=80::non_neg_integer(),
+	  s3_proxy_host="127.0.0.1"::string(),
+	  s3_proxy_port=8080::non_neg_integer(),
+	  s3_follow_redirect=false::boolean(),
+	  s3_follow_redirect_count=2::non_neg_integer(),
 	  %% Riak's access key and secret
-          access_key_id="<< REPLACE ME >>"::string(),
-          secret_access_key="<< REPLACE ME >>"::string(),
-          %% Network request timeout; if not specifed, the default timeout will be used:
-          timeout=undefined::timeout()|undefined
-         }).
--type(riak_api_config() :: #riak_api_config{}).
+	  access_key_id=""::string(),
+	  secret_access_key=""::string(),
+	  %% Network request timeout; if not specifed, the default timeout will be used:
+	  timeout=undefined::timeout()|undefined
+	 }).
+-type(api_config() :: #api_config{}).
 
+%%
+%% Maximum size of uploaded file
+%%
+%% Default: 5368709122
+%%	    ( 5 GB )
+%%
+-define(FILE_MAXIMUM_SIZE, 11811160064).
+
+%%
+%% Option for image scaling API endpoint.
+%% Value in pixels that should be used for scaling
+%% if not specified in request.
+%%
+%% Default: 250
+%%
+-define(DEFAULT_IMAGE_WIDTH, 250).
+
+%%
+%% Middleware will cache images bigger than the following value.
+%%
+%% Default: 2097152 ( 2 MB )
+%%
+-define(MINIMUM_CACHE_IMAGE_SIZE, 2097152).
+
+%%
+%% Maximum image size to try to scale, in bytes ( 21 MB ).
+%% It should be bigger than FILE_UPLOAD_CHUNK_SIZE.
+%%
+-define(MAXIMUM_IMAGE_SIZE_BYTES, 22020096).
+
+%%
+%% The number of imagemagick workers for scaling images
+%%
+-define(IMAGE_WORKERS, 5).
+%%
+%% The number of ffmpeg gen_server processes for transcoding videos.
+%%
+-define(VIDEO_WORKERS, 2).
+
+
+%%
+%% --------------------------------------------------------------------------------------------
 %%
 %% If you change the following values, you have to re-initialize the contents of object storage.
 %% Everything should be REMOVED.
 %%
-
+%% --------------------------------------------------------------------------------------------
+%%
 %%
 %% Length of the chunk of data, sent from remote client
 %% to server at a time. This value can be adjusted for
@@ -35,27 +78,13 @@
 %%
 -define(FILE_UPLOAD_CHUNK_SIZE, 2000000).  % 2 MB
 %%
-%% Maximum size of uploaded file
-%%
-%% Default: 5368709122
-%%	    ( 5 GB )
-%%
--define(FILE_MAXIMUM_SIZE, 11811160064).
-%%
 %% Ther's convention within that project to use the
 %% following bucket names
-%% the-projectname-groupname-public
-%% ^^^ ^^^^^^^^^^^ ^^^^^^^^  ^^^^^^
+%% the-projectname-groupname-res
+%% ^^^ ^^^^^^^^^^^ ^^^^^^^^  ^^^
 %% prefix  bucket  group     suffix
 %%
-%% Suffix can be "public", "private" or "restricted"
-%%
-%% Buckets ending with PUBLIC_BUCKET_SUFFIX can
-%% be read by anyone from the Internet.
-%%
-%% Default: "public"
-%%
--define(PUBLIC_BUCKET_SUFFIX, "pub").
+%% Suffix can be "private" or "restricted"
 %%
 %% Private bucket is available to staff users only
 %%
@@ -75,44 +104,57 @@
 %%
 %% Default: ".riak_index.etf"
 %%
--define(RIAK_INDEX_FILENAME, ".riak_index.etf"). %% External Term Format
+-define(INDEX_FILENAME, ".riak_index.etf"). %% External Term Format
 %%
 %% Lock object name. Indicates process of updating index if exists.
 %%
 %% Default: ".riak_index.lock"
 %%
--define(RIAK_LOCK_INDEX_FILENAME, ".riak_index.lock").
+-define(LOCK_INDEX_FILENAME, ".riak_index.lock").
 %%
 %% The number of seconds index lock can exist.
 %% In case of very large number of files this number should be increased,
 %% as it might take more time to update index.
 %%
--define(RIAK_LOCK_INDEX_COOLOFF_TIME, 30).
+-define(LOCK_INDEX_COOLOFF_TIME, 30).
 %%
-%% The name of index file, storing dotted version vectors for objects.
+%% The name of index object, storing dotted version vectors for objects.
+%% This object is stored undef ``RIAK_REAL_OBJECT_PREFIX`` directory.
 %%
--define(RIAK_DVV_INDEX_FILENAME, ".dvv.etf").
+-define(DVV_INDEX_FILENAME, ".dvv.etf").
 %%
 %% Lock object name. It is created during DVV update.
 %%
--define(RIAK_LOCK_DVV_INDEX_FILENAME, ".dvv.lock").
+-define(LOCK_DVV_INDEX_FILENAME, ".dvv.lock").
 %%
 %% The number of seconds dvv lock can exist.
 %%
--define(RIAK_LOCK_DVV_COOLOFF_TIME, 30).
+-define(LOCK_DVV_COOLOFF_TIME, 30).
 %%
 %% Action logs are stored in XML format in every pseudo-directory
 %% except root ( "/" ).
 %%
 %% Default: ".riak_action_log.xml"
 %%
--define(RIAK_ACTION_LOG_FILENAME, ".riak_action_log.xml").
+-define(ACTION_LOG_FILENAME, ".riak_action_log.xml").
+%%
+%% Pseudo-directory sharing options are stored in object with undermentioned name.
+%%
+%% Default: ".riak_sharing.etf"
+%%
+-define(SHARING_OPTIONS_FILENAME, ".sharing_options.etf").
+%%
+%% Lock object name. Indicates process of updating index if exists.
+%%
+%% Default: ".sharing_options.lock"
+%%
+-define(LOCK_SHARING_OPTIONS_FILENAME, ".sharing_options.lock").
 %%
 %% All objects are stored by the following prefix ( list response contains links to the real path ).
 %%
 %% Default: "~object"
 %%
--define(RIAK_REAL_OBJECT_PREFIX, "~object").
+-define(REAL_OBJECT_PREFIX, "~object").
 %%
 %% Locked object suffix.
 %% Temporary object created with .lock extension by default.
@@ -120,11 +162,11 @@
 %%
 %% Default: ".lock"
 %%
--define(RIAK_LOCK_SUFFIX, ".lock").
+-define(LOCK_SUFFIX, ".lock").
 %%
 %% The object key of thumbnail for image or video.
 %%
--define(RIAK_THUMBNAIL_KEY, "thumbnail").
+-define(THUMBNAIL_KEY, "thumbnail").
 %%
 %% Name of bucket prefix
 %%
@@ -133,22 +175,7 @@
 %%
 %% Default: "the"
 %%
--define(RIAK_BACKEND_PREFIX, "the").
-%%
-%% Option for image scaling API endpoint.
-%% Value in pixels that should be used for scaling
-%% if not specified in request.
-%%
-%% Default: 250
-%%
--define(DEFAULT_IMAGE_WIDTH, 250).
-
-%%
-%% Middleware will cache images bigger than the following value.
-%%
-%% Default: 2097152 ( 2 MB )
-%%
--define(MINIMUM_CACHE_IMAGE_SIZE, 2097152).
+-define(BACKEND_PREFIX, "the").
 
 %%
 %% Special bucket stores information on Tokens,
@@ -156,13 +183,13 @@
 %%
 %% Default: "security"
 %%
--define(SECURITY_BUCKET_NAME, "<< REPLACE ME >>").
+-define(SECURITY_BUCKET_NAME, "security2").
 %%
 %% Bucket for temporary upload IDs,
 %% Those IDs point to real objects and are used
 %% to detect stale uploads.
 %%
--define(UPLOADS_BUCKET_NAME, "<< REPLACE ME >>").
+-define(UPLOADS_BUCKET_NAME, "uploads").
 %%
 %% Prefix to object, that stores User session
 %% in security bucket.
@@ -192,18 +219,6 @@
 %%
 -define(TENANT_PREFIX, "tenants/").
 %%
-%% Enable this to allow the creation of an admin user when
-%% setting up a system. It is recommended to only enable this
-%% temporarily unless your use-case specifically dictates letting
-%% anonymous users to create accounts.
-%%
-%% Default: off
-%%
-%% Acceptable values:
-%%   - on or off
-%%
--define(ANONYMOUS_USER_CREATION, true).
-%%
 %% Maximum length of bucket name in Riak CS is 64 latin characters.
 %% This middleware uses tenant and group name as parts of the bucket name.
 %%
@@ -221,20 +236,6 @@
 -define(MAXIMUM_GROUP_NAME_LENGTH, 25).
 
 %%
-%% Maximum image size to try to scale, in bytes ( 21 MB ).
-%% It should be bigger than FILE_UPLOAD_CHUNK_SIZE.
-%%
--define(MAXIMUM_IMAGE_SIZE_BYTES, 22020096).
-
-%%
-%% The number of imagemagick workers for scaling images
-%%
--define(IMAGE_WORKERS, 5).
-%%
-%% The number of ffmpeg gen_server processes for transcoding videos.
-%%
--define(VIDEO_WORKERS, 2).
-%%
 %% Object name for preventing removal
 %%
 -define(STOP_OBJECT_SUFFIX, ".stop").
@@ -243,7 +244,7 @@
 %%
 -define(WATERMARK_OBJECT_KEY, "watermark.png").
 %%
-%%
+%% Name of object to read when playlist is requested
 %%
 -define(HLS_PLAYLIST_OBJECT_KEY, "playlist.m3u8").
 %%

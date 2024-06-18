@@ -10,7 +10,7 @@
 	 check_csrf_token/1, check_session_id/1, get_user_or_error/2]).
 
 -include_lib("xmerl/include/xmerl.hrl").
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 
 init(Req, Opts) ->
@@ -39,7 +39,7 @@ check_credentials(Login, Password)
 		true ->
 		    Salt = utils:unhex(utils:to_binary(User#user.salt)),
 		    HashedPassword = User#user.password,
-		    IsPwdCorrect = riak_crypto:check_password(Password, HashedPassword, Salt),
+		    IsPwdCorrect = crypto_utils:check_password(Password, HashedPassword, Salt),
 		    case IsPwdCorrect of
 			true -> User;
 			false -> false
@@ -53,8 +53,8 @@ check_credentials(Login, Password)
 -spec new_token(string(), string()) -> token().
 
 new_token(UserId, TenantId) ->
-    case riak_api:head_bucket(?SECURITY_BUCKET_NAME) of
-	not_found -> riak_api:create_bucket(?SECURITY_BUCKET_NAME);
+    case s3_api:head_bucket(?SECURITY_BUCKET_NAME) of
+	not_found -> s3_api:create_bucket(?SECURITY_BUCKET_NAME);
         _ -> ok
     end,
     ExpirationTime0 = utils:timestamp() + ?SESSION_EXPIRATION_TIME,
@@ -66,8 +66,8 @@ new_token(UserId, TenantId) ->
     ]},
     RootElement0 = #xmlElement{name=auth, content=[NewToken]},
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-    UUID4 = utils:to_list(riak_crypto:uuid4()),
-    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4,
+    UUID4 = utils:to_list(crypto_utils:uuid4()),
+    Response = s3_api:put_object(?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4,
 				   unicode:characters_to_binary(XMLDocument0)),
     case Response of
 	{error, Reason} ->
@@ -83,8 +83,8 @@ new_token(UserId, TenantId) ->
 -spec new_csrf_token() -> token().
 
 new_csrf_token() ->
-    case riak_api:head_bucket(?SECURITY_BUCKET_NAME) of
-        not_found -> riak_api:create_bucket(?SECURITY_BUCKET_NAME);
+    case s3_api:head_bucket(?SECURITY_BUCKET_NAME) of
+        not_found -> s3_api:create_bucket(?SECURITY_BUCKET_NAME);
         _ -> ok
     end,
     ExpirationTime0 = utils:timestamp() + ?CSRF_TOKEN_EXPIRATION_TIME,
@@ -93,8 +93,8 @@ new_csrf_token() ->
 
     RootElement0 = #xmlElement{name=auth, content=[NewCSRFToken]},
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-    UUID4 = utils:to_list(riak_crypto:uuid4()),
-    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?CSRF_TOKEN_PREFIX, UUID4,
+    UUID4 = utils:to_list(crypto_utils:uuid4()),
+    Response = s3_api:put_object(?SECURITY_BUCKET_NAME, ?CSRF_TOKEN_PREFIX, UUID4,
 	unicode:characters_to_binary(XMLDocument0)),
     case Response of
 	{error, Reason} ->
@@ -116,7 +116,7 @@ check_csrf_token(UUID4) when erlang:is_binary(UUID4) ->
 	CookieValue ->
 	    PrefixedToken = utils:prefixed_object_key(?CSRF_TOKEN_PREFIX,
 		erlang:binary_to_list(CookieValue)),
-	    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedToken) of
+	    case s3_api:get_object(?SECURITY_BUCKET_NAME, PrefixedToken) of
 		{error, Reason} ->
 		    lager:error("[login_handler] get_object error ~p/~p: ~p",
 				[?SECURITY_BUCKET_NAME, PrefixedToken, Reason]),
@@ -148,7 +148,7 @@ check_csrf_token(UUID4) when erlang:is_binary(UUID4) ->
 
 check_token(UUID4) when erlang:is_list(UUID4) ->
     PrefixedToken = utils:prefixed_object_key(?TOKEN_PREFIX, UUID4),
-    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedToken) of
+    case s3_api:get_object(?SECURITY_BUCKET_NAME, PrefixedToken) of
 	{error, Reason} ->
 	    lager:error("[login_handler] get_object error ~p/~p: ~p",
 			[?SECURITY_BUCKET_NAME, PrefixedToken, Reason]),
@@ -177,7 +177,7 @@ check_token(UUID4) when erlang:is_list(UUID4) ->
 			    ]},
 			    RootElement1 = #xmlElement{name=auth, content=[NewToken]},
 			    XMLDocument1 = xmerl:export_simple([RootElement1], xmerl_xml),
-			    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4,
+			    Response = s3_api:put_object(?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4,
 				unicode:characters_to_binary(XMLDocument1)),
 			    case Response of
 				{error, Reason} -> lager:error("[login_handler] Can't put object ~p/~p/~p: ~p", 

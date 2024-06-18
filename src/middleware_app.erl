@@ -7,7 +7,7 @@
 -export([start/2]).
 -export([stop/1]).
 
--include("riak.hrl").
+-include("storage.hrl").
 -include("general.hrl").
 
 start(_Type, _Args) ->

@@ -26,7 +26,7 @@
 -export([validate_delete/2, delete_resource/2, delete_completed/2,
          delete_pseudo_directory/6, delete_objects/6]).
 
--include("riak.hrl").
+-include("storage.hrl").
 -include("entities.hrl").
 -include("general.hrl").
 -include("action_log.hrl").
@@ -77,10 +77,10 @@ to_json(Req0, State) ->
 	    false -> false
 	end,
     T0 = utils:timestamp(),
-    case riak_api:head_bucket(BucketId) of
+    case s3_api:head_bucket(BucketId) of
 	not_found ->
 	    %% Bucket is valid, but it do not exist yet
-	    riak_api:create_bucket(BucketId),
+	    s3_api:create_bucket(BucketId),
 	    T1 = utils:timestamp(),
 	    Req1 = cowboy_req:reply(200, #{
 		<<"content-type">> => <<"application/json">>,
@@ -89,8 +89,8 @@ to_json(Req0, State) ->
 	    {stop, Req1, []};
 	_ ->
 	    Prefix1 = prefix_lowercase(Prefix0),
-	    PrefixedIndexFilename = utils:prefixed_object_key(Prefix1, ?RIAK_INDEX_FILENAME),
-	    case riak_api:get_object(BucketId, PrefixedIndexFilename) of
+	    PrefixedIndexFilename = utils:prefixed_object_key(Prefix1, ?INDEX_FILENAME),
+	    case s3_api:get_object(BucketId, PrefixedIndexFilename) of
 		{error, Reason} ->
 		    lager:warning("[list_handler] get_object error ~p/~p: ~p",
 				[BucketId, PrefixedIndexFilename, Reason]),
@@ -189,7 +189,7 @@ previously_existed(Req0, _State) ->
 %%
 %% Parses Metadata, overriding values from provided Options.
 %%
-%% Returns meta info for riak_api:put_object() call.
+%% Returns meta info for s3_api:put_object() call.
 %%
 parse_object_record(Metadata, Options) ->
     OptionMetaMap = [
@@ -366,7 +366,7 @@ set_access_token(_BucketId, Prefix, K) ->
 %% TODO: test this
 undelete(BucketId, Prefix, ObjectKey) ->
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
-    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+    case s3_api:head_object(BucketId, PrefixedObjectKey) of
 	{error, Reason} ->
 	    lager:error("[list_handler] head_object failed ~p/~p: ~p", [BucketId, PrefixedObjectKey, Reason]),
 	    not_found;
@@ -375,7 +375,7 @@ undelete(BucketId, Prefix, ObjectKey) ->
 	    LockModifiedTime =  io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
 	    Meta = parse_object_record(Metadata0, [{lock_modified_utc, LockModifiedTime}]),
 	    IsLocked = proplists:get_value("is-locked", Meta),
-	    Response = riak_api:put_object(BucketId, Prefix, ObjectKey, <<>>, [{meta, Meta}]),
+	    Response = s3_api:put_object(BucketId, Prefix, ObjectKey, <<>>, [{meta, Meta}]),
 	    case Response of
 		ok ->
 		    [{object_key, ObjectKey},
@@ -393,7 +393,7 @@ undelete(BucketId, Prefix, ObjectKey) ->
 %%
 update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean(IsLocked0) ->
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
-    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+    case s3_api:head_object(BucketId, PrefixedObjectKey) of
 	{error, Reason} ->
 	    lager:error("[list_handler] head_object failed ~p/~p: ~p",
 			[BucketId, PrefixedObjectKey, Reason]),
@@ -431,20 +431,20 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 		    andalso IsDeleted =/= "true" andalso WasLocked =/= IsLocked0 of
 		true ->
 		    Meta = parse_object_record(Metadata0, Options),
-		    case riak_api:put_object(BucketId, Prefix, ObjectKey, <<>>,
+		    case s3_api:put_object(BucketId, Prefix, ObjectKey, <<>>,
 					     [{meta, Meta}]) of
 			ok ->
 			    ?INFO("Lock state changes from ~p to ~p: ~s/~s",
 				  [WasLocked, IsLocked0, BucketId, PrefixedObjectKey]),
 			    %% add lock object, to improve speed of copy/move/rename
-			    LockObjectKey = ObjectKey ++ ?RIAK_LOCK_SUFFIX,
+			    LockObjectKey = ObjectKey ++ ?LOCK_SUFFIX,
 			    case IsLocked0 of
 				true ->
-				    riak_api:put_object(BucketId, Prefix, LockObjectKey, <<>>, [{meta, Meta}]),
+				    s3_api:put_object(BucketId, Prefix, LockObjectKey, <<>>, [{meta, Meta}]),
 				    sqlite_server:lock_object(BucketId, Prefix, ObjectKey, true);
 				false ->
 				    PrefixedLockObjectKey = utils:prefixed_object_key(Prefix, LockObjectKey),
-				    riak_api:delete_object(BucketId, PrefixedLockObjectKey),
+				    s3_api:delete_object(BucketId, PrefixedLockObjectKey),
 				    sqlite_server:lock_object(BucketId, Prefix, ObjectKey, false)
 			    end,
 			    LockUserTel =
@@ -499,7 +499,7 @@ is_locked_for_user(BucketId, Prefix, ObjectKey, UserId)
 
     %% Check if object is deleted
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
-    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+    case s3_api:head_object(BucketId, PrefixedObjectKey) of
 	{error, Reason1} ->
 	    lager:error("[list_handler] head_object failed ~p/~p: ~p",
 			[BucketId, PrefixedObjectKey, Reason1]),
@@ -509,8 +509,8 @@ is_locked_for_user(BucketId, Prefix, ObjectKey, UserId)
 		case proplists:get_value("x-amz-meta-is-deleted", ObjMeta) of
 		    "true" -> {false, ObjMeta};
 		    _ ->
-			PrefixedLockKey = utils:prefixed_object_key(Prefix, ObjectKey ++ ?RIAK_LOCK_SUFFIX),
-			case riak_api:head_object(BucketId, PrefixedLockKey) of
+			PrefixedLockKey = utils:prefixed_object_key(Prefix, ObjectKey ++ ?LOCK_SUFFIX),
+			case s3_api:head_object(BucketId, PrefixedLockKey) of
 			    {error, Reason0} ->
 				lager:error("[list_handler] head_object failed ~p/~p: ~p",
 					    [BucketId, PrefixedLockKey, Reason0]),
@@ -563,8 +563,8 @@ validate_prefix(BucketId, Prefix0) when erlang:is_list(BucketId),
 	undefined -> undefined;
 	Prefix1 ->
 	    %% Check if prefix exists
-	    PrefixedIndexFilename = utils:prefixed_object_key(Prefix1, ?RIAK_INDEX_FILENAME),
-	    case riak_api:head_object(BucketId, PrefixedIndexFilename) of
+	    PrefixedIndexFilename = utils:prefixed_object_key(Prefix1, ?INDEX_FILENAME),
+	    case s3_api:head_object(BucketId, PrefixedIndexFilename) of
 		{error, _} -> {error, 5};
 		not_found -> {error, 11};
 		_ -> Prefix1
@@ -598,7 +598,7 @@ validate_directory_name(BucketId, Prefix0, DirectoryName0)
 	    case validate_prefix(BucketId, Prefix0) of
 		{error, Number} -> {error, Number};
 		Prefix1 ->
-		    case utils:starts_with(DirectoryName0, erlang:list_to_binary(?RIAK_REAL_OBJECT_PREFIX))
+		    case utils:starts_with(DirectoryName0, erlang:list_to_binary(?REAL_OBJECT_PREFIX))
 			    andalso Prefix0 =:= undefined of
 			true -> {error, 10};
 			false -> Prefix1
@@ -660,14 +660,14 @@ create_pseudo_directory(Req0, State) when erlang:is_list(State) ->
                _ ->
                     User = proplists:get_value(user, State),
 		    sqlite_server:create_pseudo_directory(BucketId, Prefix, DirectoryName0, User),
-                    ActionLogRecord0 = #riak_action_log_record{
+                    ActionLogRecord0 = #action_log_record{
                        action="mkdir",
                        user_name=User#user.name,
                        tenant_name=User#user.tenant_name,
                        timestamp=io_lib:format("~p", [erlang:round(utils:timestamp()/1000)])
                     },
                     Summary0 = lists:flatten([["Created directory \""], DirectoryName1 ++ ["/\"."]]),
-                    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+                    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
                     action_log:add_record(BucketId, Prefix, ActionLogRecord1),
                     {true, Req0, []}
 	    end
@@ -678,8 +678,8 @@ create_pseudo_directory(Req0, State) when erlang:is_list(State) ->
 %%
 handle_post(Req0, State0) ->
     BucketId = proplists:get_value(bucket_id, State0),
-    case riak_api:head_bucket(BucketId) of
-    	not_found -> riak_api:create_bucket(BucketId);
+    case s3_api:head_bucket(BucketId) of
+    	not_found -> s3_api:create_bucket(BucketId);
 	_ -> ok
     end,
     {ok, Body, Req1} = cowboy_req:read_body(Req0),
@@ -707,7 +707,7 @@ handle_post(Req0, State0) ->
 %%
 basic_delete_validations(Req0, State) ->
     BucketId = proplists:get_value(bucket_id, State),
-    case riak_api:head_bucket(BucketId) of
+    case s3_api:head_bucket(BucketId) of
 	not_found -> {error, 7};
 	_ ->
 	    {ok, Body, Req1} = cowboy_req:read_body(Req0),
@@ -796,17 +796,17 @@ delete_pseudo_directory(BucketId, Prefix, HexDirName, User, ActionLogRecord0, Ti
 	    %% "-deleted-" substring was found in directory name. Directory is marked as deleted already.
 	    %% No need to add another tag. rename_pseudo_directory() marks pseudo-directory as "uncommited".
 	    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName1 ++ ["/\"."]]),
-	    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+	    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
 	    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
 	    HexDirName
     end.
 
 %    %% Just delete files
 %    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey1),
-%    List0 = riak_api:recursively_list_pseudo_dir(BucketId, PrefixedObjectKey),
-%    [riak_api:delete_object(BucketId, Key) || Key <- List0],
+%    List0 = s3_api:recursively_list_pseudo_dir(BucketId, PrefixedObjectKey),
+%    [s3_api:delete_object(BucketId, Key) || Key <- List0],
 %    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName0 ++ ["/\"."]]),
-%    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+%    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
 %    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
 %    {dir_name, ObjectKey0}.
 
@@ -816,9 +816,9 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
     ObjectKeys1 = lists:filtermap(
 	fun(K) ->
 	    Key = erlang:binary_to_list(K),
-	    PrefixedLockKey = utils:prefixed_object_key(Prefix, Key ++ ?RIAK_LOCK_SUFFIX),
+	    PrefixedLockKey = utils:prefixed_object_key(Prefix, Key ++ ?LOCK_SUFFIX),
 	    %% Skip locked objects
-	    case riak_api:head_object(BucketId, PrefixedLockKey) of
+	    case s3_api:head_object(BucketId, PrefixedLockKey) of
 		{error, Reason} ->
 		    lager:error("[list_handler] head_object failed ~p/~p: ~p",
 				[BucketId, PrefixedLockKey, Reason]),
@@ -848,7 +848,7 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
 		fun(I) ->
 		    ObjectKey = element(1, I),
 		    PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(ObjectKey)),
-		    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+		    case s3_api:head_object(BucketId, PrefixedObjectKey) of
 			{error, Reason} ->
 			    lager:error("[list_handler] head_object error ~p/~p: ~p",
 					[BucketId, PrefixedObjectKey, Reason]),
@@ -856,7 +856,7 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
 			not_found -> [];
 			Metadata0 ->
 			    Meta = parse_object_record(Metadata0, [{is_deleted, "true"}]),
-			    case riak_api:put_object(BucketId, Prefix, erlang:binary_to_list(ObjectKey), <<>>,
+			    case s3_api:put_object(BucketId, Prefix, erlang:binary_to_list(ObjectKey), <<>>,
 						     [{meta, Meta}]) of
 				ok ->
 				    UnicodeObjectName0 = proplists:get_value("orig-filename", Meta),
@@ -873,7 +873,7 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
 		0 -> [];
 		_ ->
 		    Summary0 = lists:flatten([["Deleted \""], OrigNames, ["\""]]),
-		    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+		    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
 		    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
 		    [element(1, I) || I <- ObjectKeys1]
 	    end
@@ -886,7 +886,7 @@ delete_resource(Req0, State) ->
 	{Req1, BucketId, Prefix, PseudoDirectories, ObjectKeys1} ->
 	    Timestamp = utils:timestamp(),
 	    User = proplists:get_value(user, State),
-	    ActionLogRecord0 = #riak_action_log_record{
+	    ActionLogRecord0 = #action_log_record{
 		action="delete",
 		user_name=User#user.name,
 		tenant_name=User#user.tenant_name,

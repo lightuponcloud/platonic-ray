@@ -6,7 +6,7 @@
 
 -export([inventory/1, version/0, basename/1, get_value/2, even/1]).
 
--include("riak.hrl").
+-include("storage.hrl").
 
 version() -> 1.
 

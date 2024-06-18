@@ -10,7 +10,7 @@
          code_change/3]).
 
 -include("log.hrl").
--include("riak.hrl").
+-include("storage.hrl").
 
 %%
 %% queue -- List of queued video transcoding requests
@@ -174,7 +174,7 @@ process_video(BucketId, ObjectKey) ->
 					   [I, BucketId, ObjectKey]),
 				    ok;
 				{ok, BinaryData} ->
-				    Response = riak_api:put_object(BucketId, RealPrefix, I, BinaryData),
+				    Response = s3_api:put_object(BucketId, RealPrefix, I, BinaryData),
 				    case Response of
 					{error, Reason} ->
 					    ?ERROR("[video_transcoding] Can't put object ~p/~p: ~p",
@@ -199,7 +199,7 @@ process_video(BucketId, ObjectKey) ->
 %% Download object from Riak CS
 %%
 download_file(BucketId, ObjectKey) ->
-    case riak_api:head_object(BucketId, ObjectKey) of
+    case s3_api:head_object(BucketId, ObjectKey) of
 	{error, Reason} ->
 	    lager:error("[video_transcoding] head_object failed ~p/~p: ~p", [BucketId, ObjectKey, Reason]),
 	    {error, Reason};
@@ -238,7 +238,7 @@ receive_streamed_body(RequestId0, Pid0, BucketId, NextObjectKeys0, OutputFileNam
 		[] -> ok;
 		[CurrentObjectKey|NextObjectKeys1] ->
 		    %% stream next chunk
-		    case riak_api:get_object(BucketId, CurrentObjectKey, stream) of
+		    case s3_api:get_object(BucketId, CurrentObjectKey, stream) of
 			not_found ->
 			    lager:error("[video_transcoding] part not found: ~p/~p", [BucketId, CurrentObjectKey]),
 			    {error, not_found};
@@ -262,7 +262,7 @@ receive_streamed_body(RequestId0, Pid0, BucketId, NextObjectKeys0, OutputFileNam
 %%
 save_file(BucketId, RealPrefix, OutputFileName) ->
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
-    case riak_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix ++ "/"}]) of
+    case s3_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix ++ "/"}]) of
 	not_found -> {error, not_found};
 	RiakResponse0 ->
 	    Contents = proplists:get_value(contents, RiakResponse0),
@@ -270,7 +270,7 @@ save_file(BucketId, RealPrefix, OutputFileName) ->
 	    List0 = lists:filtermap(
 		fun(K) ->
 		    ObjectKey = proplists:get_value(key, K),
-		    case utils:ends_with(ObjectKey, erlang:list_to_binary(?RIAK_THUMBNAIL_KEY)) of
+		    case utils:ends_with(ObjectKey, erlang:list_to_binary(?THUMBNAIL_KEY)) of
 			true -> false;
 			false -> {true, ObjectKey}
 		    end
@@ -286,7 +286,7 @@ save_file(BucketId, RealPrefix, OutputFileName) ->
 	    case List1 of
 		 [] -> ok;
 		 [PrefixedObjectKey | NextKeys] ->
-		    case riak_api:get_object(BucketId, PrefixedObjectKey, stream) of
+		    case s3_api:get_object(BucketId, PrefixedObjectKey, stream) of
 			not_found -> {error, not_found};
 			{ok, RequestId} ->
 			    receive
