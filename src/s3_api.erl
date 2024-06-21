@@ -1,3 +1,6 @@
+%%
+%% AWS S3 HTTP(S) client
+%%
 -module(s3_api).
 
 -export([list_buckets/0, create_bucket/1, delete_bucket/1, head_bucket/1,
@@ -586,7 +589,7 @@ put_object(BucketId, Prefix, ObjectKey, BinaryData, Options)
     HTTPHeaders = [{"content-type", MimeType}],
 
     RequestHeaders = HTTPHeaders ++ [{"x-amz-meta-" ++ string:to_lower(MKey), MValue} ||
-               {MKey, MValue} <- proplists:get_value(meta, Options, [])],
+				     {MKey, MValue} <- proplists:get_value(meta, Options, [])],
     Config = #api_config{},
     Response = s3_request(put, BucketId, [$/|PrefixedObjectKey], "", [], BinaryData, RequestHeaders, Config),
     case Response of

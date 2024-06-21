@@ -13,7 +13,7 @@ from client_base import (
 from light_client import LightClient
 
 
-class AuthTest(TestClient):
+class VersionsTest(TestClient):
 
     def setUp(self):
         self.client = LightClient(BASE_URL, USERNAME_1, PASSWORD_1)

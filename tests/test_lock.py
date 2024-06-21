@@ -38,6 +38,13 @@ class LockTest(TestClient):
 
     #
     # Make sure deleted objects can't be locked
+    #
+
+    #
+    # 1. Lock file in pseudo-dir
+    # 2. delete dir
+    # 3. Make sure only locked file remains
+    #
     """
 
     def setUp(self):

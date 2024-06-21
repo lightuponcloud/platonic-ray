@@ -1,3 +1,9 @@
+%%
+%% - AWS v4 signature algorithm, for signing HTTP requests to S3
+%% - hashing passwords
+%% - UUID4
+%% - Md5
+%%
 -module(crypto_utils).
 
 -export([sign_v4/8, hash_password/1, check_password/3, uuid4/0, seed/0,

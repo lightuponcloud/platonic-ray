@@ -1,6 +1,6 @@
 %%
 %% Stores per-directory index in Riak CS.
-%% Index contains information on renamed and deleted objects.
+%% Index contains information on renamed and soft-deleted objects.
 %%
 -module(indexing).
 -export([update/2, update/3, get_index/2, get_object_record/2,

@@ -204,6 +204,7 @@ download_file(BucketId, ObjectKey) ->
 	    lager:error("[video_transcoding] head_object failed ~p/~p: ~p", [BucketId, ObjectKey, Reason]),
 	    {error, Reason};
 	not_found -> {error, not_found};
+	undefined -> {error, not_found};
 	Metadata ->
 	    %% Create a temporary file, write data there
 	    Ext = filename:extension(ObjectKey),

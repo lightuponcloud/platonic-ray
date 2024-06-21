@@ -35,7 +35,12 @@ content_types_provided(Req, State) ->
 %%
 %% Checks if source object exists.
 %%
--spec validate_src_object_key(list(), list(), list()) -> tuple()|{error, integer()}.
+%% SrcPrefix -- the pseudo-directory to copy object from
+%% DstPrefix -- the pseudo-directory to copy object to
+%% ObjectKey -- tuple, containing key and original name of object
+%% ObjectKey
+%%
+-spec validate_src_object_key(list(), list(), tuple()) -> tuple()|{error, integer()}.
 
 validate_src_object_key(SrcPrefix, DstPrefix, ObjectKey0)
 	when erlang:is_list(SrcPrefix) orelse SrcPrefix =:= undefined,
