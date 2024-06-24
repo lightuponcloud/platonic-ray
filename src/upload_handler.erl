@@ -908,7 +908,7 @@ upload_part(Req0, BinaryData, State0) ->
 	    ObjectKey = lists:concat([erlang:integer_to_list(PartNumber), "_", erlang:binary_to_list(Md5)]),
 	    RealPrefix = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID),
 	    PrefixedUploadId = utils:prefixed_object_key(RealPrefix, UploadId),
-	    case s3_api:put_object(BucketId, PrefixedUploadId, ObjectKey, BinaryData, []) of
+	    case s3_api:put_object(BucketId, PrefixedUploadId, ObjectKey, BinaryData) of
 		ok -> upload_response(Req0, GUID, UploadId, 200, State0);
 		{error, Reason} ->
 		    lager:error("[upload_handler] Can't put object ~p/~p/~p: ~p",

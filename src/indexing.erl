@@ -648,7 +648,7 @@ remove_previous_version(BucketId, GUID, UploadId0, Version) when erlang:is_list(
 		    RealPrefix = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID++"/"),
                     %% Update index
 		    Response = s3_api:put_object(BucketId, RealPrefix, ?DVV_INDEX_FILENAME,
-						 term_to_binary(NewDVVs), []),
+						 term_to_binary(NewDVVs)),
 		    case Response of
 			{error, Reason} -> lager:error("[indexing] Can't put object ~p/~p/~p: ~p",
 						       [BucketId, RealPrefix, ?DVV_INDEX_FILENAME, Reason]);
@@ -708,7 +708,7 @@ add_dvv(BucketId, GUID, UploadId, Version, UserId, UserName)
 		    List1 = List0 ++ [{UploadId, Record}],
 		    RealPrefix = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID) ++ "/",
 		    Response = s3_api:put_object(BucketId, RealPrefix, ?DVV_INDEX_FILENAME,
-						   term_to_binary(List1), []),
+						   term_to_binary(List1)),
 		    %% Remove lock
 		    PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?LOCK_DVV_INDEX_FILENAME),
 		    s3_api:delete_object(BucketId, PrefixedLockFilename),

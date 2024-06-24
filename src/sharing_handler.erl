@@ -7,7 +7,7 @@
 
 -export([add_sharing_token/4, init/2, content_types_provided/2,
     content_types_accepted/2, resource_exists/2, previously_existed/2,
-    validate_object_key/2, validate_object_keys/2, validate_post/1,
+    validate_object_key/2, validate_object_keys/2, validate_post/2,
     handle_post/2, sharing_record/3,
     delete_resource/2, delete_completed/2,
     to_json/2, allowed_methods/2, forbidden/2, is_authorized/2
@@ -43,19 +43,29 @@ content_types_accepted(Req, State) ->
 
 to_json(Req0, State) ->
     BucketId = proplists:get_value(bucket_id, State),
-    Prefix0 = proplists:get_value(prefix, State),
+    ParsedQs = cowboy_req:parse_qs(Req0),
+    Prefix0 = proplists:get_value(<<"prefix">>, ParsedQs),
+    Prefix1 = list_handler:validate_prefix(BucketId, Prefix0),
+    BucketExists =
+	case s3_api:head_bucket(BucketId) of
+	    not_found -> {error, 37};
+	    _ -> ok
+	end,
     T0 = utils:timestamp(),
-    case s3_api:head_bucket(BucketId) of
-	not_found ->
-	    %% Bucket is valid, but it do not exist yet
-	    {stop, Req0, []};
-	_ ->
-	    Prefix1 = list_handler:prefix_lowercase(Prefix0),
-	    PrefixedIndexFilename = utils:prefixed_object_key(Prefix1, ?SHARING_OPTIONS_FILENAME),
-	    case s3_api:get_object(BucketId, PrefixedIndexFilename) of
+    case lists:keyfind(error, 1, [BucketExists, Prefix1]) of
+	{error, _Number} ->
+	    T1 = utils:timestamp(),
+	    Req1 = cowboy_req:reply(200, #{
+		<<"content-type">> => <<"application/json">>,
+		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+	    }, jsx:encode([]), Req0),
+	    {stop, Req1, []};
+	false ->
+	    PrefixedOptionsFilename = utils:prefixed_object_key(Prefix1, ?SHARING_OPTIONS_FILENAME),
+	    case s3_api:get_object(BucketId, PrefixedOptionsFilename) of
 		{error, Reason} ->
 		    lager:warning("[sharing] get_object error ~p/~p: ~p",
-				[BucketId, PrefixedIndexFilename, Reason]),
+				[BucketId, PrefixedOptionsFilename, Reason]),
 		    T1 = utils:timestamp(),
 		    Req1 = cowboy_req:reply(200, #{
 			<<"content-type">> => <<"application/json">>,
@@ -135,12 +145,7 @@ forbidden(Req0, User) ->
 %% ( called after 'content_types_provided()' )
 %%
 resource_exists(Req0, State) ->
-    ParsedQs = cowboy_req:parse_qs(Req0),
-    Prefix0 = proplists:get_value(<<"prefix">>, ParsedQs),
-    case utils:is_valid_hex_prefix(Prefix0) of
-	false -> {false, Req0, []};
-	true -> {true, Req0, State++[{prefix, Prefix0}]}
-    end.
+    {true, Req0, State}.
 
 previously_existed(Req0, _State) ->
     {false, Req0, []}.
@@ -192,18 +197,22 @@ validate_object_keys(Prefix, ObjectKeys0)
 %% Validates sharing request.
 %% It checks if objects / pseudo-directory exists.
 %%
-validate_post(Body) ->
+validate_post(BucketId, Body) ->
     case jsx:is_json(Body) of
 	{error, badarg} -> {error, 21};
 	false -> {error, 21};
 	true ->
 	    FieldValues = jsx:decode(Body),
 	    Prefix0 = proplists:get_value(<<"prefix">>, FieldValues),
-	    ObjectKeys0 = proplists:get_value(<<"object_keys">>, FieldValues),
-	    ObjectKeys1 = validate_object_keys(Prefix0, ObjectKeys0),
-	    case ObjectKeys1 of
-		{error, Number1} -> {error, Number1};
-		_ -> {Prefix0, ObjectKeys1}
+	    case list_handler:validate_prefix(BucketId, Prefix0) of
+		{error, Number0} -> {error, Number0};
+		Prefix1 ->
+		    ObjectKeys0 = proplists:get_value(<<"object_keys">>, FieldValues),
+		    ObjectKeys1 = validate_object_keys(Prefix1, ObjectKeys0),
+		    case ObjectKeys1 of
+			{error, Number1} -> {error, Number1};
+			_ -> {Prefix1, ObjectKeys1}
+		    end
 	    end
     end.
 
@@ -219,7 +228,7 @@ handle_post(Req0, State0) ->
 	_ -> ok
     end,
     {ok, Body, Req1} = cowboy_req:read_body(Req0),
-    case validate_post(Body) of
+    case validate_post(BucketId, Body) of
 	{error, Number} -> js_handler:bad_request(Req1, Number);
 	{Prefix, ObjectKeys0} ->
 	    Token = add_sharing_token(BucketId, Prefix, ObjectKeys0, User),
@@ -330,7 +339,7 @@ add_sharing_token(BucketId, Prefix0, ObjectKeys, User) ->
 				end
 			    end, ObjectKeys)
 		end,
-	    Response = s3_api:put_object(BucketId, Prefix0, ?SHARING_OPTIONS_FILENAME, term_to_binary(List1), []),
+	    Response = s3_api:put_object(BucketId, Prefix0, ?SHARING_OPTIONS_FILENAME, term_to_binary(List1)),
 	    case Response of
 		{error, Reason2} -> lager:error("[sharing] Can't put object ~p/~p/~p: ~p",
 					       [BucketId, Prefix0, ?SHARING_OPTIONS_FILENAME, Reason2]);
@@ -425,7 +434,7 @@ delete_tokens(BucketId, Prefix0, Tokens) ->
 			false -> {true, I}
 		    end
 		end, List0),
-	    Response = s3_api:put_object(BucketId, Prefix0, ?SHARING_OPTIONS_FILENAME, term_to_binary(List1), []),
+	    Response = s3_api:put_object(BucketId, Prefix0, ?SHARING_OPTIONS_FILENAME, term_to_binary(List1)),
 	    case Response of
 		{error, Reason2} -> lager:error("[sharing] Can't put object ~p/~p/~p: ~p",
 						[BucketId, Prefix0, ?SHARING_OPTIONS_FILENAME, Reason2]);
