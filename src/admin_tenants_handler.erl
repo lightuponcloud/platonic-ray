@@ -58,9 +58,9 @@ tenant_to_proplist(Tenant) ->
 	{enabled, utils:to_binary(Tenant#tenant.enabled)},
 	{groups, [
 	    [{id, erlang:list_to_binary(G#group.id)},
-	    {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))},
-	    {available_bytes, -1},  %% TODO: to store and display used and available bytes
-	    {bucket_id, erlang:list_to_binary(lists:concat([?BACKEND_PREFIX, "-", Tenant#tenant.id, "-", G#group.id, "-", ?RESTRICTED_BUCKET_SUFFIX]))}
+	     {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))},
+	     {available_bytes, -1},  %% TODO: to store and display used and available bytes
+	     {bucket_id, erlang:list_to_binary(lists:concat([?BACKEND_PREFIX, "-", Tenant#tenant.id, "-", G#group.id, "-", ?RESTRICTED_BUCKET_SUFFIX]))}
 	    ] || G <- Tenant#tenant.groups]}
     ].
 
@@ -229,13 +229,14 @@ forbidden(Req0, _State) ->
 		    {error, Code} -> js_handler:incorrect_configuration(Req0, Code);
 		    User1 -> [{session_id, SessionID0}, {user, User1}]
 		end;
+	    AdminApiKey -> [{user, ?ADMIN_USER}];
 	    Token ->
 		%% Extracts token from request headers and looks it up in "security" bucket
 		case login_handler:check_token(Token) of
 		    not_found -> not_found;
 		    expired -> expired;
 		    User2 ->
-			case User2#user.staff orelse Token =:= AdminApiKey of
+			case User2#user.staff of
 			    true -> [{user, User2}];
 			    false -> not_staff
 			end
@@ -508,15 +509,18 @@ new_tenant(Req0, Tenant0) ->
 					       [?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant0#tenant.id, Reason]);
 		_ -> ok
 	    end,
-	    Req1 = cowboy_req:set_resp_body(jsx:encode([
+	    ResponseBody = jsx:encode([
 		{id, list_to_binary(Tenant0#tenant.id)},
 		{name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(Tenant0#tenant.name)))},
 		{enabled, utils:to_binary(Tenant0#tenant.enabled)},
 		{groups, [
 		    [{id, list_to_binary(G#group.id)},
-		    {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))}]
+		     {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))}]
 		    || G <- Tenant0#tenant.groups]}
-		]), Req0),
+		]),
+	    Req1 = cowboy_req:reply(200, #{
+		<<"content-type">> => <<"application/json">>
+	    }, ResponseBody, Req0),
 	    {stop, Req1, []};
 	_ ->
 	    Req1 = cowboy_req:reply(400, #{
@@ -531,35 +535,70 @@ new_tenant(Req0, Tenant0) ->
 -spec edit_tenant(any(), tenant()) -> any().
 
 edit_tenant(Req0, Tenant) ->
-    EditedTenant = {record, [
-	{id, [utils:to_list(Tenant#tenant.id)]},
-	{name, [Tenant#tenant.name]},
-	{enabled, [utils:to_list(Tenant#tenant.enabled)]},
-	{groups, [{group, [
-		{id, [G#group.id]},
-		{name, [G#group.name]}
-	    ]} || G <- Tenant#tenant.groups]}
-	]},
-    RootElement0 = #xmlElement{name=tenant, content=[EditedTenant]},
-    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-    Response = s3_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant#tenant.id,
-				   unicode:characters_to_binary(XMLDocument0)),
-    case Response of
-	{error, Reason} ->
-	    lager:error("[admin_tenants_handler] Can't put object ~p/~p/~p: ~p",
-			[?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant#tenant.id, Reason]),
-	    js_handler:bad_request(Req0, "PUT request failed");
-	_ ->
-	    Req1 = cowboy_req:set_resp_body(jsx:encode([
-		{id, list_to_binary(Tenant#tenant.id)},
-		{name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(Tenant#tenant.name)))},
-		{enabled, Tenant#tenant.enabled},
-		{groups, [
-		    [{id, list_to_binary(G#group.id)},
-		    {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))}]
-		    || G <- Tenant#tenant.groups]}
-	    ]), Req0),
-	    {true, Req1, []}
+    %% Acquire lock first
+    TenantId = utils:to_list(Tenant#tenant.id),
+    TenantIdObjectKey = lists:flatten([TenantId, ".lock"]),
+
+    PrefixedLockFilename = utils:prefixed_object_key(?TENANT_PREFIX, TenantIdObjectKey),
+    case s3_api:head_object(?SECURITY_BUCKET_NAME, PrefixedLockFilename) of
+	{error, Reason0} ->
+	    lager:error("[admin_tenants_handler] head_object failed ~p: ~p", [PrefixedLockFilename, Reason0]),
+	    throw("head_object failed");
+	not_found ->
+	    %% Create lock file
+	    LockMeta = [{"modified-utc", erlang:round(utils:timestamp()/1000)}],
+	    LockOptions = [{meta, LockMeta}],
+	    Response = s3_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, TenantIdObjectKey, <<>>, LockOptions),
+	    case Response of
+		{error, Reason1} -> lager:error("[admin_tenants_handler] Can't put object ~p/~p/~p: ~p",
+						[?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, TenantIdObjectKey, Reason1]);
+		_ -> ok
+	    end,
+	    EditedTenant = {record, [
+		{id, [TenantId]},
+		{name, [Tenant#tenant.name]},
+		{enabled, [utils:to_list(Tenant#tenant.enabled)]},
+		{groups, [{group, [
+			{id, [G#group.id]},
+			{name, [G#group.name]}
+		    ]} || G <- Tenant#tenant.groups]}
+	    ]},
+	    RootElement0 = #xmlElement{name=tenant, content=[EditedTenant]},
+	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
+	    Response = s3_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant#tenant.id,
+					 unicode:characters_to_binary(XMLDocument0)),
+	    %% Remove lock
+	    s3_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedLockFilename),
+	    case Response of
+		{error, Reason} ->
+		    lager:error("[admin_tenants_handler] Can't put object ~p/~p/~p: ~p",
+				[?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant#tenant.id, Reason]),
+		    js_handler:bad_request(Req0, "PUT request failed");
+		_ ->
+		    Req1 = cowboy_req:set_resp_body(jsx:encode([
+			{id, list_to_binary(Tenant#tenant.id)},
+			{name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(Tenant#tenant.name)))},
+			{enabled, Tenant#tenant.enabled},
+			{groups, [
+			    [{id, list_to_binary(G#group.id)},
+			     {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))}]
+			     || G <- Tenant#tenant.groups]}
+		    ]), Req0),
+		    {true, Req1, []}
+	    end;
+	IndexLockMeta ->
+	    %% Check for stale index
+	    DeltaSeconds =
+		case proplists:get_value("x-amz-meta-modified-utc", IndexLockMeta) of
+		    undefined -> 0;
+		    T -> erlang:round(utils:timestamp()/1000) - utils:to_integer(T)
+		end,
+	    case DeltaSeconds > ?LOCK_INDEX_COOLOFF_TIME of
+		true ->
+		    s3_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedLockFilename),
+		    edit_tenant(Req0, Tenant);
+		false -> lock
+	    end
     end.
 
 %%
@@ -611,8 +650,7 @@ patch_resource(Req0, _State) ->
 			<<"content-type">> => <<"application/json">>
 		    }, jsx:encode([{errors, Reasons}]), Req1),
 		    {true, Req2, []};
-		Tenant ->
-		    edit_tenant(Req1, Tenant)
+		Tenant -> edit_tenant(Req0, Tenant)
 	    end
     end.
 
@@ -626,9 +664,11 @@ delete_resource(Req0, _State) ->
 	TenantId1 ->
 	    TenantId2 = erlang:binary_to_list(TenantId1),
 	    PrefixedTenantId = utils:prefixed_object_key(?TENANT_PREFIX, TenantId2),
-	    s3_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedTenantId)
+	    {ok, _} = s3_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedTenantId),
+	    {true, Req0, [{delete_result, ok}]}
     end.
 
 delete_completed(Req0, State) ->
-    Req1 = cowboy_req:set_resp_body("{\"status\": \"ok\"}", Req0),
-    {true, Req1, State}.
+    DeleteResult = proplists:get_value(delete_result, State),
+    Req1 = cowboy_req:set_resp_body(jsx:encode(DeleteResult), Req0),
+    {true, Req1, []}.

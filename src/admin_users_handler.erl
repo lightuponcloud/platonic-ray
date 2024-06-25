@@ -375,7 +375,10 @@ new_user(Req0, User0) ->
 				[?SECURITY_BUCKET_NAME, ?USER_PREFIX, User0#user.id, Reason]),
 		    js_handler:bad_request(Req0, "PUT failed");
 		_ ->
-		    Req1 = cowboy_req:set_resp_body(jsx:encode(user_to_proplist(User0)), Req0),
+		    ResponseBody = jsx:encode(user_to_proplist(User0)),
+		    Req1 = cowboy_req:reply(200, #{
+			<<"content-type">> => <<"application/json">>
+		    }, ResponseBody, Req0),
 		    {stop, Req1, []}
 	    end;
 	{error, Reason} ->
@@ -708,10 +711,11 @@ delete_resource(Req0, State) ->
 	    {stop, Req1, []};
 	false ->
 	    PrefixedUserId = utils:prefixed_object_key(?USER_PREFIX, User0#user.id),
-	    s3_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedUserId),
-	    {true, Req0, []}
+	    {ok, _} = s3_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedUserId),
+	    {true, Req0, [{delete_result, ok}]}
     end.
 
 delete_completed(Req0, State) ->
-    Req1 = cowboy_req:set_resp_body("{\"status\": \"ok\"}", Req0),
-    {true, Req1, State}.
+    DeleteResult = proplists:get_value(delete_result, State),
+    Req1 = cowboy_req:set_resp_body(jsx:encode(DeleteResult), Req0),
+    {true, Req1, []}.

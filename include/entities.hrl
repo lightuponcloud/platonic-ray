@@ -121,3 +121,13 @@
 }).
 
 -define(AUTH_NAME, pbkdf2_sha256).
+
+-define(ADMIN_USER, #user{
+    id = administrator,
+    name = administrator,
+    tenant_id = lightup,
+    tenant_name = lightup,
+    tenant_enabled = true,
+    enabled = true,
+    staff = true
+}).
