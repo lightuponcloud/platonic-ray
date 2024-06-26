@@ -516,6 +516,8 @@ validate_password(Password0) when erlang:is_binary(Password0) ->
 validate_group_ids(null, _TenantGroups) -> [];
 validate_group_ids(undefined, _TenantGroups) -> [];
 validate_group_ids(<<>>, _TenantGroups) -> {error, {groups, <<"At least one group must be specified.">>}};
+validate_group_ids(GroupIds0, _TenantGroups) when erlang:is_list(GroupIds0) ->
+    {error, <<"User groups must be string of comma-delimited values.">>};
 validate_group_ids(GroupIds0, TenantGroups) when erlang:is_binary(GroupIds0) ->
     GroupIds1 = [case lists:member(erlang:binary_to_list(utils:alphanumeric(T)), [G#group.id || G <- TenantGroups]) of
 		    true -> admin_tenants_handler:validate_group_id(utils:alphanumeric(T));

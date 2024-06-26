@@ -72,7 +72,7 @@ class AdminAPITest(TestClient):
     def test_user_operations(self):
         api_key = os.getenv("ADMIN_API_KEY")
 
-        # assign new group to tenant
+        # assign new group to test tenant
         bits = TEST_BUCKET_1.split("-")
         tenant_id = bits[1]
 
@@ -82,6 +82,7 @@ class AdminAPITest(TestClient):
         response = requests.get(url, headers=headers)
         data = response.json()
 
+        # add new group to tenant
         new_group_name = generate_random_name()
         groups_list = ", ".join([i['name'] for i in data['groups']] + [new_group_name])
 
@@ -93,8 +94,9 @@ class AdminAPITest(TestClient):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         tenant_id = data['id']
+        new_group_id = [i['id'] for i in data['groups'] if i['name'] == new_group_name][0]
 
-        # create test user
+        # create test user and assign new test group to that user
         name = generate_random_name()
         url = "{}/riak/admin/{}/users/".format(BASE_URL, tenant_id)
         headers = {"authorization": "Token {}".format(api_key)}
@@ -105,9 +107,10 @@ class AdminAPITest(TestClient):
             "password": "blah",
             "name": username,
             "enabled": True,
+            "groups": new_group_id,
             "staff": False
         }
-        # test create
+        # create test user
         response = requests.post(url, json=data, headers=headers)
         data1 = response.json()
         self.assertEqual(response.status_code, 200)
