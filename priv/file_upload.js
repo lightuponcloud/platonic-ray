@@ -1239,14 +1239,17 @@ $('span.pushbutton').on('click', '#id-action-log', function(){
        'loadingMsgColor': 'black',
        'rpc_url': root_uri+'action-log/'+bucket_id+'/',
        'onSuccess': function(data, status){
-           $('#id-dialog-action-log-records').append('<div class="dry-data-container"><table class="dry-data-table" cellpadding="0" cellspacing="0"><thead><tr class="first-row"><th class="first-col" style="width:45%;">Event</th><th class="last-col" style="width:20%;">User</th><th class="last-col" style="width:20%;">Date</th></tr></thead><tbody id="id-dialog-action-log-records-tbody"></tbody></table></div>');
+           $('#id-dialog-action-log-records').append('<div class="dry-data-container"><table class="dry-data-table" cellpadding="0" cellspacing="0"><thead><tr class="first-row"><th class="first-col" style="width:45%;">Event</th><th>&nbsp;</th><th class="last-col" style="width:20%;">User</th><th class="last-col" style="width:20%;">Date</th></tr></thead><tbody id="id-dialog-action-log-records-tbody"></tbody></table></div>');
            for(var i=0;i!=data.length;i++){
                var details=data[i].details;
                var user_name=data[i].user_name;
                var dt=data[i].timestamp;
                var d=new Date(dt*1000);
-               var modified=pad(d.getDate(), 2)+'.'+pad(d.getMonth()+1,2)+'.'+d.getFullYear()+' '+pad(d.getHours(),2) + ":" + pad(d.getMinutes(), 2)
-               $('#id-dialog-action-log-records-tbody').append('<tr><td>'+details+'</td><td>'+user_name+'</td><td>'+modified+'</td></tr>');
+               var action_name = "";
+	       var object_key=data[i].object_key;
+               if(data[i].action=="delete") action_name = "Restore";
+               var modified=pad(d.getDate(), 2)+'.'+pad(d.getMonth()+1,2)+'.'+d.getFullYear()+' '+pad(d.getHours(),2) + ":" + pad(d.getMinutes(), 2);
+               $('#id-dialog-action-log-records-tbody').append('<tr><td>'+details+'</td><td><a id="id-action_'+i+'" href="#">'+action_name+'</a><input type="hidden" name="object_key" value="'+object_key+'"/></td><td>'+user_name+'</td><td>'+modified+'</td></tr>');
            };
            $('#id-dialog-loading-message-text').hide();
         }

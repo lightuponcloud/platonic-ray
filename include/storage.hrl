@@ -13,8 +13,8 @@
 	  s3_follow_redirect=false::boolean(),
 	  s3_follow_redirect_count=2::non_neg_integer(),
 	  %% Riak's access key and secret
-	  access_key_id=""::string(),
-	  secret_access_key=""::string(),
+	  access_key_id="GUXIOJVOKUDDMG0HPWKP"::string(),
+	  secret_access_key="SF94xTjigPb1t3deGjlwCls_fgeIho9GnvzxfA"::string(),
 	  %% Network request timeout; if not specifed, the default timeout will be used:
 	  timeout=undefined::timeout()|undefined
 	 }).
@@ -130,13 +130,7 @@
 %% The number of seconds dvv lock can exist.
 %%
 -define(LOCK_DVV_COOLOFF_TIME, 30).
-%%
-%% Action logs are stored in XML format in every pseudo-directory
-%% except root ( "/" ).
-%%
-%% Default: ".riak_action_log.xml"
-%%
--define(ACTION_LOG_FILENAME, ".riak_action_log.xml").
+
 %%
 %% Pseudo-directory sharing options are stored in object with undermentioned name.
 %%
@@ -254,10 +248,22 @@
 %%
 %% SQLite db lock object key. If that file present, other processes can't overwrite db.
 %%
-%% Default: ".riak_index.lock"
+%% Default: ".luc.lock"
 %%
 -define(DB_VERSION_LOCK_FILENAME, ".luc.lock").
 %%
-%% The number of seconds SQLite lock can exist.
+%% Action logs are stored in separate SQLite db, in every pseudo-directory.
 %%
--define(DB_VERSION_LOCK_COOLOFF_TIME, 30).
+%% Default: ".action_log"
+%%
+-define(ACTION_LOG_FILENAME, ".action_log").
+%%
+%% SQLite DB lock object key. If that file present, other processes can't overwrite db.
+%%
+%% Default: ".luc.lock"
+%%
+-define(ACTION_LOG_LOCK_FILENAME, ".action_log.lock").
+%%
+%% The number of seconds lock can exist.
+%%
+-define(DB_LOCK_COOLOFF_TIME, 30).

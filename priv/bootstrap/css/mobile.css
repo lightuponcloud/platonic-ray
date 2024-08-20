@@ -635,7 +635,7 @@
 	    top: -68px;
 	    width: 55px;
 	    height:37px;
-	    background: url("remote-directory.png") no-repeat scroll 5px 4px;
+	    background: url("../../remote-directory.png") no-repeat scroll 5px 4px;
 	    text-indent:-9999px;
 	}
 }

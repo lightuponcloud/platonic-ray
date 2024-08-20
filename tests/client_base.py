@@ -37,12 +37,12 @@ TEST_BUCKET_1 = env.str("TEST_BUCKET_1")
 TEST_BUCKET_2 = env.str("TEST_BUCKET_2")
 TEST_BUCKET_3 = env.str("TEST_BUCKET_3")
 UPLOADS_BUCKET_NAME = env.str("UPLOADS_BUCKET_NAME")
+ACTION_LOG_FILENAME = env.str("ACTION_LOG_FILENAME")
 
 ACCESS_KEY = env.str("ACCESS_KEY")
 SECRET_KEY = env.str("SECRET_KEY")
 HTTP_PROXY = env.str("HTTP_PROXY")  # if connection hangs, make sure proxy port is corret
 
-RIAK_ACTION_LOG_FILENAME = ".riak_action_log.xml"
 RIAK_DB_VERSION_KEY = ".luc"
 
 FILE_UPLOAD_CHUNK_SIZE = 2000000
@@ -297,7 +297,7 @@ class TestClient(unittest.TestCase):
         t1 = time.time()
         response = requests.get(url, headers={"authorization": "Token {}".format(self.token)})
         t2 = time.time()
-        print("Download time: {} ( {} )".format(int(t2-t1), url))
+        # print("Download time: {} ( {} )".format(int(t2-t1), url))
         return response.content
 
     def head(self, bucketId, objectKey):
@@ -359,7 +359,7 @@ class TestClient(unittest.TestCase):
         url = "{}/riak/list/{}/".format(BASE_URL, TEST_BUCKET_1)
         return requests.post(url, json=data, headers=req_headers)
 
-    def check_sql(self, bucketId, sql, *args):
+    def check_sql(self, bucketId, sql, db_key=RIAK_DB_VERSION_KEY, *args):
         """
         Download SQLite db and execute SQL
         """
@@ -368,7 +368,7 @@ class TestClient(unittest.TestCase):
             return {key: value for key, value in zip(fields, row)}
 
         try:
-            dbcontent = self.download_object(bucketId, RIAK_DB_VERSION_KEY)
+            dbcontent = self.download_object(bucketId, db_key)
         except ClientError:
             return []
 

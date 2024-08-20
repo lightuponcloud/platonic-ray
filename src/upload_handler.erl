@@ -263,25 +263,38 @@ validate_content_range(Req) ->
 	    end
     end.
 
-
 add_action_log_record(State) ->
     User = proplists:get_value(user, State),
     BucketId = proplists:get_value(bucket_id, State),
     Prefix = proplists:get_value(prefix, State),
+    ObjectKey = proplists:get_value(object_key, State),
     OrigName = proplists:get_value(orig_name, State),  %% generated name
+    GUID = proplists:get_value(guid, State),
     TotalBytes = proplists:get_value(total_bytes, State),
-    UploadTime = proplists:get_value(upload_time, State),
-    ActionLogRecord0 = #action_log_record{
-	action="upload",
-	user_name=User#user.name,
-	tenant_name=User#user.tenant_name,
-	timestamp=UploadTime
-    },
+    UploadTime0 = proplists:get_value(upload_time, State),
+    UploadTime1 = erlang:list_to_integer(UploadTime0),
+    Version0 = proplists:get_value(version, State),
+    Version1 = base64:encode(jsx:encode(Version0)),
+
     UnicodeObjectKey = unicode:characters_to_list(OrigName),
     Summary = lists:flatten([["Uploaded \""], [UnicodeObjectKey],
-	[io_lib:format("\" ( ~p B )", [TotalBytes])]]),
-    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary},
-    action_log:add_record(BucketId, Prefix, ActionLogRecord1).
+			    [io_lib:format("\" ( ~p B )", [TotalBytes])]]),
+    T1 = utils:timestamp()/1000,
+    ActionLogRecord = #action_log_record{
+	key = ObjectKey,
+	orig_name = OrigName,
+	guid = GUID,
+	is_dir = false,
+	action = "upload",
+	details = Summary,
+	user_id = User#user.id,
+	user_name = utils:unhex(erlang:list_to_binary(User#user.name)),
+	tenant_name = utils:unhex(erlang:list_to_binary(User#user.tenant_name)),
+	timestamp = UploadTime0,
+	duration = io_lib:format("~.2f", [utils:to_float(T1-UploadTime1)]),
+	version = Version1
+    },
+    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord).
 
 %%
 %% .Net sends UTF-8 filename in "filename*" field, when "filename" contains garbage.
@@ -621,6 +634,7 @@ create_upload_id(undefined, State0) ->
     ]),
     BucketId = proplists:get_value(bucket_id, State0),
     Prefix = proplists:get_value(prefix, State0),
+
     Meta2 = [{"prefix", Prefix}, {"bucket_id", BucketId}],
     Options = [{meta, Meta1 ++ Meta2}],
     UploadId = erlang:binary_to_list(crypto_utils:uuid4()),
@@ -779,12 +793,15 @@ upload_response(Req0, OrigName, IsLocked, LockModifiedTime, LockedUserId, Locked
     GUID = proplists:get_value(guid, State0),
     ObjectKey0 = proplists:get_value(object_key, State0),
     State1 = [
+	{object_key, ObjectKey0},
+	{orig_name, OrigName},
+	{guid, GUID},
 	{bucket_id, BucketId},
 	{prefix, Prefix},
 	{upload_time, erlang:integer_to_list(UploadTime)},
-	{orig_name, OrigName},
 	{total_bytes, TotalBytes},
-	{user, proplists:get_value(user, State0)}
+	{user, proplists:get_value(user, State0)},
+	{version, Version}
     ],
     add_action_log_record(State1),
     IsLocked1 =

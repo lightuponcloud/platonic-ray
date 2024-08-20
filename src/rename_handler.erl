@@ -221,6 +221,7 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 			PrefixedDstDirectoryName0, ActionLogRecord0)
 	when erlang:is_list(BucketId), erlang:is_list(Prefix0) orelse Prefix0 =:= undefined,
 	     erlang:is_list(PrefixedSrcDirectoryName), erlang:is_binary(DstDirectoryName0) ->
+    T0 = utils:timestamp(), %% measure time of request
     List0 = s3_api:recursively_list_pseudo_dir(BucketId, PrefixedSrcDirectoryName),
     RenameResult0 = [copy_delete(BucketId, PrefixedSrcDirectoryName,
 				 PrefixedDstDirectoryName0, PrefixedObjectKey)
@@ -285,8 +286,13 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 			_ ->
 			    DstDirectoryName2 = unicode:characters_to_list(DstDirectoryName0),
 			    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName2, ["/\"."]]),
-			    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
-			    action_log:add_record(BucketId, Prefix0, ActionLogRecord1),
+			    T1 = utils:timestamp(), %% measure time of request
+			    ActionLogRecord1 = ActionLogRecord0#action_log_record{
+				orig_name=DstDirectoryName2,
+				details=Summary0,
+				duration=io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+			    },
+			    sqlite_server:add_action_log_record(BucketId, Prefix0, ActionLogRecord1),
 			    {dir_name, DstDirectoryName0}
 		    end;
 		_ ->
@@ -301,8 +307,13 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 			    SrcObjectKey1 = unicode:characters_to_list(utils:unhex(erlang:list_to_binary(SrcObjectKey0))),
 			    DstDirectoryName2 = unicode:characters_to_list(DstDirectoryName0),
 			    Summary0 = lists:flatten([["Renamed \""], [SrcObjectKey1, "\" to \"", DstDirectoryName2, "\""]]),
-			    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
-			    action_log:add_record(BucketId, Prefix0, ActionLogRecord1),
+			    T1 = utils:timestamp(), %% measure time of request
+			    ActionLogRecord1 = ActionLogRecord0#action_log_record{
+				key=SrcObjectKey0,
+				details=Summary0,
+				duration=io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+			    },
+			    sqlite_server:add_action_log_record(BucketId, Prefix0, ActionLogRecord1),
 			    {dir_name, DstDirectoryName0}
 		    end
 	    end
@@ -317,6 +328,8 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
     %% We can't just update index with new name, as further file upload or rename operations
     %% would complain "object exist". Provided they have the same object name.
     UserName = utils:unhex(erlang:list_to_binary(User#user.name)),
+
+    T0 = utils:timestamp(), %% measure time of request
 
     {ObjectKey0, OrigName0, _IsNewVersion, ExistingObject0, _IsConflict} = s3_api:pick_object_key(
 	    BucketId, Prefix0, DstObjectName0, undefined, UserName, IndexContent),
@@ -380,8 +393,14 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 				    OrigName2 = unicode:characters_to_list(OrigName0),
 				    Summary1 = lists:flatten([["Renamed \""], [PreviousOrigName], ["\" to \""],
 							     [OrigName2], ["\""]]),
-				    ActionLogRecord2 = ActionLogRecord0#action_log_record{details=Summary1},
-				    action_log:add_record(BucketId, Prefix0, ActionLogRecord2),
+				    T1 = utils:timestamp(), %% measure time of request
+				    ActionLogRecord2 = ActionLogRecord0#action_log_record{
+					key=ObjectKey0,
+					orig_name=OrigName0,
+					details=Summary1,
+					duration=io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+				    },
+				    sqlite_server:add_action_log_record(BucketId, Prefix0, ActionLogRecord2),
 				    Metadata1 = list_handler:parse_object_record(Metadata0, [
 					{orig_name, unicode:characters_to_binary(OrigName2)}]),
 				    {ObjectKey0, Metadata1}
@@ -399,6 +418,7 @@ rename(Req0, BucketId, State, IndexContent) ->
     User = proplists:get_value(user, State),
     ActionLogRecord0 = #action_log_record{
 	action="rename",
+	user_id=User#user.id,
 	user_name=User#user.name,
 	tenant_name=User#user.tenant_name,
 	timestamp=io_lib:format("~p", [erlang:round(utils:timestamp()/1000)])

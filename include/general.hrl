@@ -43,7 +43,7 @@
     static_root="/riak-media/"::string(),  %% This default path is used when STATIC_BASE_URL env var is not set
     http_listen_port=8081,
     locale="uk",
-    admin_api_key=""
+    admin_api_key="NeedZojbubquilNeutmofentAvukByctansyacDuehawEbvifCecksElkiadVaijitmortOmibwieznu"
 }).
 
 -define(DEFAULT_LANGUAGE_TAG, "en").

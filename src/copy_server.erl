@@ -104,6 +104,7 @@ handle_call(_Request, _From, State) ->
 %%--------------------------------------------------------------------
 handle_cast({copy, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectKeys, User]}, State) ->
     DstIndexContent = indexing:get_index(DstBucketId, DstPrefix0),
+    T0 = utils:timestamp(), %% measure time of request
     Copied0 = lists:map(
 	fun(RequestedKey) ->
 	    ObjectKey = element(1, RequestedKey),
@@ -119,11 +120,18 @@ handle_cast({copy, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
     %% Add action log record
     %%
     {CopiedDirectories, CopiedObjects} = prepare_action_log(Copied0),
+
+    T1 = utils:timestamp(),
     ActionLogRecord0 = #action_log_record{
 	action="copy",
+	user_id=User#user.id,
 	user_name=User#user.name,
 	tenant_name=User#user.tenant_name,
-	timestamp=io_lib:format("~p", [erlang:round(utils:timestamp()/1000)])
+	timestamp=io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
+	duration = io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+%%	key = 
+%%	orig_name = 
+%%	version = 
     },
     SrcPrefix1 =
 	case SrcPrefix0 of
@@ -133,7 +141,8 @@ handle_cast({copy, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
     Summary0 = lists:flatten([["Copied"], CopiedDirectories ++ CopiedObjects,
 			     ["\" from \"", SrcPrefix1, "\"."]]),
     ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
-    action_log:add_record(DstBucketId, DstPrefix0, ActionLogRecord1),
+    sqlite_server:add_action_log_record(DstBucketId, DstPrefix0, ActionLogRecord1),
+
     DstPrefix1 =
 	case DstPrefix0 of
 	    undefined -> "/";
@@ -147,12 +156,13 @@ handle_cast({copy, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 	    Summary1 = lists:flatten([["Copied"], CopiedDirectories ++ CopiedObjects,
 				      [" to \""], [DstPrefix1, "\"."]]),
 	    ActionLogRecord2 = ActionLogRecord0#action_log_record{details=Summary1},
-	    action_log:add_record(SrcBucketId, SrcPrefix0, ActionLogRecord2)
+	    sqlite_server:add_action_log_record(SrcBucketId, SrcPrefix0, ActionLogRecord2)
     end,
     {noreply, State};
 
 handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectKeys, User]}, State) ->
     DstIndexContent = indexing:get_index(DstBucketId, DstPrefix0),
+    T0 = utils:timestamp(), %% measure time of request
     Copied0 = lists:map(
 	fun(RequestedKey) ->
 	    ObjectKey = element(1, RequestedKey),
@@ -231,17 +241,23 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
     case indexing:update(SrcBucketId, SrcPrefix0) of
 	lock ->
 	    lager:warning("[list_handler] Can't update index during moving object, as lock exist: ~p/~p",
-		       [SrcBucketId, SrcPrefix0]);
+			  [SrcBucketId, SrcPrefix0]);
 	_ ->
 	    %%
 	    %% Add action log record
 	    %%
 	    {CopiedDirectories, CopiedObjects} = prepare_action_log(Copied0),
+	    T1 = utils:timestamp(), %% measure time of request
 	    ActionLogRecord0 = #action_log_record{
 		action="move",
+		user_id=User#user.id,
 		user_name=User#user.name,
 		tenant_name=User#user.tenant_name,
-		timestamp=io_lib:format("~p", [erlang:round(utils:timestamp()/1000)])
+		timestamp=io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
+		duration=io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+%%	key = 
+%%	orig_name = 
+%%	version = 
 	    },
 	    SrcPrefix2 =
 		case SrcPrefix0 of
@@ -251,7 +267,8 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 	    Summary0 = lists:flatten([["Moved"], CopiedDirectories ++ CopiedObjects,
 				      ["\" from \"", SrcPrefix2, "\"."]]),
 	    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
-	    action_log:add_record(DstBucketId, DstPrefix0, ActionLogRecord1),
+	    sqlite_server:add_action_log_record(DstBucketId, DstPrefix0, ActionLogRecord1),
+
 	    DstPrefix1 =
 		case DstPrefix0 of
 		    undefined -> "/";
@@ -265,7 +282,7 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 		    Summary1 = lists:flatten([["Moved"], CopiedDirectories ++ CopiedObjects,
 					      [" to \""], [DstPrefix1, "\"."]]),
 		    ActionLogRecord2 = ActionLogRecord0#action_log_record{details=Summary1},
-		    action_log:add_record(SrcBucketId, SrcPrefix0, ActionLogRecord2)
+		    sqlite_server:add_action_log_record(SrcBucketId, SrcPrefix0, ActionLogRecord2)
 	    end
     end,
     {noreply, State};

@@ -431,3 +431,12 @@ class LightClient:
         url = "{}riak/version/{}/".format(self.url, bucket_id)
         response = requests.head(url, headers=headers)
         return response
+
+    def get_action_log(self, bucket_id, prefix):
+        headers = {
+            "content-type": "application/json",
+            "authorization": "Token {}".format(self.token),
+        }
+        url = "{}riak/action-log/{}/".format(self.url, bucket_id)
+        response = requests.get(url, headers=headers)
+        return response

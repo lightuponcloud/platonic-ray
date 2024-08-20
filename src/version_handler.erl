@@ -70,7 +70,7 @@ receive_streamed_body(Req0, RequestId0, Pid0) ->
 
 
 %%
-%% Downloads .luc SQLite DB from Riak CS and returns it to client.
+%% Downloads .luc SQLite DB from S3 and returns it to client.
 %%
 stream_db(Req0, BucketId0, Bytes, StartByte0) ->
     BucketId1 = utils:to_binary(BucketId0),

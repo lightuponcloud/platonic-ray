@@ -645,7 +645,7 @@ create_pseudo_directory(Req0, State) when erlang:is_list(State) ->
     DirectoryName0 = proplists:get_value(directory_name, State),
     DirectoryName1 = unicode:characters_to_list(DirectoryName0),
     Prefix = proplists:get_value(prefix, State),
-
+    T0 = utils:timestamp(), %% measure time of request
     case indexing:update(BucketId, PrefixedDirectoryName++"/") of
 	lock ->
 	    lager:warning("[list_handler] Can't update index during create pseudo dir, as index lock exists: ~p/~p",
@@ -657,19 +657,23 @@ create_pseudo_directory(Req0, State) when erlang:is_list(State) ->
 		    lager:warning("[list_handler] Can't update index during locking object as index lock exists: ~p/~p",
 			       [BucketId, Prefix]),
 		    js_handler:too_many(Req0);
-               _ ->
-                    User = proplists:get_value(user, State),
+		_ ->
+		    User = proplists:get_value(user, State),
 		    sqlite_server:create_pseudo_directory(BucketId, Prefix, DirectoryName0, User),
-                    ActionLogRecord0 = #action_log_record{
-                       action="mkdir",
-                       user_name=User#user.name,
-                       tenant_name=User#user.tenant_name,
-                       timestamp=io_lib:format("~p", [erlang:round(utils:timestamp()/1000)])
-                    },
-                    Summary0 = lists:flatten([["Created directory \""], DirectoryName1 ++ ["/\"."]]),
-                    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
-                    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
-                    {true, Req0, []}
+		    T1 = utils:timestamp(), %% measure time of request
+		    ActionLogRecord0 = #action_log_record{
+			action="mkdir",
+			orig_name = DirectoryName0,
+			user_id=User#user.id,
+			user_name=User#user.name,
+			tenant_name=User#user.tenant_name,
+			timestamp=io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
+			duration=io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+		    },
+		    Summary0 = lists:flatten([["Created directory \""], DirectoryName1 ++ ["/\"."]]),
+		    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
+		    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord1),
+		    {true, Req0, []}
 	    end
     end.
 
@@ -796,19 +800,15 @@ delete_pseudo_directory(BucketId, Prefix, HexDirName, User, ActionLogRecord0, Ti
 	    %% "-deleted-" substring was found in directory name. Directory is marked as deleted already.
 	    %% No need to add another tag. rename_pseudo_directory() marks pseudo-directory as "uncommited".
 	    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName1 ++ ["/\"."]]),
-	    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
-	    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
+	    T1 = utils:timestamp(),
+	    ActionLogRecord1 = ActionLogRecord0#action_log_record{
+		orig_name=DstDirectoryName0,
+		details=Summary0,
+		duration=io_lib:format("~.2f", [utils:to_float(T1-Timestamp)/1000])
+	    },
+	    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord1),
 	    HexDirName
     end.
-
-%    %% Just delete files
-%    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey1),
-%    List0 = s3_api:recursively_list_pseudo_dir(BucketId, PrefixedObjectKey),
-%    [s3_api:delete_object(BucketId, Key) || Key <- List0],
-%    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName0 ++ ["/\"."]]),
-%    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
-%    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
-%    {dir_name, ObjectKey0}.
 
 
 delete_objects(_BucketId, _Prefix, [], _ActionLogRecord0, _Timestamp, _UserId) -> ok;
@@ -873,8 +873,12 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
 		0 -> [];
 		_ ->
 		    Summary0 = lists:flatten([["Deleted \""], OrigNames, ["\""]]),
-		    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
-		    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
+		    T1 = utils:timestamp(),
+		    ActionLogRecord1 = ActionLogRecord0#action_log_record{
+			details=Summary0,
+			duration=io_lib:format("~.2f", [utils:to_float(T1-Timestamp)/1000])
+		    },
+		    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord1),
 		    [element(1, I) || I <- ObjectKeys1]
 	    end
     end.
@@ -888,10 +892,14 @@ delete_resource(Req0, State) ->
 	    User = proplists:get_value(user, State),
 	    ActionLogRecord0 = #action_log_record{
 		action="delete",
+		user_id=User#user.id,
 		user_name=User#user.name,
 		tenant_name=User#user.tenant_name,
 		timestamp=io_lib:format("~p", [erlang:round(Timestamp/1000)])
 	    },
+%%	key = 
+%%	orig_name = 
+%%	version = 
 	    %% Set "uncommitted" flag only if ther's a lot of delete
 	    case length(PseudoDirectories) > 0 of
 		true ->

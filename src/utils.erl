@@ -18,7 +18,7 @@
 -export([slugify_object_key/1, prefixed_object_key/2, alphanumeric/1,
 	 trim_spaces/1, hex/1, unhex/1, unhex_path/1, join_list_with_separator/3,
 	 timestamp/0, format_timestamp/1, firstmatch/2, timestamp_to_datetime/1,
-	 translate/2, dirname/1, read_config/1, real_prefix/2]).
+	 translate/2, dirname/1, read_config/1, real_prefix/2, get_temp_path/1]).
 
 -include("storage.hrl").
 -include("general.hrl").
@@ -643,3 +643,14 @@ read_config(App) ->
         version = proplists:get_value(version, Config),
         http_listen_port = Port
     }.
+
+
+%%
+%% Returns path to temporary filename.
+%%
+get_temp_path(App) ->
+    Config = application:get_all_env(App),
+
+    TempPath = proplists:get_value(temp_path, Config),
+
+    filename:join([TempPath, crypto_utils:random_string()]).

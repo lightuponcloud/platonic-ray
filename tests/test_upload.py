@@ -16,7 +16,7 @@ from client_base import (
     TEST_BUCKET_3,
     FILE_UPLOAD_CHUNK_SIZE,
     UPLOADS_BUCKET_NAME,
-    RIAK_ACTION_LOG_FILENAME,
+    ACTION_LOG_FILENAME,
     USERNAME_1,
     PASSWORD_1,
     USERNAME_2,
@@ -88,7 +88,7 @@ class UploadTest(TestClient):
         # print("Upload {}".format(int(t2-t1)))
 
         # Test SQLite db contents
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["key"], fn)
@@ -126,23 +126,23 @@ class UploadTest(TestClient):
         for i in range(len(result)):
             if result[i]['key'] == fn.lower():
                 break
-        self.assertEqual(result[i]["key"], fn.lower())
-        self.assertEqual(result[i]["orig_name"], fn)
-        self.assertEqual(result[i]["is_dir"], 0)
-        self.assertEqual(result[i]["is_locked"], 0)
-        self.assertEqual(result[i]["bytes"], os.stat(fn).st_size)
-        self.assertTrue(("guid" in result[i]))
-        self.assertTrue(("bytes" in result[i]))
-        self.assertTrue(("version" in result[i]))
-        self.assertTrue(("last_modified_utc" in result[i]))
-        self.assertTrue(("author_id" in result[i]))
-        self.assertTrue(("author_name" in result[i]))
-        self.assertTrue(("author_tel" in result[i]))
-        self.assertTrue(("lock_user_id" in result[i]))
-        self.assertTrue(("lock_user_name" in result[i]))
-        self.assertTrue(("lock_user_tel" in result[i]))
-        self.assertTrue(("lock_modified_utc" in result[i]))
-        self.assertTrue(("md5" in result[i]))
+            self.assertEqual(result[i]["key"], fn.lower())
+            self.assertEqual(result[i]["orig_name"], fn)
+            self.assertEqual(result[i]["is_dir"], 0)
+            self.assertEqual(result[i]["is_locked"], 0)
+            self.assertEqual(result[i]["bytes"], os.stat(fn).st_size)
+            self.assertTrue(("guid" in result[i]))
+            self.assertTrue(("bytes" in result[i]))
+            self.assertTrue(("version" in result[i]))
+            self.assertTrue(("last_modified_utc" in result[i]))
+            self.assertTrue(("author_id" in result[i]))
+            self.assertTrue(("author_name" in result[i]))
+            self.assertTrue(("author_tel" in result[i]))
+            self.assertTrue(("lock_user_id" in result[i]))
+            self.assertTrue(("lock_user_name" in result[i]))
+            self.assertTrue(("lock_user_tel" in result[i]))
+            self.assertTrue(("lock_modified_utc" in result[i]))
+            self.assertTrue(("md5" in result[i]))
 
     def test_small_upload_tenant_success(self):
         """
@@ -161,10 +161,12 @@ class UploadTest(TestClient):
         # Test SQLite db contents
         time.sleep(1)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_3, "SELECT * FROM items")
+        last_key = None
         for i in range(len(result)):
             if result[i]['key'] == fn.lower():
+                last_key = result[i]['key']
                 break
-        self.assertEqual(result[i]["key"], fn.lower())
+        self.assertEqual(last_key, fn.lower())
 
     def test_validate_data_size(self):
         headers = {"content-range": "bytes 0-1/1"}
@@ -392,16 +394,41 @@ class UploadTest(TestClient):
     def test_add_action_log_record(self):
         url = "{}/riak/upload/{}/".format(BASE_URL, TEST_BUCKET_1)
         fn = "20180111_165127.jpg"
-        t1 = time.time()
         self.upload_file(url, fn)
-        t2 = time.time()
-        # print("Upload {}".format(int(t2-t1)))
-        xmlstring = self.download_object(TEST_BUCKET_1, RIAK_ACTION_LOG_FILENAME)
-        result = self.parse_action_log(xmlstring)
-        self.assertTrue(("action" in result))
-        self.assertEqual(result["action"], "upload")
-        self.assertTrue(("details" in result))
-        self.assertEqual(result["details"], "Uploaded \"20180111_165127.jpg\" ( 2773205 B )")
+        time.sleep(2)
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        self.assertEqual(len(result), 1)
+        self.assertTrue(("id" in result[0]))
+        self.assertEqual(result[0]["key"], fn)
+        self.assertEqual(result[0]["orig_name"], fn)
+        self.assertTrue(("guid" in result[0]))
+        self.assertEqual(result[0]["action"], "upload")
+        self.assertEqual(result[0]["details"], "Uploaded \"20180111_165127.jpg\" ( 2773205 B )")
+        self.assertTrue(("user_id" in result[0]))
+        self.assertTrue(("user_name" in result[0]))
+        self.assertTrue(("tenant_name" in result[0]))
+        self.assertTrue(("timestamp" in result[0]))
+        self.assertTrue(("duration" in result[0]))
+        self.assertTrue(("version" in result[0]))
+        self.assertEqual(result[0]["is_dir"], 0)
+
+        response = self.client.get_action_log(TEST_BUCKET_1, None)
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual(len(result), 1)
+        rec = result[0]
+        self.assertEqual(rec["key"], fn)
+        self.assertEqual(rec["orig_name"], fn)
+        self.assertTrue(("guid" in rec))
+        self.assertEqual(rec["is_dir"], False)
+        self.assertEqual(rec["action"], "upload")
+        self.assertEqual(rec["details"], 'Uploaded "{}" ( 2773205 B )'.format(fn))
+        self.assertTrue(("user_id" in rec))
+        self.assertTrue(("user_name" in rec))
+        self.assertTrue(("tenant_name" in rec))
+        self.assertTrue(("timestamp" in rec))
+        self.assertTrue(("duration" in rec))
+        self.assertTrue(("version" in rec))
 
     def test_get_guid(self):
         headers = {
@@ -1010,7 +1037,7 @@ class UploadTest(TestClient):
         self.assertEqual(dir_response.status_code, 204)
         fn = "20180111_165127.jpg"
         res = self.client.upload(TEST_BUCKET_1, fn, prefix=prefix)
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 2)
         self.assertTrue("{}/".format(prefix) in [i["prefix"] for i in result])

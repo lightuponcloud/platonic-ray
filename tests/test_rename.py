@@ -531,6 +531,5 @@ class RenameTest(TestClient):
         assert (encode_to_hex(another_random_new_name), encode_to_hex(random_new_name)[:-1]) in keys
         assert ("{}{}".format(encode_to_hex(another_random_new_name), encode_to_hex(random_new_name)), object_key)
 
-
 if __name__ == '__main__':
     unittest.main()

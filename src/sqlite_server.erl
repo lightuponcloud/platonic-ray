@@ -1,8 +1,11 @@
 %%
-%% This server updates contents of sqlite databases stored in every bucket.
+%% This server updates contents of sqlite databases.
 %%
-%% The DB contains tree of filesystem on client side.
-%% Server and client databases can be compared by client app.
+%% - DB with action log, which stores history of actions.
+%%   It is stored in separate file for speed of read / write.
+%%
+%% - DB containing tree of filesystem on client side.
+%%   Server and client databases can be compared by client app using that DB.
 %%
 -module(sqlite_server).
 
@@ -11,7 +14,8 @@
 %% API
 -export([start_link/0, create_pseudo_directory/4, delete_pseudo_directory/4,
 	 lock_object/4, add_object/3, delete_object/3, rename_object/5,
-	 rename_pseudo_directory/4, task_create_pseudo_directory/4]).
+	 rename_pseudo_directory/4, task_create_pseudo_directory/4,
+	 add_action_log_record/3]).
 
 -export([integrity_check/2]).
 
@@ -26,13 +30,15 @@
 -include("log.hrl").
 -include("storage.hrl").
 -include("entities.hrl").
+-incoude("action_log.hrl").
 
--define(SQLITE_DB_UPDATE_INTERVAL, 1000).  %% 1 second -- db updated every 1 second, if there were changes
+-define(INTERNAL_DB_UPDATE_INTERVAL, 1000).  %% 1 second -- db updated every 1 second, if there were changes
 
 %%
-%% sql_queue -- List of queued SQL statements (those that could not have been executed because of lock )
+%% sync_sql_queue -- List of queued SQL statements for storing in sync DB.
+%% log_sql_queue -- List of SQL queries for action log DB.
 %%
--record(state, {sql_queue = [], update_db_timer = []}).
+-record(state, {sync_sql_queue = [], log_sql_queue = [], update_db_timer = []}).
 
 
 -spec(create_pseudo_directory(BucketId :: string(), Prefix :: string(),
@@ -87,6 +93,11 @@ delete_object(BucketId, Prefix, Key)
     gen_server:cast(?MODULE, {add_task, BucketId, sql_lib, delete_object, [Prefix, Key]}).
 
 
+%%-spec(add_action_log_record(BucketId :: string(), Prefix :: string(), Record :: #action_log_record{}) -> ok).
+add_action_log_record(BucketId, Prefix, Record) ->
+    gen_server:cast(?MODULE, {add_task, BucketId, Prefix, sql_lib, add_action_log_record, [Record]}).
+
+
 %%--------------------------------------------------------------------
 %% @doc
 %% Starts the server
@@ -113,7 +124,7 @@ start_link() ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
-    {ok, Tref0} = timer:send_after(?SQLITE_DB_UPDATE_INTERVAL, update_db),
+    {ok, Tref0} = timer:send_after(?INTERNAL_DB_UPDATE_INTERVAL, update_db),
     {ok, #state{update_db_timer = Tref0}}.
 
 
@@ -145,14 +156,14 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast({add_task, BucketId, Module, Func, Args}, #state{sql_queue = SqlQueue0} = State0) ->
-    %% Adds record for periodic task processor
-    SqlQueue1 =
-	case proplists:is_defined(BucketId, SqlQueue0) of
+handle_cast({add_task, BucketId, Module, Func, Args}, #state{sync_sql_queue = SyncSqlQueue0} = State0) ->
+    %% Adds records for periodic task processor of sync DB
+    SyncSqlQueue1 =
+	case proplists:is_defined(BucketId, SyncSqlQueue0) of
 	    false ->
 		%% Add to queue
 		BQ0 = [{BucketId, [{Module, Func, Args}]}],
-		SqlQueue0 ++ BQ0;
+		SyncSqlQueue0 ++ BQ0;
 	    true ->
 		%% Change bucket queue
 		lists:map(
@@ -163,10 +174,31 @@ handle_cast({add_task, BucketId, Module, Func, Args}, #state{sql_queue = SqlQueu
 				{BucketId, BQ1 ++ [{Module, Func, Args}]};
 			    _ -> I
 			end
-		    end, SqlQueue0)
+		    end, SyncSqlQueue0)
 	end,
-    {noreply, State0#state{sql_queue = SqlQueue1}}.
+    {noreply, State0#state{sync_sql_queue = SyncSqlQueue1}};
 
+handle_cast({add_task, BucketId, Prefix, Module, Func, Args}, #state{log_sql_queue = LogSqlQueue0} = State0) ->
+    %% Adds records for periodic task processor of action log DB
+    LogSqlQueue1 =
+	case proplists:is_defined({BucketId, Prefix}, LogSqlQueue0) of
+	    false ->
+		%% Add to queue
+		BQ2 = [{{BucketId, Prefix}, [{Module, Func, Args}]}],
+		LogSqlQueue0 ++ BQ2;
+	    true ->
+		%% Change bucket queue
+		lists:map(
+		    fun(I) ->
+			case element(1, I) of
+			    {BucketId, Prefix} ->
+				BQ3 = element(2, I),
+				{{BucketId, Prefix}, BQ3 ++ [{Module, Func, Args}]};
+			    _ -> I
+			end
+		    end, LogSqlQueue0)
+	end,
+    {noreply, State0#state{log_sql_queue = LogSqlQueue1}}.
 
 %%
 %% Adds pseudo-directory in SQLite db, if it do not exist yet
@@ -197,10 +229,10 @@ task_create_pseudo_directory(Prefix, Name, User, DbName) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info(update_db, #state{sql_queue = SqlQueue0} = State) ->
+handle_info(update_db, #state{sync_sql_queue = SyncSqlQueue0, log_sql_queue = LogSqlQueue0} = State) ->
     %% Go over per-bucket queues of tasks, download SQLite db files,
     %% execute SQL statements and upload DBs again
-    SqlQueue1 =
+    SyncSqlQueue1 =
 	lists:map(
 	    fun(I) ->
 		BucketId = element(1, I),
@@ -210,7 +242,7 @@ handle_info(update_db, #state{sql_queue = SqlQueue0} = State) ->
 			0 -> [];  %% do nothing, try later
 			_ ->
 			    %% Acquire lock on db first
-			    case lock_db(BucketId) of
+			    case lock_db(BucketId, ?DB_VERSION_LOCK_FILENAME) of
 				ok -> update_db(BucketId, BucketQueue0);
 				locked ->
 				    %% Skip it. The next check is in 3 seconds
@@ -218,13 +250,42 @@ handle_info(update_db, #state{sql_queue = SqlQueue0} = State) ->
 			    end
 		    end,
 		{BucketId, BucketQueue1}
-	    end, SqlQueue0),
-    {ok, Tref0} = timer:send_after(?SQLITE_DB_UPDATE_INTERVAL, update_db),
-    {noreply, State#state{update_db_timer = Tref0, sql_queue = SqlQueue1}};
+	    end, SyncSqlQueue0),
+
+    LogSqlQueue1 =
+	lists:filtermap(
+	    fun(I) ->
+		BP = element(1, I),
+		BucketId = element(1, BP),
+		Prefix = element(2, BP),
+io:fwrite("Prefix: ~p~n", [Prefix]),
+		BucketQueue2 = element(2, I),
+		case length(BucketQueue2) of
+		    0 -> false;  %% remove empty entry from SQL queue
+		    _ ->
+			%% Update DB, but acquire the lock first
+			PrefixedLockName = utils:prefixed_object_key(Prefix, ?ACTION_LOG_LOCK_FILENAME),
+io:fwrite("PrefixedLockName: ~p~n", [PrefixedLockName]),
+			case lock_db(BucketId, PrefixedLockName) of
+			    ok ->
+				BucketQueue3 = update_db(BucketId, Prefix, BucketQueue2),
+				{true, {{BucketId, Prefix}, BucketQueue3}};
+			    locked ->
+				%% Skip it. The next check is in 3 seconds
+				{true, {{BucketId, Prefix}, BucketQueue2}}
+			end
+		end
+	    end, LogSqlQueue0),
+
+    {ok, Tref0} = timer:send_after(?INTERNAL_DB_UPDATE_INTERVAL, update_db),
+    {noreply, State#state{update_db_timer = Tref0, sync_sql_queue = SyncSqlQueue1, log_sql_queue = LogSqlQueue1}};
 
 handle_info(_Info, State) ->
     {noreply, State}.
 
+%%
+%% Update file tree in SQL DB
+%%
 update_db(BucketId, BucketQueue0) ->
     DbName = erlang:list_to_atom(crypto_utils:random_string()),
     case open_db(BucketId, DbName) of
@@ -297,6 +358,53 @@ update_db(BucketId, BucketQueue0) ->
 	    lists:flatten(BucketQueue1)
     end.
 
+%%
+%% Update Action Log in SQL DB
+%%
+update_db(BucketId, Prefix, BucketQueue0) ->
+    DbName = erlang:list_to_atom(crypto_utils:random_string()),
+    case open_db(BucketId, Prefix, DbName) of
+	{error, TempFn, _Reason} ->
+	    %% leave queue as is
+	    file:delete(TempFn),
+	    BucketQueue0;
+	{ok, TempFn, DbPid} ->
+	    BucketQueue1 = lists:map(
+		fun(J) ->
+		    Module = element(1, J),
+		    Func = element(2, J),
+		    Args = element(3, J),
+		    case erlang:function_exported(Module, Func, length(Args)) of
+			true ->
+			    case apply(Module, Func, Args) of
+				[] -> [];
+				SQL ->
+				    case sqlite3:sql_exec(DbName, SQL) of
+					{error, _, Reason0} ->
+					    lager:error("[sqlite_server] SQL: ~p Error: ", [SQL, Reason0]),
+					    {Module, Func, Args};  %% adding it back to queue
+					_Result -> []
+				    end
+			    end;
+			false ->
+			    lager:error("[sqlite_server] not exported: ~p:~p/~p~p",
+				        [Module, Func, length(Args), Args]),
+			    []  %% removing from queue
+		    end
+		end, BucketQueue0),
+	    %% Read SQLitedb as file and write it to Riak CS
+	    sqlite3:close(DbPid),
+	    {ok, Blob} = file:read_file(TempFn),
+	    RiakOptions = [{meta, [{"bytes", byte_size(Blob)}]}],
+	    s3_api:put_object(BucketId, undefined, ?ACTION_LOG_FILENAME, Blob, RiakOptions),
+	    %% Remove lock object
+	    %% remove temporary db file
+	    s3_api:delete_object(BucketId, ?ACTION_LOG_LOCK_FILENAME),
+	    file:delete(TempFn),
+
+	    lists:flatten(BucketQueue1)
+    end.
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -345,74 +453,116 @@ integrity_check(DbName, TempFn) ->
     IsConsistent.
 
 %%
-%% Read DB from Riak CS.
+%% Read File Tree DB from Riak CS.
 %%
 open_db(BucketId, DbName) ->
-    TempFn0 = os:cmd("/bin/mktemp --suffix=.db"),
-    TempFn1 = re:replace(TempFn0, "[\r\n]", "", [global, {return, list}]),
+    TempFn = utils:get_temp_path(middleware),
     case s3_api:get_object(BucketId, ?DB_VERSION_KEY) of
 	{error, Reason0} ->
 	    ?ERROR("[sqlite_server] Failed to read existing db: ~p~n", [Reason0]),
-	    {error, TempFn1, Reason0};
+	    {error, TempFn, Reason0};
 	not_found ->
 	    %% No SQLite db found, create a new one
-	    {ok, Pid0} = sqlite3:open(DbName, [{file, TempFn1}]),
-	    case sql_lib:create_table_if_not_exist(DbName) of
+	    {ok, Pid0} = sqlite3:open(DbName, [{file, TempFn}]),
+	    case sql_lib:create_items_table_if_not_exist(DbName) of
 		ok ->
 		    %% Create a new version
 		    Timestamp = erlang:round(utils:timestamp()/1000),
 		    Version0 = indexing:increment_version(undefined, Timestamp, []),
-		    {ok, TempFn1, Pid0, Version0};
+		    {ok, TempFn, Pid0, Version0};
 		{error, Reason1} ->
 		    ?ERROR("[sqlite_server] Failed to create table: ~p~n", [Reason1]),
-		    {error, TempFn1, Reason1}
+		    {error, TempFn, Reason1}
 	    end;
 	Object ->
 	    Content = proplists:get_value(content, Object),
 	    case s3_api:head_object(BucketId, ?DB_VERSION_KEY) of
 		not_found ->
 		    ?ERROR("[sqlite_server] DB object suddenly disappeared~n"),
-		    {error, TempFn1, "DB object suddenly disappeared"};
+		    {error, TempFn, "DB object suddenly disappeared"};
 		Metadata ->
-		    case file:write_file(TempFn1, Content, [write, binary]) of
+		    case file:write_file(TempFn, Content, [write, binary]) of
 			ok ->
 			    %% Read db, then call exec_sql
-			    {ok, Pid1} = sqlite3:open(DbName, [{file, TempFn1}]),
+			    {ok, Pid1} = sqlite3:open(DbName, [{file, TempFn}]),
 			    %% File could be empty for some reason, so lets create table, if it do not exist
-			    case sql_lib:create_table_if_not_exist(DbName) of
+			    case sql_lib:create_items_table_if_not_exist(DbName) of
 				ok ->
 				    %% Create a new version
 				    Timestamp = erlang:round(utils:timestamp()/1000),
 				    Version0 = indexing:increment_version(undefined, Timestamp, []),
-				    {ok, TempFn1, Pid1, Version0};
+				    {ok, TempFn, Pid1, Version0};
 				exists ->
 				    Version1 = proplists:get_value("x-amz-meta-version", Metadata),
 				    Version2 = jsx:decode(base64:decode(Version1)),
-				    {ok, TempFn1, Pid1, Version2};
+				    {ok, TempFn, Pid1, Version2};
 				{error, Reason2} ->
 				    ?ERROR("[sqlite_server] Failed to create table: ~p~n", [Reason2]),
-				    {error, TempFn1, Reason2}
+				    {error, TempFn, Reason2}
 			    end;
 			{error, Reason3} ->
 			    ?ERROR("[sqlite_server] Can't write to db file: ~p~n", [Reason3]),
-			    {error, TempFn1, Reason3}
+			    {error, TempFn, Reason3}
 		    end
 	    end
     end.
 
+%%
+%% Read Action Log DB from Riak CS.
+%%
+open_db(BucketId, Prefix, DbName) ->
+    TempFn = utils:get_temp_path(middleware),
+    PrefixedDbName = utils:prefixed_object_key(Prefix, ?ACTION_LOG_FILENAME),
+    case s3_api:get_object(BucketId, PrefixedDbName) of
+	{error, Reason0} ->
+	    ?ERROR("[sqlite_server] Failed to read existing action log db: ~p~n", [Reason0]),
+	    {error, TempFn, Reason0};
+	not_found ->
+	    %% No SQLite db found, create a new one
+	    {ok, Pid0} = sqlite3:open(DbName, [{file, TempFn}]),
+	    case sql_lib:create_action_log_table_if_not_exist(DbName) of
+		ok -> {ok, TempFn, Pid0};
+		{error, Reason1} ->
+		    ?ERROR("[sqlite_server] Failed to create table: ~p~n", [Reason1]),
+		    {error, TempFn, Reason1}
+	    end;
+	Object ->
+	    Content = proplists:get_value(content, Object),
+	    case s3_api:head_object(BucketId, PrefixedDbName) of
+		not_found ->
+		    ?ERROR("[sqlite_server] Action log DB object suddenly disappeared~n"),
+		    {error, TempFn, "Action log DB object suddenly disappeared"};
+		_Metadata ->
+		    case file:write_file(TempFn, Content, [write, binary]) of
+			ok ->
+			    %% Read db, then call exec_sql
+			    {ok, Pid1} = sqlite3:open(DbName, [{file, TempFn}]),
+			    %% File could be empty for some reason, so lets create table, if it do not exist
+			    case sql_lib:create_action_log_table_if_not_exist(DbName) of
+				ok -> {ok, TempFn, Pid1};
+				exists -> {ok, TempFn, Pid1};
+				{error, Reason2} ->
+				    ?ERROR("[sqlite_server] Failed to create table: ~p~n", [Reason2]),
+				    {error, TempFn, Reason2}
+			    end;
+			{error, Reason3} ->
+			    ?ERROR("[sqlite_server] Can't write to Action Log DB file: ~p~n", [Reason3]),
+			    {error, TempFn, Reason3}
+		    end
+	    end
+    end.
 
 %%
 %% Create lock object in Riak CS
 %%
-lock_db(BucketId) ->
+lock_db(BucketId, LockName) ->
     %% Check lock file first
-    case s3_api:head_object(BucketId, ?DB_VERSION_LOCK_FILENAME) of
+    case s3_api:head_object(BucketId, LockName) of
 	not_found ->
 	    %% Create lock file instantly
 	    Timestamp0 = erlang:round(utils:timestamp()/1000),
 	    LockMeta0 = [{"modified-utc", Timestamp0}],
-	    Result0 = s3_api:put_object(BucketId, undefined, ?DB_VERSION_LOCK_FILENAME, <<>>,
-					  [{meta, LockMeta0}]),
+	    Result0 = s3_api:put_object(BucketId, undefined, LockName, <<>>, [{meta, LockMeta0}]),
 	    case Result0 of
 		{error, Reason0} -> {error, Reason0};
 		_ -> ok
@@ -425,17 +575,16 @@ lock_db(BucketId) ->
 		    undefined -> 0;
 		    T -> Timestamp1 - utils:to_integer(T)
 		end,
-	    case DeltaSeconds > ?DB_VERSION_LOCK_COOLOFF_TIME of
+	    case DeltaSeconds > ?DB_LOCK_COOLOFF_TIME of
 		true ->
 		    %% Remove previous lock object, create a new one
-		    case s3_api:delete_object(BucketId, ?DB_VERSION_LOCK_FILENAME) of
+		    case s3_api:delete_object(BucketId, LockName) of
 			{error, Reason} ->
-			    lager:error("Failed removing lock ~p/~p", [BucketId, ?DB_VERSION_LOCK_FILENAME]),
+			    lager:error("Failed removing lock ~p/~p", [BucketId, LockName]),
 			    {error, Reason};
 			{ok, _} ->
 			    LockMeta1 = [{"modified-utc", Timestamp1}],
-			    Result1 = s3_api:put_object(BucketId, undefined, ?DB_VERSION_LOCK_FILENAME, <<>>,
-							  [{meta, LockMeta1}]),
+			    Result1 = s3_api:put_object(BucketId, undefined, LockName, <<>>, [{meta, LockMeta1}]),
 			    case Result1 of
 				{error, Reason1} -> {error, Reason1};
 				_ -> ok

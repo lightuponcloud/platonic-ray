@@ -15,7 +15,6 @@
 <link type="text/css" rel="stylesheet" href="{{ static_root }}bootstrap/css/bootstrap.css">
 <link type="text/css" rel="stylesheet" href="{{ static_root }}bootstrap/css/mobile.css">
 <link type="text/css" rel="stylesheet" href="{{ static_root }}jquery.ui.autocomplete.css">
-<link rel="stylesheet" href="{{ static_root }}photoswipe.css"/>
 
 <script src="{{ static_root }}jquery.min.js"></script>
 <script src="{{ static_root }}jquery.form.min.js"></script>

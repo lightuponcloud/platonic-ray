@@ -7,7 +7,7 @@
 -export([init/2, content_types_provided/2, to_json/2, allowed_methods/2,
          content_types_accepted/2,  forbidden/2, resource_exists/2,
 	 previously_existed/2]).
--export([add_record/3, fetch_full_object_history/2,
+-export([fetch_full_object_history/2,
 	 validate_object_key/4, validate_post/3, handle_post/2]).
 
 -include_lib("xmerl/include/xmerl.hrl").
@@ -15,58 +15,6 @@
 -include("storage.hrl").
 -include("entities.hrl").
 -include("action_log.hrl").
-
--import(xmerl_xs, 
-    [ xslapply/2, value_of/1, select/2, built_in_rules/2 ]).
-
-%%
-%% Adds action log record to XML document, stored in Riak CS
-%%
--spec add_record(string(), string(), #action_log_record{}) -> proplist().
-
-add_record(BucketId, Prefix, Record0) ->
-    Record1 = {record, [
-	{action, [Record0#action_log_record.action]},
-	{details, [Record0#action_log_record.details]},
-	{user_name, [Record0#action_log_record.user_name]},
-	{tenant_name, [Record0#action_log_record.tenant_name]},
-	{timestamp, [Record0#action_log_record.timestamp]}
-	]},
-    PrefixedActionLogFilename = utils:prefixed_object_key(
-	Prefix, ?ACTION_LOG_FILENAME),
-
-    case s3_api:get_object(BucketId, PrefixedActionLogFilename) of
-	{error, Reason} ->
-	    lager:error("[action_log] get_object error ~p/~p: ~p",
-			[BucketId, PrefixedActionLogFilename, Reason]),
-	    not_found;
-	not_found ->
-	    %% Create .action_log.xml
-	    RootElement0 = #xmlElement{name=action_log, content=[Record1]},
-	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-	    Response = s3_api:put_object(BucketId, Prefix, ?ACTION_LOG_FILENAME,
-					   unicode:characters_to_binary(XMLDocument0)),
-	    case Response of
-		{error, Reason} -> lager:error("[action_log] Can't put object ~p/~p/~p: ~p",
-					       [BucketId, Prefix, ?ACTION_LOG_FILENAME, Reason]);
-		_ -> ok
-	    end;
-	ExistingObject ->
-	    XMLDocument1 = utils:to_list(proplists:get_value(content, ExistingObject)),
-	    {RootElement1, _} = xmerl_scan:string(XMLDocument1),
-	    #xmlElement{content=Content} = RootElement1,
-	    NewContent = [Record1]++Content,
-	    NewRootElement = RootElement1#xmlElement{content=NewContent},
-	    XMLDocument2 = xmerl:export_simple([NewRootElement], xmerl_xml),
-
-	    Response = s3_api:put_object(BucketId, Prefix, ?ACTION_LOG_FILENAME,
-		unicode:characters_to_binary(XMLDocument2)),
-	    case Response of
-		{error, Reason} -> lager:error("[action_log] Can't put object ~p/~p/~p: ~p",
-					       [BucketId, Prefix, ?ACTION_LOG_FILENAME, Reason]);
-		_ -> ok
-	    end
-    end.
 
 init(Req, Opts) ->
     {cowboy_rest, Req, Opts}.
@@ -90,29 +38,71 @@ content_types_accepted(Req, State) ->
     end.
 
 %%
-%% Helps to transform action log record from XML to JSON
+%% Receives stream from httpc and passes it to cowboy
 %%
-template(E = #xmlElement{name=action_log}) ->
-    xslapply(fun template/1, E);
-template(E = #xmlElement{name=record}) ->
-    Details = lists:flatten(xslapply(fun template/1, select("details", E))),
-    UserName = lists:flatten(xslapply(fun template/1, select("user_name", E))),
-    TenantName = lists:flatten(xslapply(fun template/1, select("tenant_name", E))),
-    [
-      {action, erlang:list_to_binary(lists:flatten(xslapply(fun template/1, select("action", E))))},
-      {details, unicode:characters_to_binary(Details)},
-      {user_name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(UserName)))},
-      {tenant_name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(TenantName)))},
-      {timestamp, erlang:list_to_binary(lists:flatten(xslapply(fun template/1, select("timestamp", E))))}
-    ];
-template(E) -> built_in_rules(fun template/1, E).
+receive_streamed_body(RequestId0, Pid0, TempFn) ->
+    httpc:stream_next(Pid0),
+    receive
+	{http, {RequestId0, stream, BinBodyPart}} ->
+	    file:write_file(TempFn, BinBodyPart, [append]),
+	    receive_streamed_body(RequestId0, Pid0, TempFn);
+	{http, {RequestId0, stream_end, _Headers0}} -> ok;
+	{http, Msg} ->
+	    lager:error("[action_log] error receiving stream body: ~p", [Msg]),
+	    ok
+    end.
+
+%%
+%% Downloads action log SQLite DB from S3, saves it to temporary location and performs SQL query.
+%%
+sql_query(BucketId, Prefix, ObjectKey, TempFn, DbName) ->
+    PrefixedActionLogFilename = utils:prefixed_object_key(Prefix, ?ACTION_LOG_FILENAME),
+    case s3_api:get_object(BucketId, PrefixedActionLogFilename, stream) of
+	not_found -> {error, 17};
+	{ok, RequestId} ->
+	    receive
+	    {http, {RequestId, stream_start, _Headers, Pid0}} ->
+		receive_streamed_body(RequestId, Pid0, TempFn);
+		{http, Msg} ->
+		    lager:error("[action_log] Can't download Sqlite DB. Bucket: ~p, Prefix: ~p. Error: ~p",
+				[BucketId, Prefix, Msg])
+	    end,
+	    SQL = sql_lib:get_action_log_records_for_object(ObjectKey),
+	    case sqlite3:sql_exec(DbName, SQL) of
+		{error, _, Reason} ->
+		    lager:error("[action_log] Failed to select actions from SQLite DB: ~p", [Reason]),
+		    {error, 5};
+		[{columns, _}, {rows, Rows}] ->
+		    lists:map(
+			fun(I) ->
+			    IsDir =
+				case element(4, I) of
+				    1 -> true;
+				    _ -> false
+				end,
+			    [
+				{key, element(1, I)},
+				{orig_name, element(2, I)},
+				{guid, element(3, I)},
+				{is_dir, IsDir},
+				{action, element(5, I)},
+				{details, element(6, I)},
+				{user_id, element(7, I)},
+				{user_name, element(8, I)},
+				{tenant_name, element(9, I)},
+				{timestamp, element(10, I)},
+				{duration, element(11, I)},
+				{version, element(12, I)}
+			    ]
+			end, Rows)
+	    end
+    end.
 
 %%
 %% Returns pseudo-directory action log
 %%
-get_action_log(Req0, State, BucketId, Prefix) ->
-    PrefixedActionLogFilename = utils:prefixed_object_key(
-	Prefix, ?ACTION_LOG_FILENAME),
+get_action_log(Req0, State, BucketId, Prefix, ObjectKey) ->
+    PrefixedActionLogFilename = utils:prefixed_object_key(Prefix, ?ACTION_LOG_FILENAME),
     ExistingObject0 = s3_api:head_object(BucketId, PrefixedActionLogFilename),
     case ExistingObject0 of
 	{error, Reason} ->
@@ -121,20 +111,16 @@ get_action_log(Req0, State, BucketId, Prefix) ->
 	    {<<"[]">>, Req0, State};
 	not_found -> {<<"[]">>, Req0, State};
 	_ ->
-	    case s3_api:get_object(BucketId, PrefixedActionLogFilename) of
-		{error, Reason} ->
-		    lager:error("[action_log] get_object failed ~p/~p: ~p",
-				[BucketId, PrefixedActionLogFilename, Reason]),
-		    {<<>>, Req0, State};
-		not_found ->
-		    {<<>>, Req0, State};
-		ExistingObject1 ->
-		    XMLContent0 = utils:to_list(proplists:get_value(content, ExistingObject1)),
-		    {XMLContent1, _} = xmerl_scan:string(XMLContent0),
-
-		    %% filter out "\n" characters and serialize records to JSON
-		    Output = jsx:encode([R || R <- template(XMLContent1),
-				        proplists:is_defined(action, R) =:= true]),
+	    TempFn = utils:get_temp_path(middleware),
+	    DbName = erlang:list_to_atom(crypto_utils:random_string()),
+	    {ok, _Pid} = sqlite3:open(DbName, [{file, TempFn}]),
+	    case sql_query(BucketId, Prefix, ObjectKey, TempFn, DbName) of
+		{error, Number} ->
+		    file:delete(TempFn),
+		    js_handler:bad_request(Req0, Number);
+		Result ->
+		    file:delete(TempFn),
+		    Output = jsx:encode(Result),
 		    {Output, Req0, State}
 	    end
     end.
@@ -207,11 +193,12 @@ to_json(Req0, State) ->
 
     ParsedQs = cowboy_req:parse_qs(Req0),
     case proplists:get_value(<<"object_key">>, ParsedQs) of
-        undefined -> get_action_log(Req0, State, BucketId, Prefix);
-        ObjectKey0 ->
+	undefined -> get_action_log(Req0, State, BucketId, Prefix, undefined);
+	ObjectKey0 ->
 	    ObjectKey1 = unicode:characters_to_list(ObjectKey0),
 	    get_object_changelog(Req0, State, BucketId, Prefix, ObjectKey1)
     end.
+
 
 %%
 %% Adds record to pseudo-directory's history.
@@ -350,9 +337,9 @@ handle_post(Req0, State0) ->
 			    PrevDate = utils:format_timestamp(utils:to_integer(VVTimestamp)),
 			    State1 = [{orig_name, OrigName},
 				      {prev_date, utils:format_timestamp(PrevDate)}],
-                	    log_restore_action(State0 ++ State1),
-                	    {true, Req0, []}
-        	    end;
+			    log_restore_action(State0 ++ State1),
+			    {true, Req0, []}
+		    end;
 		{error, Reason} ->
 		    lager:error("[action_log] Can't put object ~p/~p/~p: ~p",
 				[BucketId, Prefix, ObjectKey1, Reason]),
@@ -400,9 +387,7 @@ resource_exists(Req0, State) ->
 			    Req1 = cowboy_req:set_resp_body(jsx:encode([{error, Number}]), Req0),
 			    {false, Req1, []};
 			Prefix ->
-			    {true, Req0, [{user, User},
-				{bucket_id, BucketId},
-				{prefix, Prefix}]}
+			    {true, Req0, [{user, User}, {bucket_id, BucketId}, {prefix, Prefix}]}
 		    end
 	    end;
 	false -> js_handler:forbidden(Req0, 7, stop)
