@@ -80,8 +80,7 @@ rename_object(BucketId, Prefix, SrcKey, DstKey, DstName) when erlang:is_list(Buc
 		    [Prefix, SrcKey, DstKey, DstName]}).
 
 
--spec(lock_object(BucketId :: string(), Prefix :: string(), Key :: string(),
-		  Value :: boolean()) -> ok).
+-spec(lock_object(BucketId :: string(), Prefix :: string(), Key :: string(), Value :: boolean()) -> ok).
 lock_object(BucketId, Prefix, Key, Value) ->
     gen_server:cast(?MODULE, {add_task, BucketId, sql_lib, lock_object, [Prefix, Key, Value]}).
 
@@ -258,14 +257,12 @@ handle_info(update_db, #state{sync_sql_queue = SyncSqlQueue0, log_sql_queue = Lo
 		BP = element(1, I),
 		BucketId = element(1, BP),
 		Prefix = element(2, BP),
-io:fwrite("Prefix: ~p~n", [Prefix]),
 		BucketQueue2 = element(2, I),
 		case length(BucketQueue2) of
 		    0 -> false;  %% remove empty entry from SQL queue
 		    _ ->
 			%% Update DB, but acquire the lock first
 			PrefixedLockName = utils:prefixed_object_key(Prefix, ?ACTION_LOG_LOCK_FILENAME),
-io:fwrite("PrefixedLockName: ~p~n", [PrefixedLockName]),
 			case lock_db(BucketId, PrefixedLockName) of
 			    ok ->
 				BucketQueue3 = update_db(BucketId, Prefix, BucketQueue2),
@@ -396,10 +393,12 @@ update_db(BucketId, Prefix, BucketQueue0) ->
 	    sqlite3:close(DbPid),
 	    {ok, Blob} = file:read_file(TempFn),
 	    RiakOptions = [{meta, [{"bytes", byte_size(Blob)}]}],
-	    s3_api:put_object(BucketId, undefined, ?ACTION_LOG_FILENAME, Blob, RiakOptions),
+	    PrefixedDbName = utils:prefixed_object_key(Prefix, ?ACTION_LOG_FILENAME),
+	    s3_api:put_object(BucketId, undefined, PrefixedDbName, Blob, RiakOptions),
 	    %% Remove lock object
 	    %% remove temporary db file
-	    s3_api:delete_object(BucketId, ?ACTION_LOG_LOCK_FILENAME),
+	    PrefixedLockName = utils:prefixed_object_key(Prefix, ?ACTION_LOG_LOCK_FILENAME),
+	    s3_api:delete_object(BucketId, PrefixedLockName),
 	    file:delete(TempFn),
 
 	    lists:flatten(BucketQueue1)

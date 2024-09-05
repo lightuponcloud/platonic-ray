@@ -68,7 +68,6 @@ class TestClient(unittest.TestCase):
         response = requests.post("{}/riak/login".format(BASE_URL), data=json.dumps(creds), verify=False,
                                  headers={"content-type": "application/json"})
         t2 = time.time()
-        print("Login request: {} ms".format(int(t2-t1)))
         data = response.json()
         self.token = data["token"]
         self.user_id = data["id"]

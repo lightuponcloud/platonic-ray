@@ -393,6 +393,7 @@ undelete(BucketId, Prefix, ObjectKey) ->
 %%
 update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean(IsLocked0) ->
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
+    T0 = utils:timestamp(),
     case s3_api:head_object(BucketId, PrefixedObjectKey) of
 	{error, Reason} ->
 	    lager:error("[list_handler] head_object failed ~p/~p: ~p",
@@ -426,13 +427,23 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 			 {lock_user_tel, undefined},
 			 {is_locked, undefined}]
 		end,
+	    ActionLogRecord0 = #action_log_record{
+		key = ObjectKey,
+		orig_name = proplists:get_value("x-amz-meta-orig-filename", Metadata0),
+		guid = proplists:get_value("x-amz-meta-guid", Metadata0),
+		is_dir = false,  %% only files can be locked for now
+		user_id = User#user.id,
+		user_name = User#user.name,
+		tenant_name = User#user.tenant_name,
+		timestamp = LockModifiedTime0,
+		version = proplists:get_value("x-amz-meta-version", Metadata0)
+	    },
 	    IsDeleted = utils:to_list(proplists:get_value("x-amz-meta-is-deleted", Metadata0)),
 	    case (LockUserId0 =:= undefined orelse LockUserId0 =:= User#user.id)
 		    andalso IsDeleted =/= "true" andalso WasLocked =/= IsLocked0 of
 		true ->
 		    Meta = parse_object_record(Metadata0, Options),
-		    case s3_api:put_object(BucketId, Prefix, ObjectKey, <<>>,
-					     [{meta, Meta}]) of
+		    case s3_api:put_object(BucketId, Prefix, ObjectKey, <<>>, [{meta, Meta}]) of
 			ok ->
 			    ?INFO("Lock state changes from ~p to ~p: ~s/~s",
 				  [WasLocked, IsLocked0, BucketId, PrefixedObjectKey]),
@@ -452,6 +463,24 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 				    undefined -> null;
 				    V -> utils:unhex(erlang:list_to_binary(V))
 				end,
+			    T1 = utils:timestamp(),
+			    ActionLogRecord1 = ActionLogRecord0#action_log_record{
+				duration = io_lib:format("~.2f", [utils:to_float(T1-T0)/1000]),
+				is_locked = IsLocked0,
+				lock_user_id = User#user.id,
+				lock_user_name = User#user.name,
+				lock_user_tel = LockUserTel,
+				lock_modified_utc = LockModifiedTime0
+			    },
+			    UserName = erlang:binary_to_list(utils:unhex(erlang:list_to_binary(User#user.name))),
+			    ActionLogRecord2 =
+				case IsLocked0 of
+				    true -> ActionLogRecord1#action_log_record{action = "lock",
+						details = io_lib:format("Locked by ~p", [UserName])};
+				    false -> ActionLogRecord1#action_log_record{action = "unlock",
+						details = io_lib:format("Unlocked by ~p", [UserName])}
+				end,
+			    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord2),
 			    [{object_key, erlang:list_to_binary(ObjectKey)},
 			     {is_locked, utils:to_binary(IsLocked0)},
 			     {lock_user_id, erlang:list_to_binary(User#user.id)},
@@ -835,14 +864,12 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
     %% Mark object as deleted
     case indexing:update(BucketId, Prefix, [{to_delete, ObjectKeys1}]) of
 	lock ->
-	    lager:warning("[list_handler] Can't update index during deleting object: ~p/~p",
-		       [BucketId, Prefix]),
+	    lager:warning("[list_handler] Can't update index during deleting object: ~p/~p", [BucketId, Prefix]),
 	    lock;
 	_ ->
 	    %% Update SQLite db
 	    [sqlite_server:delete_object(BucketId, Prefix, erlang:binary_to_list(element(1, K)))
 	     || K <- ObjectKeys1],
-
 	    %% Leave record in action log and update object records with is_deleted flag
 	    OrigNames = lists:map(
 		fun(I) ->
@@ -856,8 +883,7 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
 			not_found -> [];
 			Metadata0 ->
 			    Meta = parse_object_record(Metadata0, [{is_deleted, "true"}]),
-			    case s3_api:put_object(BucketId, Prefix, erlang:binary_to_list(ObjectKey), <<>>,
-						     [{meta, Meta}]) of
+			    case s3_api:put_object(BucketId, Prefix, erlang:binary_to_list(ObjectKey), <<>>, [{meta, Meta}]) of
 				ok ->
 				    UnicodeObjectName0 = proplists:get_value("orig-filename", Meta),
 				    UnicodeObjectName1 = utils:unhex(erlang:list_to_binary(UnicodeObjectName0)),
@@ -872,11 +898,12 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
 	    case length(ObjectKeys1) of
 		0 -> [];
 		_ ->
-		    Summary0 = lists:flatten([["Deleted \""], OrigNames, ["\""]]),
+		    Summary0 = lists:flatten([["Deleted "], OrigNames]),
 		    T1 = utils:timestamp(),
 		    ActionLogRecord1 = ActionLogRecord0#action_log_record{
-			details=Summary0,
-			duration=io_lib:format("~.2f", [utils:to_float(T1-Timestamp)/1000])
+			orig_name = OrigNames,
+			details = Summary0,
+			duration = io_lib:format("~.2f", [utils:to_float(T1-Timestamp)/1000])
 		    },
 		    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord1),
 		    [element(1, I) || I <- ObjectKeys1]

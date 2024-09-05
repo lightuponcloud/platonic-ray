@@ -309,6 +309,7 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 			    Summary0 = lists:flatten([["Renamed \""], [SrcObjectKey1, "\" to \"", DstDirectoryName2, "\""]]),
 			    T1 = utils:timestamp(), %% measure time of request
 			    ActionLogRecord1 = ActionLogRecord0#action_log_record{
+				orig_name=DstDirectoryName2,
 				key=SrcObjectKey0,
 				details=Summary0,
 				duration=io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
@@ -475,8 +476,7 @@ rename(Req0, BucketId, State, IndexContent) ->
 			lock_modified_utc = proplists:get_value(lock_modified_utc, NewObj)
 		    },
 		    sqlite_server:add_object(BucketId, Prefix0, Obj),
-		    Req1 = cowboy_req:set_resp_body(
-			jsx:encode([{orig_name, OrigName}]), Req0),
+		    Req1 = cowboy_req:set_resp_body(jsx:encode([{orig_name, OrigName}]), Req0),
 		    {true, Req1, []}
 	    end
     end.

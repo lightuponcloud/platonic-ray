@@ -65,7 +65,13 @@ create_action_log_table_if_not_exist(DbName) ->
 		 {tenant_name, text, [not_null]},
 		 {timestamp, integer},
 		 {duration, integer},
-		 {version, text, [{default, ""}]}],
+		 {version, text, [{default, ""}]},
+		 {is_locked, boolean, not_null},
+		 {lock_user_id, text, [{default, ""}]},
+		 {lock_user_name, text, [{default, ""}]},
+		 {lock_user_tel, text, [{default, ""}]},
+		 {lock_modified_utc, integer}
+	    ],
 	    case sqlite3:create_table(DbName, actions, TableInfo) of
 		ok -> ok;
 		{error, _, Reason} ->
@@ -252,7 +258,8 @@ delete_object(Prefix0, Key)
 -spec(add_action_log_record(Record :: #action_log_record{}) -> list()).
 add_action_log_record(Record) ->
     ["INSERT OR REPLACE INTO actions (key, orig_name, guid, is_dir, action, details, user_id, user_name, "
-     "tenant_name, timestamp, duration, version) VALUES (",
+     "tenant_name, timestamp, duration, version, is_locked, lock_user_id, lock_user_name, lock_user_tel, "
+     "lock_modified_utc) VALUES (",
      sqlite3_lib:value_to_sql(Record#action_log_record.key), ", ",
      sqlite3_lib:value_to_sql(Record#action_log_record.orig_name), ", ",
      sqlite3_lib:value_to_sql(Record#action_log_record.guid), ", ",
@@ -264,7 +271,12 @@ add_action_log_record(Record) ->
      sqlite3_lib:value_to_sql(Record#action_log_record.tenant_name), ", ",
      sqlite3_lib:value_to_sql(Record#action_log_record.timestamp), ", ",
      sqlite3_lib:value_to_sql(Record#action_log_record.duration), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.version), ");"].
+     sqlite3_lib:value_to_sql(Record#action_log_record.version), ", ",
+     sqlite3_lib:value_to_sql(Record#action_log_record.is_locked), ", ",
+     sqlite3_lib:value_to_sql(Record#action_log_record.lock_user_id), ", ",
+     sqlite3_lib:value_to_sql(Record#action_log_record.lock_user_name), ", ",
+     sqlite3_lib:value_to_sql(Record#action_log_record.lock_user_tel), ", ",
+     sqlite3_lib:value_to_sql(Record#action_log_record.lock_modified_utc), ");"].
 
 
 -spec(get_action_log_records() -> list()).

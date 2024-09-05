@@ -56,5 +56,6 @@ class UploadTest(TestClient):
         t2 = time.time()
         print("Upload thumbnail {}".format(int(t2-t1)))
 
+
 if __name__ == "__main__":
     unittest.main()

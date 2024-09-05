@@ -121,7 +121,7 @@ class UploadTest(TestClient):
             self.assertEqual(fd.read(), contents)
 
         # Test SQLite db contents
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         for i in range(len(result)):
             if result[i]['key'] == fn.lower():

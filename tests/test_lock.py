@@ -9,6 +9,7 @@ from client_base import (
     PASSWORD_1,
     USERNAME_2,
     PASSWORD_2,
+    ACTION_LOG_FILENAME,
     TestClient)
 from light_client import LightClient, generate_random_name, encode_to_hex
 
@@ -67,13 +68,17 @@ class LockTest(TestClient):
         # 2-3. lock it and check for "is_locked": True
         response = self.client.patch(TEST_BUCKET_1, "lock", [object_key])
         result = response.json()
-        # print(response.content.decode())
         self.assertEqual(result[0]['is_locked'], True)
         self.assertEqual(response.status_code, 200)
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(result[0]['is_locked'], 1)
+
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        self.assertEqual(len(result), 2)  # 1 upload, 1 lock
+        lock_action = [i for i in result if i['action'] == 'lock'][0]
+        self.assertEqual(lock_action['is_locked'], 1)
 
         # 4. try to change lock from different user
         self.client.login(USERNAME_2, PASSWORD_2)
@@ -84,9 +89,14 @@ class LockTest(TestClient):
         # Lock remains active, as unlock was performed by different user
         self.assertEqual(result[0]['is_locked'], True)
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(result[0]['is_locked'], 1)
+
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        self.assertEqual(len(result), 2)  # Log should not change: 1 upload, 1 lock should remain
+        lock_action = [i for i in result if i['action'] == 'lock'][0]
+        self.assertEqual(lock_action['is_locked'], 1)
 
         # 5. Check for the same value of lock remained as in step #2-3
         response = self.client.get_list(TEST_BUCKET_1)
@@ -101,17 +111,27 @@ class LockTest(TestClient):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()[0]['is_locked'], False)
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(result[0]['is_locked'], 0)
+
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        self.assertEqual(len(result), 3)  # 1 upload, 1 lock, 1 unlock
+        unlock_action = [i for i in result if i['action'] == 'unlock'][0]
+        self.assertEqual(unlock_action['is_locked'], 0)
 
         # Delete file
         response = self.client.delete(TEST_BUCKET_1, [object_key])
         self.assertEqual(response.status_code, 200)
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(result, [])
+
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        self.assertEqual(len(result), 4)  # 1 upload, 1 lock, 1 unlock, 1 delete
+        delete_action = [i for i in result if i['action'] == 'delete'][0]
+        self.assertEqual(delete_action['is_locked'], 0)
 
     def test_lock_and_newversion(self):
         """
@@ -252,7 +272,6 @@ class LockTest(TestClient):
         """
         Make sure deleted objects can't be locked
         """
-        print("test_lock4 start")
         # 1. upload a file
         fn = "20180111_165127.jpg"
         result = self.client.upload(TEST_BUCKET_1, fn)
@@ -263,7 +282,6 @@ class LockTest(TestClient):
         response = self.client.delete(TEST_BUCKET_1, object_key)
         object_key_deleted = response.json()
         self.assertEqual(object_key_deleted, object_key)
-        print(response.json())
         self.assertEqual(response.status_code, 200)
 
         metadata = self.head(TEST_BUCKET_1, object_key_deleted[0])
@@ -290,7 +308,6 @@ class LockTest(TestClient):
         # 2-3. lock it and check for "is_locked": True
         response = self.client.patch(TEST_BUCKET_3, "lock", [object_key])
         result = response.json()
-        # print(response.content.decode())
         self.assertEqual(result[0]['is_locked'], True)
         self.assertEqual(response.status_code, 200)
 

@@ -10,7 +10,12 @@
     tenant_name = ""::string(),
     timestamp = undefined,
     duration = undefined,
-    version = ""::string()
+    version = ""::string(),
+    is_locked = false,
+    lock_user_id = ""::string(),
+    lock_user_name = ""::string(),
+    lock_user_tel = ""::string(),
+    lock_modified_utc = undefined
 }).
 
 -type action_log_record() :: #{
@@ -25,5 +30,10 @@
     tenant_name => string(),
     timestamp => integer(),
     duration => integer(),
-    version => string()  %% stores version of object
+    version => string(),  %% stores version of object
+    is_locked => boolean(),
+    lock_user_id => string(),
+    lock_user_name => string(),
+    lock_user_tel => string(),
+    lock_modified_utc => integer()
 }.
