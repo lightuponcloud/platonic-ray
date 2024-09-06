@@ -8,6 +8,7 @@ from client_base import (
     USERNAME_1,
     PASSWORD_1,
     TestClient,
+    ACTION_LOG_FILENAME,
     configure_boto3)
 from light_client import LightClient, generate_random_name, encode_to_hex
 
@@ -81,6 +82,9 @@ class DeleteTest(TestClient):
                 if filename in obj['orig_name']:
                     self.assertEqual(obj['is_deleted'], True)
 
+        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        self.assertEqual(len(action_log), 6)
+
     def test_delete_files_from_pseudodirectory(self):
         """
         # Delete from pseudo-directory: one and many
@@ -102,7 +106,6 @@ class DeleteTest(TestClient):
         response = self.client.delete(TEST_BUCKET_1, object_keys=object_key, prefix=dir_name_prefix)
         self.assertEqual(response.json(), object_key)
 
-
         result = self.client.get_list(TEST_BUCKET_1).json()
         for obj in result['list']:
             if fn in obj['orig_name']:
@@ -120,6 +123,10 @@ class DeleteTest(TestClient):
         dir_name_prefix = [dir_name_prefix]
         response = self.client.delete(TEST_BUCKET_1, object_keys=dir_name_prefix)
         self.assertEqual(response.json(), dir_name_prefix)
+
+        time.sleep(2)
+        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        self.assertEqual(len(action_log), 2)
 
     def test_delete_pseudodirectories_from_root(self):
         """
@@ -172,6 +179,9 @@ class DeleteTest(TestClient):
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 0)
 
+        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        self.assertEqual(len(action_log), 10)
+
     def test_delete_pseudodirectories_from_pseudodirectory(self):
         """
         # Delete pseudo-directories from pseudo-directory: one and many
@@ -218,9 +228,12 @@ class DeleteTest(TestClient):
         assert response.status_code == 200
         self.assertEqual(set(response.json()), set(object_keys))
 
-        time.sleep(2)  # time necessary for server to update db
+        time.sleep(4)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 0)  # only main dir should exist
+
+        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        self.assertTrue((len(action_log) > 7)) # 2 create dirs + 3 deletes + between 2 and 10 create dirs
 
 
 if __name__ == '__main__':

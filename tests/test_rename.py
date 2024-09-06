@@ -73,41 +73,6 @@ class RenameTest(TestClient):
         self.resource = configure_boto3()
         self.purge_test_buckets()
 
-    def _check_action_log(self, bucket_id, prefix, details, is_dir):
-        result = self.check_sql(bucket_id, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
-        self.assertEqual(len(result), 1)
-        self.assertTrue(("id" in result[0]))
-        self.assertEqual(result[0]["key"], fn)
-        self.assertEqual(result[0]["orig_name"], fn)
-        self.assertTrue(("guid" in result[0]))
-        self.assertEqual(result[0]["action"], "rename")
-        self.assertEqual(result[0]["details"], details)
-        self.assertTrue(("user_id" in result[0]))
-        self.assertTrue(("user_name" in result[0]))
-        self.assertTrue(("tenant_name" in result[0]))
-        self.assertTrue(("timestamp" in result[0]))
-        self.assertTrue(("duration" in result[0]))
-        self.assertTrue(("version" in result[0]))
-        self.assertEqual(result[0]["is_dir"], is_dir)
-
-        response = self.client.get_action_log(bucket_id, prefix)
-        self.assertEqual(response.status_code, 200)
-        result = response.json()
-        self.assertEqual(len(result), 1)
-        rec = result[0]
-        self.assertEqual(rec["key"], fn)
-        self.assertEqual(rec["orig_name"], fn)
-        self.assertTrue(("guid" in rec))
-        self.assertEqual(rec["is_dir"], is_dir)
-        self.assertEqual(rec["action"], "rename")
-        self.assertEqual(rec["details"], details)
-        self.assertTrue(("user_id" in rec))
-        self.assertTrue(("user_name" in rec))
-        self.assertTrue(("tenant_name" in rec))
-        self.assertTrue(("timestamp" in rec))
-        self.assertTrue(("duration" in rec))
-        self.assertTrue(("version" in rec))
-
     def test_sqlite_update(self):
         # 1. Upload file
         fn = "20180111_165127.jpg"

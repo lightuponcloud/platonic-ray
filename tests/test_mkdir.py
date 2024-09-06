@@ -8,6 +8,7 @@ from client_base import (
     USERNAME_1,
     PASSWORD_1,
     TestClient,
+    ACTION_LOG_FILENAME,
     configure_boto3)
 from light_client import (
     LightClient,
@@ -36,7 +37,6 @@ class MKdirTest(TestClient):
         1. Сreates pseudo-directory
         2. Makes request to create another one with same name
         3. Checks for error returned
-
         """
         # 1 Create pseudo-directory with random name
         dir_name = generate_random_name()
@@ -65,6 +65,12 @@ class MKdirTest(TestClient):
         self.assertTrue(("lock_modified_utc" in result[0]))
         self.assertTrue(("md5" in result[0]))
 
+        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        self.assertEqual(len(action_log), 1)
+        mkdir_record = [i for i in action_log if i["action"] == "mkdir"][0]
+        self.assertEqual(mkdir_record["orig_name"], dir_name)
+        self.assertEqual(mkdir_record["details"], 'Created directory "{}/".'.format(dir_name))
+
         # 2 Try to create pseudo-directory with same name
         response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name)
 
@@ -85,6 +91,9 @@ class MKdirTest(TestClient):
         time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 0)
+
+        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        self.assertEqual(len(action_log), 2)
 
     def test_mkdir_tenant_bucket(self):
         """
