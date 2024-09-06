@@ -128,10 +128,8 @@ handle_cast({copy, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 	user_name=User#user.name,
 	tenant_name=User#user.tenant_name,
 	timestamp=io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
-	duration = io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
-%%	key = 
-%%	orig_name = 
-%%	version = 
+	duration = io_lib:format("~.2f", [utils:to_float(T1-T0)/1000]),
+	orig_name = CopiedDirectories ++ CopiedObjects
     },
     SrcPrefix1 =
 	case SrcPrefix0 of

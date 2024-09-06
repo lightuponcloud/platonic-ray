@@ -11,6 +11,7 @@ from client_base import (
     USERNAME_2,
     PASSWORD_2,
     configure_boto3,
+    ACTION_LOG_FILENAME,
     TestClient)
 from light_client import LightClient, generate_random_name, encode_to_hex, decode_from_hex
 
@@ -49,6 +50,11 @@ class CopyTest(TestClient):
         assert (hex_dir_name2, dir_name1) in keys
         assert ('', dir_name2) in keys
 
+        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        self.assertEqual(len(action_log), 3)
+        copy_record = [i for i in action_log if i["action"] == "copy"][0]
+        self.assertEqual(copy_record["details"], 'Copied "{}/" to "{}/".'.format(dir_name1, dir_name2))
+
     def test_copy_file(self):
         # 1. Upload a file and create a directory
         dir_name = generate_random_name()
@@ -72,6 +78,11 @@ class CopyTest(TestClient):
         assert ('', object_key) in keys
         assert (hex_dir_name, object_key) in keys
 
+        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        self.assertEqual(len(action_log), 3)
+        copy_record = [i for i in action_log if i["action"] == "copy"][0]
+        self.assertEqual(copy_record["details"], 'Copied "{}" to "{}/".'.format(fn, dir_name))
+
     def test_copy_file_tenant_bucket(self):
         """
         Test if delete works in tenant's bucket (no group).
@@ -90,6 +101,18 @@ class CopyTest(TestClient):
         response = self.client.copy(TEST_BUCKET_3, TEST_BUCKET_3,
             {object_key: object_key}, "", hex_dir_name)
         self.assertEqual(response.status_code, 200)
+
+        time.sleep(2)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_3, "SELECT * FROM items")
+        self.assertEqual(len(result), 3)
+        keys = [(i['prefix'], i['key']) for i in result]
+        assert ('', object_key) in keys
+        assert (hex_dir_name, object_key) in keys
+
+        action_log = self.check_sql(TEST_BUCKET_3, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        self.assertEqual(len(action_log), 3)
+        copy_record = [i for i in action_log if i["action"] == "copy"][0]
+        self.assertEqual(copy_record["details"], 'Copied "{}" to "{}/".'.format(fn, dir_name))
 
 
 if __name__ == "__main__":

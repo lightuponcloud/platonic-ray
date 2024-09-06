@@ -28,3 +28,12 @@ The following resources will be deployed to AWS.
 ![ECS Fargate Cluster](app_stack.png)
 
 ![Overall AWS architecture diagram](aws_architecture.png)
+
+
+Disclaimer
+==========
+
+The reason why AWS was selected as an infrastructure: it is widely used and some of its sercivces are compatible with 3rd party solutions.
+For example S3 protocol implementation is used in open-source Riak CS, then OpenAPI, etc.
+
+ECS Fargate was selected, as it is relatively cheap, so you can spawn more than two containers, that are defined in this deployment configuration, to cope with load increase.

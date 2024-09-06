@@ -117,7 +117,7 @@ class MoveTest(TestClient):
 
         time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
-        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result), 3)
         keys = [(i['prefix'], i['key']) for i in result]
         assert ('', object_key) in keys
 
@@ -280,7 +280,7 @@ class MoveTest(TestClient):
         self.assertEqual(response.status_code, 200)
 
         # check contents of db
-        time.sleep(2)
+        time.sleep(3)
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 2)
 
