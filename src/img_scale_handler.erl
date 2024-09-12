@@ -333,16 +333,20 @@ handle_post(Req0, State) ->
 	<<"POST">> ->
 	    {FieldValues, Req1} = acc_multipart(Req0, []),
 	    BucketId = proplists:get_value(bucket_id, State),
-	    Prefix0 = list_handler:validate_prefix(BucketId, proplists:get_value(prefix, FieldValues)),
+	    Prefix0 =
+		case list_handler:validate_prefix(BucketId, proplists:get_value(prefix, FieldValues)) of
+		    {error, _} -> undefined;
+		    P -> P
+		end,
 	    ObjectKey0 = proplists:get_value(object_key, FieldValues),
 	    {Metadata0, ObjectKey1} =
 		case ObjectKey0 of
-		    undefined -> {error, 9};
+		    undefined -> {[], {error, 9}};
 		    _ ->
 			PrefixedObjectKey = utils:prefixed_object_key(Prefix0, erlang:binary_to_list(ObjectKey0)),
 			case s3_api:head_object(BucketId, PrefixedObjectKey) of
-			    {error, _} -> {error, 9};
-			    not_found -> {error, 9};
+			    {error, _} -> {[], {error, 9}};
+			    not_found -> {[], {error, 9}};
 			    Metadata1 -> {Metadata1, ObjectKey0}
 			end
 		end,
