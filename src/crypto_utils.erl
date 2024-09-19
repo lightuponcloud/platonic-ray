@@ -6,8 +6,8 @@
 %%
 -module(crypto_utils).
 
--export([sign_v4/8, hash_password/1, check_password/3, uuid4/0, seed/0,
-	 random_string/0, random_string/1, md5/1]).
+-export([sign_v4/8, hash_password/1, check_password/3, uuid4/0, seed/0, validate_guid/1,
+	 random_string/0, random_string/1, md5/1, calculate_url_signature/3]).
 
 -define(SALT_LENGTH, 16).
 -define(HASH_ITERATIONS, 4096).
@@ -95,7 +95,7 @@ trimall(Value) when erlang:is_binary(Value) -> Value;
 trimall(Value) -> utils:to_list(Value).
 
 hash_encode(Data) ->
-    Hash = crypto:hash(sha256, Data),
+    Hash = crypto:hash(?HASH_FUNCTION, Data),
     base16(Hash).
 
 hex(N) when N < 10 ->
@@ -108,14 +108,13 @@ base16(Data) ->
 
 sha256_mac(K, S) ->
     try
-        crypto:mac(hmac, sha256, K, S)
+        crypto:mac(hmac, ?HASH_FUNCTION, K, S)
     catch
         error:undef ->
-            R0 = crypto:mac_init(hmac, sha256, K),
+            R0 = crypto:mac_init(hmac, ?HASH_FUNCTION, K),
             R1 = crypto:mac_update(R0, S),
             crypto:mac_final(R1)
     end.
-
 
 %% @doc Hash a plaintext password, returning hashed password and algorithm details
 hash_password(BinaryPass) when erlang:is_binary(BinaryPass) ->
@@ -199,3 +198,60 @@ random_string(Length) ->
 
 md5(IOData) ->
     crypto:hash(md5, IOData).
+
+
+canonicalize_qs([], []) ->
+    [];
+canonicalize_qs([], Acc) ->
+    Acc;
+canonicalize_qs([{K, V}|T], Acc) ->
+    Amp = if Acc == [] -> "";
+             true      -> "&"
+          end,
+    canonicalize_qs(T, [[utils:url_encode(K), "=", utils:url_encode(V), Amp]|Acc]).
+
+%%
+%% Hash-based message authentication code ( HMAC ) signature algorithm.
+%%
+calculate_url_signature(Path, Qs, SecretAPIKey) ->
+    Method = get,
+    Service = "s3",
+    Config = #api_config{},
+    Region = Config#api_config.s3_region,
+
+    ReversedSorted = lists:reverse(lists:sort(Qs)),
+    CanonicalQs = canonicalize_qs(ReversedSorted, []),
+    CanonicalRequest = [atom_to_list(Method), $\n, erlcloud_http:url_encode_loose(Path), $\n, CanonicalQs],
+    StringToSign = ["HMAC-SHA256", $\n, Region, $/, "s3", $/, $\n,
+		    utils:hex(crypto:hash(?HASH_FUNCTION, CanonicalRequest))],
+
+    RegionKey = sha256_mac(["LightUp", SecretAPIKey], Region),
+    SigningKey = sha256_mac(RegionKey, Service),
+    utils:hex(sha256_mac(SigningKey, StringToSign)).
+
+
+%%
+%% Checks if UUID4 is correct.
+%%
+validate_guid(undefined) -> undefined;
+validate_guid(<<>>) -> undefined;
+validate_guid(null) -> undefined;
+validate_guid(GUID) ->
+    case byte_size(GUID) of
+	36 ->
+	    %% the third group of characters must start with the number 4
+	    %% fourth group of characters must start with 8, 9, a or b
+	    << _:14/binary, Char0:1/binary, _:4/binary, Char1:1/binary, _/binary >> = GUID,
+	    case Char0 of
+		<<"4">> ->
+		    case Char1 of
+			<<"8">> -> unicode:characters_to_list(GUID);
+			<<"9">> -> unicode:characters_to_list(GUID);
+			<<"a">> -> unicode:characters_to_list(GUID);
+			<<"b">> -> unicode:characters_to_list(GUID);
+			_ -> {error, 42}
+		    end;
+		_ -> {error, 42}
+	    end;
+	_ -> {error, 42}
+    end.

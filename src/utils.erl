@@ -323,7 +323,7 @@ validate_hex(_, _) -> 1.
 %%
 -spec is_valid_bucket_id(string(), string()|undefined) -> boolean().
 
-is_valid_bucket_id(undefined, _TenantName) -> false;
+is_valid_bucket_id(undefined, _TenantId) -> false;
 is_valid_bucket_id(BucketId, undefined) when erlang:is_list(BucketId) ->
     Bits = string:tokens(BucketId, "-"),
     case length(Bits) =:= 3 andalso length(BucketId) =< 63 of
@@ -334,19 +334,19 @@ is_valid_bucket_id(BucketId, undefined) when erlang:is_list(BucketId) ->
 	    ) andalso lists:prefix([?BACKEND_PREFIX], Bits) =:= true;
 	false -> false
     end;
-is_valid_bucket_id(BucketId, TenantName)
-	when erlang:is_list(BucketId), erlang:is_list(TenantName) ->
+is_valid_bucket_id(BucketId, TenantId)
+	when erlang:is_list(BucketId), erlang:is_list(TenantId) ->
     Bits = string:tokens(BucketId, "-"),
     case length(Bits) of
 	3 -> is_valid_bucket_id(BucketId, undefined);  %% assume tenant id is undefined
 	4 ->
 	    case length(BucketId) =< 63 of
 		true ->
-		    BucketTenantName = string:to_lower(lists:nth(2, Bits)),
+		    BucketTenantId = string:to_lower(lists:nth(2, Bits)),
 		    BucketSuffix = lists:last(Bits),
 		    (BucketSuffix =:= ?PRIVATE_BUCKET_SUFFIX
 		     orelse BucketSuffix =:= ?RESTRICTED_BUCKET_SUFFIX
-		    ) andalso BucketTenantName =:= TenantName
+		    ) andalso BucketTenantId =:= TenantId
 		    andalso lists:prefix([?BACKEND_PREFIX], Bits) =:= true;
 		false -> false
 	    end
@@ -384,27 +384,27 @@ is_valid_hex_prefix(undefined) -> true.
 
 %%
 %% Returns true, if "tenant id" and "group name", that are encoded
-%% in BucketId equal to provided TenantName and GroupName.
+%% in BucketId equal to provided TenantId and GroupName.
 %% the-projectname-groupname-res
 %% ^^^ ^^^^^^^^^^^ ^^^^^^^^  ^^^
 %% prefix  bucket  group     suffix
 %%
 -spec is_bucket_belongs_to_group(string(), string(), string()) -> boolean().
 
-is_bucket_belongs_to_group(BucketId, TenantName, GroupName)
-    when erlang:is_list(BucketId), erlang:is_list(TenantName),
+is_bucket_belongs_to_group(BucketId, TenantId, GroupName)
+    when erlang:is_list(BucketId), erlang:is_list(TenantId),
 	 erlang:is_list(GroupName) ->
     Bits = string:tokens(BucketId, "-"),
-    BucketTenantName = string:to_lower(lists:nth(2, Bits)),
+    BucketTenantId = string:to_lower(lists:nth(2, Bits)),
     BucketGroupName = string:to_lower(lists:nth(3, Bits)),
-    BucketGroupName =:= GroupName andalso BucketTenantName =:= TenantName;
+    BucketGroupName =:= GroupName andalso BucketTenantId =:= TenantId;
 is_bucket_belongs_to_group(_,_,_) -> false.
 
-is_bucket_belongs_to_tenant(BucketId, TenantName)
-	when erlang:is_list(BucketId), erlang:is_list(TenantName) ->
+is_bucket_belongs_to_tenant(BucketId, TenantId)
+	when erlang:is_list(BucketId), erlang:is_list(TenantId) ->
     Bits = string:tokens(BucketId, "-"),
-    BucketTenantName = string:to_lower(lists:nth(2, Bits)),
-    BucketTenantName =:= TenantName;
+    BucketTenantId = string:to_lower(lists:nth(2, Bits)),
+    BucketTenantId =:= TenantId;
 is_bucket_belongs_to_tenant(_,_) -> false.
 
 %%

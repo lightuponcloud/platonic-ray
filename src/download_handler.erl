@@ -12,58 +12,30 @@
 
 %%
 %% Check if visitor has the right to download object.
-%% If authenticated, check if user has access to provided bucket name,
-%% then check if object exists.
+%% If authenticated, check if user has access to provided bucket name, then check if object exists.
 %% Returns object's real path.
 %%
-validate_request(BucketId, undefined, PrefixedObjectKey) ->
-    case utils:is_valid_bucket_id(BucketId, undefined) of
-	true ->
-	    case s3_api:head_object(BucketId, PrefixedObjectKey) of
-		not_found -> not_found;
-		{error, Reason} ->
-		    lager:error("[download_handler] head_object ~p/~p: ~p",
-				[BucketId, PrefixedObjectKey, Reason]),
-		    not_found;
-		Metadata -> validate_request(BucketId, Metadata)
-	    end;
-	false -> {error, 37}
-    end;
-validate_request(BucketId, User, PrefixedObjectKey) ->
-    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
-	true ->
-	    UserBelongsToGroup =
-		lists:any(
-		    fun(Group) ->
-			utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id)
-		    end, User#user.groups),
-	    case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, User#user.tenant_id) of
-		false -> {error, 37};
-		true ->
-		    case s3_api:head_object(BucketId, PrefixedObjectKey) of
-			{error, Reason} ->
-			    lager:error("[download_handler] head_object ~p/~p: ~p",
-					[BucketId, PrefixedObjectKey, Reason]),
-			    not_found;
-			not_found -> not_found;
-			Metadata -> validate_request(BucketId, Metadata)
-		    end
-	    end;
-	false -> {error, 7}
-    end.
-validate_request(BucketId, Metadata0) ->
-    case proplists:get_value("x-amz-meta-is-deleted", Metadata0) of
-	"true" -> not_found;
-	_ ->
-	    case proplists:get_value("x-amz-meta-guid", Metadata0) of
-		undefined -> not_found;
+get_object_metadata(BucketId, PrefixedObjectKey) ->
+    %% Check if object exist
+    case s3_api:head_object(BucketId, PrefixedObjectKey) of
+	not_found -> not_found;
+	{error, Reason} ->
+	    lager:error("[download_handler] head_object ~p/~p: ~p", [BucketId, PrefixedObjectKey, Reason]),
+	    not_found;
+	Metadata ->
+	    case proplists:get_value("x-amz-meta-is-deleted", Metadata) of
+		"true" -> not_found;
 		_ ->
-		    {OldBucketId, _, _, RealPrefix} = utils:real_prefix(BucketId, Metadata0),
-		    ContentType = proplists:get_value(content_type, Metadata0),
-		    Bytes = proplists:get_value("x-amz-meta-bytes", Metadata0),
-		    OrigName0 = erlang:list_to_binary(proplists:get_value("x-amz-meta-orig-filename", Metadata0)),
-		    OrigName1 = utils:unhex(OrigName0),
-		    {OldBucketId, RealPrefix, ContentType, OrigName1, erlang:list_to_binary(Bytes)}
+		    case proplists:get_value("x-amz-meta-guid", Metadata) of
+			undefined -> not_found;
+			_ ->
+			    {OldBucketId, _, _, RealPrefix} = utils:real_prefix(BucketId, Metadata),
+			    ContentType = proplists:get_value(content_type, Metadata),
+			    Bytes = proplists:get_value("x-amz-meta-bytes", Metadata),
+			    OrigName0 = erlang:list_to_binary(proplists:get_value("x-amz-meta-orig-filename", Metadata)),
+			    OrigName1 = utils:unhex(OrigName0),
+			    {OldBucketId, RealPrefix, ContentType, OrigName1, erlang:list_to_binary(Bytes)}
+		    end
 	    end
     end.
 
@@ -73,24 +45,63 @@ validate_request(BucketId, Metadata0) ->
 %% It uses authorization token HTTP header, if provided.
 %% Otherwise it checks session cookie.
 %%
-check_privileges(Req0) ->
+check_privileges(Req0, BucketId, PrefixedObjectKey, Tenant, PresentedSignature) ->
     %% Extracts token from request headers and looks it up in "security" bucket
     case utils:get_token(Req0) of
 	undefined ->
-	    %% Check browser's session cookie value
-	    Settings = #general_settings{},
-	    SessionCookieName = Settings#general_settings.session_cookie_name,
-	    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
-	    case login_handler:check_session_id(SessionID0) of
-		false -> {error, 28};
-		{error, Code} -> {config_error, Code};
-		User -> User
+	    %% If signature provided, no need to hit DB to check session, therefore this check goes first
+	    TenantAPIKey = Tenant#tenant.api_key,
+	    CalculatedSignature = crypto_utils:calculate_url_signature(PrefixedObjectKey, "", TenantAPIKey),
+	    case PresentedSignature == CalculatedSignature of
+		true -> true;
+		false ->
+		    %% Check browser's session cookie value
+		    Settings = #general_settings{},
+		    SessionCookieName = Settings#general_settings.session_cookie_name,
+		    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
+		    case login_handler:check_session_id(SessionID0) of
+			{error, Code} -> {config_error, Code};
+			false -> {error, 28};
+			User ->
+			    %% Checks if user has access to bucket
+			    UserBelongsToGroup = lists:any(
+				fun(Group) ->
+				    utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id)
+				end, User#user.groups),
+			    BucketBelongsToUserTenant = utils:is_bucket_belongs_to_tenant(BucketId, User#user.tenant_id),
+			UserBelongsToGroup =:= true orelse BucketBelongsToUserTenant =:= true
+		    end
 	    end;
 	Token ->
 	    case login_handler:check_token(Token) of
 		not_found -> {error, 28};
 		expired -> {error, 38};
 		User -> User
+	    end
+    end.
+
+%%
+%% Client has access if
+%% - bucket looks valid
+%% - tenant exists and enabled
+%% - Client has API token OR cookie OR signature of object ( that is signed with Tenant's API Key )
+%%
+has_access(Req0, BucketId, PrefixedObjectKey, PresentedSignature) ->
+    case utils:is_valid_bucket_id(BucketId, undefined) of
+	false -> {error, 37};
+	true ->
+	    Bits = string:tokens(BucketId, "-"),
+	    TenantId = string:to_lower(lists:nth(2, Bits)),
+	    case admin_tenants_handler:get_tenant(TenantId) of
+		not_found -> {error, 37};
+		Tenant ->
+		    case check_privileges(Req0, BucketId, PrefixedObjectKey, Tenant, PresentedSignature) of
+			{error, Number} -> {error, Number};
+			{config_error, Code} -> {error, Code};
+			false -> {error, 37};
+			true -> true;
+			_User -> true
+		    end
 	    end
     end.
 
@@ -232,50 +243,41 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 	    end
     end.
 
-
 init(Req0, _Opts) ->
     T0 = utils:timestamp(), %% measure time of request
     cowboy_req:cast({set_options, #{idle_timeout => infinity}}, Req0),
     PathInfo = cowboy_req:path_info(Req0),
+    Path0 = lists:nthtail(1, PathInfo),
+    Path1 = erlang:list_to_binary(utils:join_list_with_separator(Path0, <<"/">>, [])),
+    PrefixedObjectKey = erlang:binary_to_list(Path1),
+    ParsedQs = cowboy_req:parse_qs(Req0),
+    PresentedSignature =
+	case proplists:get_value(<<"signature">>, ParsedQs) of
+	    undefined -> undefined;
+	    Signature -> unicode:characters_to_list(Signature)
+	end,
     BucketId =
 	case lists:nth(1, PathInfo) of
 	    undefined -> undefined;
 	    <<>> -> undefined;
 	    BV -> erlang:binary_to_list(BV)
 	end,
-    case check_privileges(Req0) of
-	{error, Number} ->
+    case has_access(Req0, BucketId, PrefixedObjectKey, PresentedSignature) of
+	{error, _Number} ->
 	    T1 = utils:timestamp(),
-	    Req1 = cowboy_req:reply(403, #{
+	    Req1 = cowboy_req:reply(404, #{
 		<<"content-type">> => <<"application/json">>,
 		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
-	    }, jsx:encode([{error, Number}]), Req0),
+	    }, Req0),
 	    {ok, Req1, []};
-	{config_error, Code} ->
-	    T1 = utils:timestamp(),
-	    Req1 = cowboy_req:reply(500, #{
-		<<"content-type">> => <<"application/json">>,
-		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
-	    }, jsx:encode([{error, erlang:list_to_binary(Code)}]), Req0),
-	    {ok, Req1, []};
-	User ->
-	    Path0 = lists:nthtail(1, PathInfo),
-	    Path1 = erlang:list_to_binary(utils:join_list_with_separator(Path0, <<"/">>, [])),
-	    PrefixedObjectKey = erlang:binary_to_list(Path1),
-	    case validate_request(BucketId, User, PrefixedObjectKey) of
+	true ->
+	    case get_object_metadata(BucketId, PrefixedObjectKey) of
 		not_found ->
 		    T1 = utils:timestamp(),
 		    Req1 = cowboy_req:reply(404, #{
 			<<"content-type">> => <<"application/json">>,
 			<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 		    }, Req0),
-		    {ok, Req1, []};
-		{error, Number} ->
-		    T1 = utils:timestamp(),
-		    Req1 = cowboy_req:reply(400, #{
-			<<"content-type">> => <<"application/json">>,
-			<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
-		    }, jsx:encode([{error, Number}]), Req0),
 		    {ok, Req1, []};
 		{OldBucketId, RealPrefix, ContentType, OrigName, Bytes} ->
 		    case validate_range(cowboy_req:header(<<"range">>, Req0), Bytes) of

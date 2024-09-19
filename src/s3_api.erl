@@ -64,6 +64,7 @@ copy_object(DestBucketId, DestKeyName, SrcBucketId, SrcKeyName, Options) ->
     case s3_request(put, DestBucketId, [$/|DestKeyName], "", [], <<>>, RequestHeaders, Config) of
 	{ok, {_Status, Headers, _Body}} ->
 	    [{content_length, proplists:get_value("content-length", Headers, "0")}];
+	{error, timeout} -> {error, timeout};
 	{error, {Reason,_,_,_,_}} -> {error, Reason}
     end.
 
@@ -108,6 +109,7 @@ delete_object(BucketId, Key) when erlang:is_list(BucketId), erlang:is_list(Key) 
     Config = #api_config{},
     case s3_request(delete, BucketId, [$/|Key], "", [], <<>>, [], Config) of
 	{error, {Reason,_,_,_,_}} -> {error, Reason};
+	{error, timeout} -> {error, timeout};
 	{ok, {_Status, Headers, _Body}} ->
 	    Marker = proplists:get_value("x-amz-delete-marker", Headers, "false"),
 	    Id = proplists:get_value("x-amz-version-id", Headers, "null"),

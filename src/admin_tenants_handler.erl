@@ -34,6 +34,7 @@ parse_tenant(RootElement) ->
     TenantId = erlcloud_xml:get_text("/tenant/record/id", RootElement),
     TenantName = erlcloud_xml:get_text("/tenant/record/name", RootElement),
     IsTenantEnabled = erlcloud_xml:get_bool("/tenant/record/enabled", RootElement),
+    APIKey = erlcloud_xml:get_bool("/tenant/record/api_key", RootElement),
     GetGroupAttrs = fun(N) ->
 	#group{id = erlcloud_xml:get_text("/group/id", N),
 	    name = erlcloud_xml:get_text("/group/name", N)} end,
@@ -43,6 +44,7 @@ parse_tenant(RootElement) ->
 	id = TenantId,
 	name = TenantName,
 	enabled = IsTenantEnabled,
+	api_key = APIKey,
 	groups = Groups
     }.
 
@@ -56,6 +58,7 @@ tenant_to_proplist(Tenant) ->
 	{id, erlang:list_to_binary(Tenant#tenant.id)},
 	{name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(Tenant#tenant.name)))},
 	{enabled, utils:to_binary(Tenant#tenant.enabled)},
+	{api_key, utils:to_binary(Tenant#tenant.api_key)},
 	{groups, [
 	    [{id, erlang:list_to_binary(G#group.id)},
 	     {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))},
@@ -420,6 +423,7 @@ validate_post(Body) ->
 	    TenantName0 = validate_tenant_name(proplists:get_value(<<"name">>, FieldValues), required),
 	    Groups0 = validate_groups(proplists:get_value(<<"groups">>, FieldValues), []),
 	    IsEnabled0 = validate_boolean(proplists:get_value(<<"enabled">>, FieldValues), enabled, true),
+	    APIKey = proplists:get_value(<<"api_key">>, FieldValues),
 
 	    Errors = [element(2, F) || F <- [TenantName0, Groups0, IsEnabled0], element(1, F) =:= error],
 	    case length(Errors) > 0 of
@@ -430,6 +434,7 @@ validate_post(Body) ->
 			id = TenantId0,
 			name = TenantName1,
 			enabled = IsEnabled0,
+			api_key = APIKey,
 			groups = Groups0
 		    }
 	    end
@@ -446,8 +451,9 @@ validate_patch(Tenant, Body) ->
 	    TenantName0 = validate_tenant_name(proplists:get_value(<<"name">>, FieldValues), not_required),
 	    Groups0 = validate_groups(proplists:get_value(<<"groups">>, FieldValues), []),
 	    IsEnabled0 = validate_boolean(proplists:get_value(<<"enabled">>, FieldValues), enabled, Tenant#tenant.enabled),
+	    APIKey = crypto_utils:validate_guid(proplists:get_value(<<"api_key">>, FieldValues)),
 
-	    Errors = [element(2, F) || F <- [TenantName0, Groups0, IsEnabled0], element(1, F) =:= error],
+	    Errors = [element(2, F) || F <- [TenantName0, Groups0, IsEnabled0, APIKey], element(1, F) =:= error],
 	    case length(Errors) > 0 of
 		true -> {error, Errors};
 		false ->
@@ -462,6 +468,7 @@ validate_patch(Tenant, Body) ->
 			id = Tenant#tenant.id,
 			name = TenantName2,
 			enabled = IsEnabled0,
+			api_key = APIKey,
 			groups = Groups1
 		    }
 	    end
@@ -498,6 +505,7 @@ new_tenant(Req0, Tenant0) ->
 		{id, [Tenant0#tenant.id]},
 		{name, [Tenant0#tenant.name]},
 		{enabled, [utils:to_list(Tenant0#tenant.enabled)]},
+		{api_key, [utils:to_list(Tenant0#tenant.api_key)]},
 		{groups, Groups}
 	    ]},
 	    RootElement0 = #xmlElement{name=tenant, content=[Tenant1]},
@@ -513,6 +521,7 @@ new_tenant(Req0, Tenant0) ->
 		{id, list_to_binary(Tenant0#tenant.id)},
 		{name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(Tenant0#tenant.name)))},
 		{enabled, utils:to_binary(Tenant0#tenant.enabled)},
+		{api_key, utils:to_binary(Tenant0#tenant.api_key)},
 		{groups, [
 		    [{id, list_to_binary(G#group.id)},
 		     {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))}]
@@ -558,6 +567,7 @@ edit_tenant(Req0, Tenant) ->
 		{id, [TenantId]},
 		{name, [Tenant#tenant.name]},
 		{enabled, [utils:to_list(Tenant#tenant.enabled)]},
+		{api_key, [utils:to_list(Tenant#tenant.api_key)]},
 		{groups, [{group, [
 			{id, [G#group.id]},
 			{name, [G#group.name]}
@@ -579,6 +589,7 @@ edit_tenant(Req0, Tenant) ->
 			{id, list_to_binary(Tenant#tenant.id)},
 			{name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(Tenant#tenant.name)))},
 			{enabled, Tenant#tenant.enabled},
+			{api_key, Tenant#tenant.api_key},
 			{groups, [
 			    [{id, list_to_binary(G#group.id)},
 			     {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))}]

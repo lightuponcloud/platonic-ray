@@ -7,6 +7,7 @@
 -type tenant() :: #{
     id          => string(),
     name        => string(),
+    api_key     => string(),
     enabled     => boolean(),
     groups      => list()
 }.
@@ -72,6 +73,7 @@
 -record(tenant, {
     id          = ""::string(),
     name        = ""::string(),
+    api_key     = ""::string(),
     enabled     = true::boolean(),
     groups      = []::list()  %% Grous within that project
 }).

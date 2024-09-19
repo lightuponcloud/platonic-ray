@@ -180,29 +180,6 @@ validate_md5(Value) ->
 	error:_ -> {error, 40}
     end.
 
-validate_guid(undefined) -> undefined;
-validate_guid(<<>>) -> undefined;
-validate_guid(null) -> undefined;
-validate_guid(GUID) ->
-    case byte_size(GUID) of
-	36 ->
-	    %% the third group of characters must start with the number 4
-	    %% fourth group of characters must start with 8, 9, a or b
-	    << _:14/binary, Char0:1/binary, _:4/binary, Char1:1/binary, _/binary >> = GUID,
-	    case Char0 of
-		<<"4">> ->
-		    case Char1 of
-			<<"8">> -> unicode:characters_to_list(GUID);
-			<<"9">> -> unicode:characters_to_list(GUID);
-			<<"a">> -> unicode:characters_to_list(GUID);
-			<<"b">> -> unicode:characters_to_list(GUID);
-			_ -> {error, 42}
-		    end;
-		_ -> {error, 42}
-	    end;
-	_ -> {error, 42}
-    end.
-
 parse_etags([K,V | T]) -> [{
 	utils:to_integer(K),
 	utils:to_list(V)
@@ -385,7 +362,7 @@ handle_post(Req0, State) ->
 	    FileName0 = validate_filename(proplists:get_value(filename, FieldValues)),
 	    BucketId = proplists:get_value(bucket_id, State),
 	    Prefix0 = list_handler:validate_prefix(BucketId, proplists:get_value(prefix, FieldValues)),
-	    GUID = validate_guid(proplists:get_value(guid, FieldValues)),
+	    GUID = crypto_utils:validate_guid(proplists:get_value(guid, FieldValues)),
 	    UploadTime = erlang:round(utils:timestamp()/1000),
 	    Version =
 		try
