@@ -24,6 +24,7 @@
 <script src="{{ static_root }}spark-md5.min.js"></script>
 <script src='{{ static_root }}ui.js' type='text/javascript'></script>
 {% if bucket_id %}<script type="text/javascript" src="{{ root_path }}js/{{ bucket_id }}/"></script>
+<script src="{{ static_root }}ancillary.js"></script>
 <script type="text/javascript" src="{{ static_root }}file_upload.js"></script>
 <script type="text/javascript" src="{{ static_root }}jquery.dvvset.js"></script>
 <script src="{{ static_root }}pdf.min.js"></script>

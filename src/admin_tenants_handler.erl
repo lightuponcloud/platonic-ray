@@ -34,7 +34,7 @@ parse_tenant(RootElement) ->
     TenantId = erlcloud_xml:get_text("/tenant/record/id", RootElement),
     TenantName = erlcloud_xml:get_text("/tenant/record/name", RootElement),
     IsTenantEnabled = erlcloud_xml:get_bool("/tenant/record/enabled", RootElement),
-    APIKey = erlcloud_xml:get_bool("/tenant/record/api_key", RootElement),
+    APIKey = erlcloud_xml:get_text("/tenant/record/api_key", RootElement),
     GetGroupAttrs = fun(N) ->
 	#group{id = erlcloud_xml:get_text("/group/id", N),
 	    name = erlcloud_xml:get_text("/group/name", N)} end,
@@ -423,9 +423,9 @@ validate_post(Body) ->
 	    TenantName0 = validate_tenant_name(proplists:get_value(<<"name">>, FieldValues), required),
 	    Groups0 = validate_groups(proplists:get_value(<<"groups">>, FieldValues), []),
 	    IsEnabled0 = validate_boolean(proplists:get_value(<<"enabled">>, FieldValues), enabled, true),
-	    APIKey = proplists:get_value(<<"api_key">>, FieldValues),
+	    APIKey = crypto_utils:validate_guid(proplists:get_value(<<"api_key">>, FieldValues)),
 
-	    Errors = [element(2, F) || F <- [TenantName0, Groups0, IsEnabled0], element(1, F) =:= error],
+	    Errors = [element(2, F) || F <- [TenantName0, Groups0, APIKey, IsEnabled0], element(1, F) =:= error],
 	    case length(Errors) > 0 of
 		true -> {error, Errors};
 		false ->

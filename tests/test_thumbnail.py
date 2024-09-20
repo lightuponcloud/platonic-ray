@@ -39,22 +39,50 @@ class UploadTest(TestClient):
         url = "{}/riak/upload/{}/".format(BASE_URL, TEST_BUCKET_1)
         result = self.upload_file(url, fn)
 
-        url = "{}/riak/thumbnail/{}/".format(BASE_URL, TEST_BUCKET_1)
         fn = "246x0w.png"
         object_key = "20180111_165127.jpg"
-        t1 = time.time()
+        url = "{}/riak/thumbnail/{}/{}".format(BASE_URL, TEST_BUCKET_1, object_key)
+        # t1 = time.time()
         result = self.upload_thumbnail(url, fn, object_key, form_data={"width": 2560, "height":1600})
 
         # check if correct thumbnail returned
-        response = requests.get("{}?object_key={}".format(url, object_key),
-            headers=self.get_default_headers())
+        response = requests.get(url, headers=self.get_default_headers())
         self.assertEqual(response.status_code, 200)
 
         response_md5 = hashlib.md5(response.content).hexdigest()
         self.assertEqual(response_md5, '274a1939f67a3f036c8d0ab763d67c65')
 
-        t2 = time.time()
-        print("Upload thumbnail {}".format(int(t2-t1)))
+        # t2 = time.time()
+
+    def test_prefixed_thumbnail_success(self):
+        dir_name = "test"
+        dir_response = self.create_pseudo_directory(dir_name)
+        self.assertEqual(dir_response.status_code, 204)
+        hex_prefix = dir_name.encode().hex()
+
+        fn = "20180111_165127.jpg"
+        url = "{}/riak/upload/{}/".format(BASE_URL, TEST_BUCKET_1)
+        result = self.upload_file(url, fn, prefix=hex_prefix)
+
+        fn = "246x0w.png"
+        object_key = "20180111_165127.jpg"
+        url = "{}/riak/thumbnail/{}/{}/{}".format(BASE_URL, TEST_BUCKET_1, hex_prefix, object_key)
+        t1 = time.time()
+        form_data = {
+            "width": 2560,
+            "height":1600,
+            "prefix": hex_prefix
+        }
+        result = self.upload_thumbnail(url, fn, object_key, form_data=form_data)
+
+        # check if correct thumbnail returned
+        response = requests.get(url, headers=self.get_default_headers())
+        self.assertEqual(response.status_code, 200)
+
+        response_md5 = hashlib.md5(response.content).hexdigest()
+        self.assertEqual(response_md5, '274a1939f67a3f036c8d0ab763d67c65')
+
+        # t2 = time.time()
 
 
 if __name__ == "__main__":

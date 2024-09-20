@@ -13,6 +13,8 @@ import tempfile
 import sqlite3
 from base64 import b64encode
 from environs import Env
+import hashlib
+import hmac
 
 from dvvset import DVVSet
 
@@ -38,6 +40,7 @@ TEST_BUCKET_2 = env.str("TEST_BUCKET_2")
 TEST_BUCKET_3 = env.str("TEST_BUCKET_3")
 UPLOADS_BUCKET_NAME = env.str("UPLOADS_BUCKET_NAME")
 ACTION_LOG_FILENAME = env.str("ACTION_LOG_FILENAME")
+REGION = env.str("REGION")
 
 ACCESS_KEY = env.str("ACCESS_KEY")
 SECRET_KEY = env.str("SECRET_KEY")
@@ -278,6 +281,16 @@ class TestClient(unittest.TestCase):
             result = response_json
         return result
 
+    def calculate_url_signature(self, method, path, qs, api_key):
+        canonical_request = "{}\n{}\n{}".format(method, path, qs)
+        canonical_request_hash = hashlib.sha256(canonical_request.encode()).hexdigest()
+        string_to_sign = "HMAC-SHA256\n{}/s3/\n{}".format(REGION, canonical_request_hash)
+
+        region_key = hmac.new("LightUp{}".format(api_key).encode(), REGION.encode(), hashlib.sha256).digest()
+        signing_key = hmac.new(region_key, b"s3", hashlib.sha256).digest()
+
+        return hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
+
     def download_object(self, bucketId, objectKey):
         """
         This method downloads aby object from the object storage.
@@ -296,6 +309,8 @@ class TestClient(unittest.TestCase):
         t1 = time.time()
         response = requests.get(url, headers={"authorization": "Token {}".format(self.token)})
         t2 = time.time()
+        if response.status_code != 200:
+            import pdb;pdb.set_trace()
         # print("Download time: {} ( {} )".format(int(t2-t1), url))
         return response.content
 

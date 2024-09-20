@@ -17,6 +17,7 @@
 %% Ancillary
 -export([slugify_object_key/1, prefixed_object_key/2, alphanumeric/1,
 	 trim_spaces/1, hex/1, unhex/1, unhex_path/1, join_list_with_separator/3,
+	 join_binary_with_separator/2,
 	 timestamp/0, format_timestamp/1, firstmatch/2, timestamp_to_datetime/1,
 	 translate/2, dirname/1, read_config/1, real_prefix/2, get_temp_path/1]).
 
@@ -324,34 +325,33 @@ validate_hex(_, _) -> 1.
 -spec is_valid_bucket_id(string(), string()|undefined) -> boolean().
 
 is_valid_bucket_id(undefined, _TenantId) -> false;
-is_valid_bucket_id(BucketId, undefined) when erlang:is_list(BucketId) ->
+is_valid_bucket_id(BucketId, TenantId) when erlang:is_list(BucketId) ->
     Bits = string:tokens(BucketId, "-"),
-    case length(Bits) =:= 3 andalso length(BucketId) =< 63 of
+    case length(BucketId) =< 63 of
+	false -> false;
 	true ->
-	    BucketSuffix = lists:last(Bits),
-	    (BucketSuffix =:= ?PRIVATE_BUCKET_SUFFIX
-	     orelse BucketSuffix =:= ?RESTRICTED_BUCKET_SUFFIX
-	    ) andalso lists:prefix([?BACKEND_PREFIX], Bits) =:= true;
-	false -> false
-    end;
-is_valid_bucket_id(BucketId, TenantId)
-	when erlang:is_list(BucketId), erlang:is_list(TenantId) ->
-    Bits = string:tokens(BucketId, "-"),
-    case length(Bits) of
-	3 -> is_valid_bucket_id(BucketId, undefined);  %% assume tenant id is undefined
-	4 ->
-	    case length(BucketId) =< 63 of
-		true ->
-		    BucketTenantId = string:to_lower(lists:nth(2, Bits)),
+	    case length(Bits) of
+		3 ->
 		    BucketSuffix = lists:last(Bits),
 		    (BucketSuffix =:= ?PRIVATE_BUCKET_SUFFIX
 		     orelse BucketSuffix =:= ?RESTRICTED_BUCKET_SUFFIX
-		    ) andalso BucketTenantId =:= TenantId
-		    andalso lists:prefix([?BACKEND_PREFIX], Bits) =:= true;
-		false -> false
+		    ) andalso lists:prefix([?BACKEND_PREFIX], Bits) =:= true;
+		4 ->
+		    BucketTenantId = string:to_lower(lists:nth(2, Bits)),
+		    BucketSuffix = lists:last(Bits),
+		    case TenantId of
+			undefined ->
+			    (BucketSuffix =:= ?PRIVATE_BUCKET_SUFFIX
+			     orelse BucketSuffix =:= ?RESTRICTED_BUCKET_SUFFIX
+			    ) andalso lists:prefix([?BACKEND_PREFIX], Bits) =:= true;
+			_ ->
+			    (BucketSuffix =:= ?PRIVATE_BUCKET_SUFFIX
+			     orelse BucketSuffix =:= ?RESTRICTED_BUCKET_SUFFIX
+			    ) andalso BucketTenantId =:= TenantId
+			    andalso lists:prefix([?BACKEND_PREFIX], Bits) =:= true
+		    end
 	    end
-    end;
-is_valid_bucket_id(_, _) -> false.
+    end.
 
 is_restricted_bucket_id(BucketId) when erlang:is_list(BucketId) ->
     Bits = string:tokens(BucketId, "-"),
@@ -523,13 +523,36 @@ is_hidden_prefix(Prefix) when erlang:is_list(Prefix) ->
 %% Joins a list of elements adding a separator between each of them.
 %% Example: ["a", "/", "b"]
 %%
+-spec join_list_with_separator(List :: [string()], Sep :: string(), Acc0 :: list()) -> binary().
 join_list_with_separator([Head|Tail], Sep, Acc0) ->
     Acc1 = case Tail of
 	[] -> [Head | Acc0];  % do not add separator at the beginning
-	_ -> [Sep, Head | Acc0]
+	_ ->
+	    case Head of
+		Sep -> Acc0;
+		"" -> Acc0;
+		_ -> [Sep, Head | Acc0]
+	    end
     end,
     join_list_with_separator(Tail, Sep, Acc1);
 join_list_with_separator([], _Sep, Acc0) -> lists:reverse(Acc0).
+
+-spec join_binary_with_separator(List :: [binary()], Sep :: binary()) -> binary().
+join_binary_with_separator([Head|Tail], Sep) ->
+    case Tail of
+	<<>> -> [Head|Tail];
+	<<"/">> -> [Head|Tail];
+	_ ->
+	    lists:foldl(
+		fun (Value, Acc) ->
+		    case Value of
+			Sep -> Acc;
+			<<>> -> Acc;
+			_ -> <<Acc/binary, Sep/binary, Value/binary>>
+		    end
+		end, Head, Tail)
+    end;
+join_binary_with_separator([], _Sep) -> <<>>.
 
 -spec get_token(any()) -> list()|undefined.
 
@@ -608,6 +631,7 @@ translate(Val, Locale) when is_list(Locale) ->
 -spec dirname(binary()|list()|undefined) -> binary()|list()|undefined.
 
 dirname(undefined) -> undefined;
+dirname([]) -> undefined;
 dirname(Path0) when erlang:is_list(Path0) ->
     Path1 =
 	case string:sub_string(Path0, length(Path0), length(Path0)) =:= "/" of
@@ -643,7 +667,6 @@ read_config(App) ->
         version = proplists:get_value(version, Config),
         http_listen_port = Port
     }.
-
 
 %%
 %% Returns path to temporary filename.

@@ -4,6 +4,7 @@ import unittest
 from base64 import b64encode, b64decode
 import json
 import hashlib
+import hmac
 
 import requests
 from botocore import exceptions
@@ -17,6 +18,7 @@ from client_base import (
     FILE_UPLOAD_CHUNK_SIZE,
     UPLOADS_BUCKET_NAME,
     ACTION_LOG_FILENAME,
+    REGION,
     USERNAME_1,
     PASSWORD_1,
     USERNAME_2,
@@ -1041,6 +1043,67 @@ class UploadTest(TestClient):
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 2)
         self.assertTrue("{}/".format(prefix) in [i["prefix"] for i in result])
+
+    def test_upload_download_with_api_key(self):
+        """
+        Make sure signature can be used to download file.
+        """
+        url = "{}/riak/upload/{}/".format(BASE_URL, TEST_BUCKET_3)
+        fn = "README.md"
+        result = self.upload_file(url, fn)
+        with open(fn, "rb") as fd:
+
+            # Get tenant's API key
+            api_key = os.getenv("ADMIN_API_KEY")
+
+            url = "{}/riak/admin/tenants/".format(BASE_URL)
+            headers={"authorization": "Token {}".format(api_key)}
+            response = requests.get(url, headers=headers)
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            api_key = data['api_key']
+
+            path = "/riak/download/{}/{}/".format(TEST_BUCKET_3, "readme.md")
+            signature = self.calculate_url_signature(path, "", api_key)
+
+            url = "{}/riak/download/{}/{}?signature={}".format(BASE_URL, TEST_BUCKET_3, "readme.md", signature)
+            response = requests.get(url)
+            self.assertEqual(fd.read(), response.content)
+
+    def test_upload_download_with_api_key(self):
+        """
+        Make sure signature can be used to download file.
+        """
+        url = "{}/riak/upload/{}/".format(BASE_URL, TEST_BUCKET_3)
+        fn = "README.md"
+        result = self.upload_file(url, fn)
+        with open(fn, "rb") as fd:
+            # Get tenant's API key
+            api_key = os.getenv("ADMIN_API_KEY")
+
+            url = "{}/riak/admin/tenants/".format(BASE_URL)
+            headers={"authorization": "Token {}".format(api_key)}
+            response = requests.get(url, headers=headers)
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            tenant = [i for i in data if i['id'] == "integrationtests"]
+            assert tenant
+            api_key = tenant[0]['api_key']
+
+            path = "{}/{}".format(TEST_BUCKET_3, "readme.md")
+            signature = self.calculate_url_signature("get", path, "", api_key)
+
+            url = "{}/riak/download/{}/{}?signature={}".format(BASE_URL, TEST_BUCKET_3, "readme.md", signature)
+            response = requests.get(url)
+            self.assertEqual(fd.read(), response.content)
+
+            # make sure request fails with incorrect signature
+
+            path = "{}/{}".format(TEST_BUCKET_3, "readme.mf")
+            signature = self.calculate_url_signature("get", path, "", api_key)
+            url = "{}/riak/download/{}/{}?signature={}".format(BASE_URL, TEST_BUCKET_3, "readme.md", signature)
+            response = requests.get(url)
+            self.assertEqual(response.status_code, 403)
 
 
 if __name__ == "__main__":

@@ -37,11 +37,14 @@ function response_handler(data, status, jqXHR){
 
 function submit_tenant(e){
  var name="";
+ var api_key=guid();
  var enabled;
  var tenant_form = '<form method="POST" id="id-tenant-form" name="tenant_form" > \
 <h3><span id="id-dialog-block-header"></span></h3> \
 <div class="row"><label for="id_name">Name:</label><div><input name="name" id="id_name" value="'+name+'" class="custom-input-194x31"/> \
 <div style="margin-top:14px;"><span class="err" id="id_name_error"></span></div></div></div> \
+<div class="row"><label for="id_api_key">API Key:</label><div><input name="api_key" id="id_api_key" value="'+api_key+'" class="custom-input-194x31" readonly /> \
+<div style="margin-top:14px;"><span class="err" id="id_api_key_error"></span></div></div></div> \
 <div class="row"><label for="id_groups">Groups:</label><div><textarea name="groups" id="id_groups" rows="7" cols="22" style="width:auto !important;"></textarea> \
 <br/><span class="help_text">Comma-delimited list of groups.</span> \
 <div style="margin-top:14px;"><span class="err" id="id_groups_errors"></span></div></div></div> \
@@ -90,6 +93,7 @@ function submit_tenant(e){
     $("#submit_change").attr("disabled","disabled");
 
     var name=$('#id_name').val();
+    var api_key=$('#id_api_key').val();
     var groups=$('#id_groups').val();
     var enabled=false;
     if($('input[name="enabled"]').is(':checked')) enabled=true;
@@ -97,6 +101,7 @@ function submit_tenant(e){
     if(isMobile.any() || $(window).width()<670){$("#shadow").append('<span>Two moments please...</span>').css('z-index','1003').show();}
     var form_data = {
 	'name': name,
+	'api_key': api_key,
 	'groups': groups,
 	'enabled': enabled,
     };

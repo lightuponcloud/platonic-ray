@@ -7,7 +7,7 @@
 -module(crypto_utils).
 
 -export([sign_v4/8, hash_password/1, check_password/3, uuid4/0, seed/0, validate_guid/1,
-	 random_string/0, random_string/1, md5/1, calculate_url_signature/3]).
+	 random_string/0, random_string/1, md5/1, calculate_url_signature/4]).
 
 -define(SALT_LENGTH, 16).
 -define(HASH_ITERATIONS, 4096).
@@ -199,32 +199,20 @@ random_string(Length) ->
 md5(IOData) ->
     crypto:hash(md5, IOData).
 
-
-canonicalize_qs([], []) ->
-    [];
-canonicalize_qs([], Acc) ->
-    Acc;
-canonicalize_qs([{K, V}|T], Acc) ->
-    Amp = if Acc == [] -> "";
-             true      -> "&"
-          end,
-    canonicalize_qs(T, [[utils:url_encode(K), "=", utils:url_encode(V), Amp]|Acc]).
-
 %%
 %% Hash-based message authentication code ( HMAC ) signature algorithm.
 %%
-calculate_url_signature(Path, Qs, SecretAPIKey) ->
-    Method = get,
+calculate_url_signature(Method, Path, Qs, SecretAPIKey)
+	when erlang:is_atom(Method) andalso erlang:is_list(Path)
+	    andalso erlang:is_list(Qs) andalso erlang:is_list(SecretAPIKey) ->
     Service = "s3",
     Config = #api_config{},
     Region = Config#api_config.s3_region,
 
-    ReversedSorted = lists:reverse(lists:sort(Qs)),
-    CanonicalQs = canonicalize_qs(ReversedSorted, []),
+    CanonicalQs = canonical_query_string(Qs),
     CanonicalRequest = [atom_to_list(Method), $\n, erlcloud_http:url_encode_loose(Path), $\n, CanonicalQs],
     StringToSign = ["HMAC-SHA256", $\n, Region, $/, "s3", $/, $\n,
 		    utils:hex(crypto:hash(?HASH_FUNCTION, CanonicalRequest))],
-
     RegionKey = sha256_mac(["LightUp", SecretAPIKey], Region),
     SigningKey = sha256_mac(RegionKey, Service),
     utils:hex(sha256_mac(SigningKey, StringToSign)).

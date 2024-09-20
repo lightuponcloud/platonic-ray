@@ -279,12 +279,16 @@ $('body').on('click', 'a[id^=id-delete-user_]', function(e){
 {% if path_tenant %}
 function submit_tenant(e){
  var groups=$('input[name=tenant_group_names]').val();
- var enabled={{ path_tenant.enabled }};
+ var api_key = '{% if path_tenant.api_key %}{{ path_tenant.api_key }}{% endif %}';
+ if(api_key=='') api_key=guid();
+ var enabled = {{ path_tenant.enabled }};
  var tenant_form = '<form method="POST" id="id-tenant-form" name="tenant_form" > \
 <h3><span id="id-dialog-block-header"></span></h3><br/> \
 <div class="row"><label for="id_groups">Groups:</label><div><textarea name="groups" id="id_groups" rows="7" cols="22" style="width:auto !important;">'+groups+'</textarea> \
 <br/><span class="help_text">Comma-delimited list of groups.</span> \
 <div style="margin-top:14px;"><span class="err" id="id_groups_errors"></span></div></div></div> \
+<div class="row"><label for="id_api_key">API Key:</label><div><input name="api_key" id="id_api_key" value="'+api_key+'" class="custom-input-194x31" readonly /> \
+<div style="margin-top:14px;"><span class="err" id="id_api_key_error"></span></div></div></div> \
 <br/><input type="checkbox" id="id_enabled" name="enabled" '+(enabled==true?"checked=checked":"")+'> Enabled<br/> \
 <div><div style="margin-top:14px;"><span class="err" id="id_errors"></span></div> \
 <div class="row"><label for="submit_change"><span id="id-dialog-loading-message-text"></span></label><div> \
@@ -327,12 +331,14 @@ function submit_tenant(e){
     $("#submit_change").attr("disabled","disabled");
 
     var groups=$('#id_groups').val();
+    var api_key=$('#id_api_key').val();
     var enabled=false;
     if($('input[name="enabled"]').is(':checked')) enabled=true;
 
     if(isMobile.any() || $(window).width()<670){$("#shadow").append('<span>Two moments please...</span>').css('z-index','1003').show();}
     var form_data = {
 	'groups': groups,
+	'api_key': api_key,
 	'enabled': enabled,
     };
     request('{{ root_path }}admin/tenants/{{ path_tenant.id }}/', 'PATCH', form_data, '{{ token }}', function(data, status, jqXHR){

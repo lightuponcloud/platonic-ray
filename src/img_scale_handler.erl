@@ -38,61 +38,39 @@ allowed_methods(Req, State) ->
 to_json(Req0, State) ->
     {<<>>, Req0, State}.
 
-
 to_scale(Req0, State) ->
     BucketId = proplists:get_value(bucket_id, State),
-    ParsedQs = cowboy_req:parse_qs(Req0),
-    Prefix = list_handler:validate_prefix(BucketId, proplists:get_value(<<"prefix">>, ParsedQs)),
-    ObjectKey0 =
-	case proplists:get_value(<<"object_key">>, ParsedQs) of
-	    undefined -> {error, 8};
-	    ObjectKey1 -> unicode:characters_to_list(ObjectKey1)
-	end,
-    Width =
-	case proplists:get_value(<<"w">>, ParsedQs) of
-	    undefined -> ?DEFAULT_IMAGE_WIDTH;
-	    W -> try utils:to_number(W) catch error:badarg -> ?DEFAULT_IMAGE_WIDTH end
-	end,
-    Height =
-	case proplists:get_value(<<"h">>, ParsedQs) of
-	    undefined -> ?DEFAULT_IMAGE_WIDTH;
-	    H -> try utils:to_number(H) catch error:badarg -> ?DEFAULT_IMAGE_WIDTH end
-	end,
-    %% The following flag can be used to turn off image cropping
-    CropFlag =
-	case proplists:get_value(<<"crop">>, ParsedQs) of
-	    <<"0">> -> false;
-	    _ -> true
-	end,
-    case lists:keyfind(error, 1, [Prefix, ObjectKey0]) of
-	{error, Number} -> js_handler:bad_request(Req0, Number);
-	false ->
-	    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey0),
-	    T0 = utils:timestamp(),
-	    case s3_api:head_object(BucketId, PrefixedObjectKey) of
-		{error, Reason} ->
-		    lager:error("[img_scale_handler] head_object failed ~p/~p: ~p",
-				[BucketId, PrefixedObjectKey, Reason]),
-		    {<<>>, Req0, []};
-		not_found -> {<<>>, Req0, []};
-		Metadata0 ->
-		    ObjExt = filename:extension(light_ets:to_lower(ObjectKey0)),
-		    IsVideo = lists:member(ObjExt, ?VIDEO_EXTENSIONS),
-		    case IsVideo of
-			true -> scale_response(Req0, BucketId, Metadata0, Width, Height, CropFlag, true, T0);
+    Prefix = proplists:get_value(prefix, State),
+    ObjectKey = proplists:get_value(object_key, State),
+    Width = proplists:get_value(width, State),
+    Height = proplists:get_value(height, State),
+    CropFlag = proplists:get_value(crop, State),
+
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
+    T0 = utils:timestamp(),
+    case s3_api:head_object(BucketId, PrefixedObjectKey) of
+	{error, Reason} ->
+	    lager:error("[img_scale_handler] head_object failed ~p/~p: ~p",
+			[BucketId, PrefixedObjectKey, Reason]),
+	    {<<>>, Req0, []};
+	not_found -> {<<>>, Req0, []};
+	Metadata0 ->
+	    ObjExt = filename:extension(light_ets:to_lower(ObjectKey)),
+	    IsVideo = lists:member(ObjExt, ?VIDEO_EXTENSIONS),
+	    case IsVideo of
+		true -> scale_response(Req0, BucketId, Metadata0, Width, Height, CropFlag, true, T0);
+		false ->
+		    TotalBytes =
+			case proplists:get_value("x-amz-meta-bytes", Metadata0) of
+			    undefined -> undefined;
+			    V -> utils:to_integer(V)
+			end,
+		    case TotalBytes =:= undefined orelse TotalBytes > ?MAXIMUM_IMAGE_SIZE_BYTES of
+			true ->
+			    %% In case image object size is bigger than the limit, return empty response.
+			    {<<>>, Req0, []};
 			false ->
-			    TotalBytes =
-				case proplists:get_value("x-amz-meta-bytes", Metadata0) of
-				    undefined -> undefined;
-				    V -> utils:to_integer(V)
-				end,
-			    case TotalBytes =:= undefined orelse TotalBytes > ?MAXIMUM_IMAGE_SIZE_BYTES of
-				true ->
-				    %% In case image object size is bigger than the limit, return empty response.
-				    {<<>>, Req0, []};
-				false ->
-				    scale_response(Req0, BucketId, Metadata0, Width, Height, CropFlag, IsVideo, T0)
-			    end
+			    scale_response(Req0, BucketId, Metadata0, Width, Height, CropFlag, IsVideo, T0)
 		    end
 	    end
     end.
@@ -326,7 +304,7 @@ acc_multipart(Req0, Acc) ->
     end.
 
 %%
-%% Validates provided parameters and calls 'upload_to_riak()'
+%% Validates provided parameters and uploads preview image to S3
 %%
 handle_post(Req0, State) ->
     case cowboy_req:method(Req0) of
@@ -397,43 +375,40 @@ handle_post(Req0, State) ->
 	_ -> js_handler:bad_request(Req0, 2)
     end.
 
-
 %%
 %% Checks if provided token is correct ( Token is optional here ).
 %% ( called after 'allowed_methods()' )
 %%
 is_authorized(Req0, _State) ->
-    BucketId =
-	case cowboy_req:binding(bucket_id, Req0) of
-	    undefined -> undefined;
-	    BV -> erlang:binary_to_list(BV)
-	end,
-    %% Extracts token from request headers and looks it up in "security" bucket
-    case utils:get_token(Req0) of
-	undefined ->
-	    %% Check session id
-	    Settings = #general_settings{},
-	    SessionCookieName = Settings#general_settings.session_cookie_name,
-	    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
-	    case login_handler:check_session_id(SessionID0) of
-		false -> js_handler:unauthorized(Req0, 28, stop);
-		{error, Number} -> js_handler:unauthorized(Req0, Number, stop);
-		User ->
-		    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
-			true -> {true, Req0, [{bucket_id, BucketId}, {user, User}]};
-			false -> js_handler:unauthorized(Req0, 27, stop)
-		    end
-	    end;
-	Token ->
-	    case login_handler:check_token(Token) of
-		not_found -> js_handler:unauthorized(Req0, 28, stop);
-		expired -> js_handler:unauthorized(Req0, 28, stop);
-		User ->
-		    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
-			true -> {true, Req0, [{bucket_id, BucketId}, {user, User}]};
-			false -> js_handler:unauthorized(Req0, 27, stop)
-		    end
-	    end
+    case download_handler:has_access(Req0) of
+	{error, Number} -> js_handler:unauthorized(Req0, Number, stop);
+	{BucketId, PrefixedOjectKey, ParsedQs} ->
+	    Width =
+		case proplists:get_value(<<"w">>, ParsedQs) of
+		    undefined -> ?DEFAULT_IMAGE_WIDTH;
+		    W -> try utils:to_number(W) catch error:badarg -> ?DEFAULT_IMAGE_WIDTH end
+		end,
+	    Height =
+		case proplists:get_value(<<"h">>, ParsedQs) of
+		    undefined -> ?DEFAULT_IMAGE_WIDTH;
+		    H -> try utils:to_number(H) catch error:badarg -> ?DEFAULT_IMAGE_WIDTH end
+		end,
+	    %% The following flag can be used to turn off image cropping
+	    CropFlag =
+		case proplists:get_value(<<"crop">>, ParsedQs) of
+		    <<"0">> -> false;
+		    _ -> true
+		end,
+	    Prefix = utils:dirname(PrefixedOjectKey),
+	    ObjectKey = filename:basename(PrefixedOjectKey),
+	    {true, Req0, [
+		{bucket_id, BucketId},
+		{prefix, Prefix},
+		{object_key, ObjectKey},
+		{width, Width},
+		{height, Height},
+		{crop, CropFlag}
+	    ]}
     end.
 
 %%
@@ -441,23 +416,7 @@ is_authorized(Req0, _State) ->
 %% ( called after 'allowed_methods()' )
 %%
 forbidden(Req0, State) ->
-    User = proplists:get_value(user, State),
-    BucketId = proplists:get_value(bucket_id, State),
-    TenantId =
-       case User of
-           undefined -> undefined;
-           _ -> User#user.tenant_id
-       end,
-    UserBelongsToGroup = lists:any(
-	fun(Group) ->
-	    utils:is_bucket_belongs_to_group(BucketId, TenantId, Group#group.id)
-	end, User#user.groups),
-    case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, TenantId) of
-	false ->
-	    PUser = admin_users_handler:user_to_proplist(User),
-	    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser), stop);
-	_ -> {false, Req0, [{bucket_id, BucketId}, {user, User}]}
-    end.
+    {false, Req0, State}.
 
 %%
 %% Validates request parameters
