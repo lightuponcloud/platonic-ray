@@ -200,7 +200,7 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
      if(embedded) button='';
      var gid=v.guid;
      var lock_tel=(v.lock_user_tel==undefined?'':'. Tel: '+v.lock_user_tel);
-     var thumb_url='/riak/thumbnail/'+bucket_id+'/?prefix='+(hex_prefix+""=="NaN"?'':hex_prefix)+'&object_key='+decodeURIComponent(obj_name);
+     var thumb_url='/riak/thumbnail/'+bucket_id+''+(hex_prefix+""=="NaN"?'':hex_prefix)+'/'+decodeURIComponent(obj_name);
      var pswp_width=v.width;
      var pswp_height=v.height;
      if(v.width+""!="NaN"){
@@ -232,7 +232,7 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
 
      var ve = $(lstEl).append('<div class="file-item clearfix" id="'+gid+'">'+input+'<div class="file-name" id="'+v.version+'">'+anchor+'</div><div class="file-size" data-bytes="'+v.bytes+'">'+fsize+'</div><div class="file-modified">'+modified+'</div><div class="file-preview-url">'+(v.is_locked==true?'<img src="'+static_root+'lock.png" title="'+v.lock_user_name+lock_tel+'"/>':'&nbsp;')+'</div><div class="file-url"><a href="'+url+'">link</a></div>'+button+'</div>');
      if(v.ct.substring(0, 5)=='image'||v.ct.substring(0, 5)=='video'){
-	$(ve).find('div#'+gid).find('.doc-icon').css('background-image', 'url("/riak/thumbnail/'+bucket_id+'/?prefix='+(hex_prefix+""=="NaN"?'':hex_prefix)+'&object_key='+decodeURIComponent(obj_name)+'&w=50&h=50")');
+	$(ve).find('div#'+gid).find('.doc-icon').css('background-image', 'url("/riak/thumbnail/'+bucket_id+'/'+(hex_prefix+""=="NaN"?'':hex_prefix+'/')+decodeURIComponent(obj_name)+'?w=50&h=50")');
      }
     });
 }
