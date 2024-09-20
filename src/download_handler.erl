@@ -96,7 +96,6 @@ has_access(Req0) ->
 	    <<>> -> undefined;
 	    BV -> erlang:binary_to_list(BV)
 	end,
-io:fwrite("PathInfo: ~p~n", [PathInfo]),
     PrefixedObjectKey =
 	case length(PathInfo) < 2 of
 	    true -> undefined;
@@ -104,7 +103,6 @@ io:fwrite("PathInfo: ~p~n", [PathInfo]),
 		%% prefixed object key should go just after bucket id
 		erlang:binary_to_list(utils:join_binary_with_separator(lists:nthtail(1, PathInfo), <<"/">>))
 	end,
-io:fwrite("PrefixedObjectKey: ~p~n", [PrefixedObjectKey]),
     ParsedQs = cowboy_req:parse_qs(Req0),
     PresentedSignature =
 	case proplists:get_value(<<"signature">>, ParsedQs) of
