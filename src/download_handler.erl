@@ -15,8 +15,9 @@
 %% If authenticated, check if user has access to provided bucket name, then check if object exists.
 %% Returns object's real path.
 %%
-get_object_metadata(BucketId, PrefixedObjectKey) ->
+get_object_metadata(BucketId, Prefix, ObjectKey) ->
     %% Check if object exist
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
     case s3_api:head_object(BucketId, PrefixedObjectKey) of
 	not_found -> not_found;
 	{error, Reason} ->
@@ -45,13 +46,13 @@ get_object_metadata(BucketId, PrefixedObjectKey) ->
 %% It uses authorization token HTTP header, if provided.
 %% Otherwise it checks session cookie.
 %%
-check_privileges(_Req0, _BucketId, undefined, _BucketTenant, _PresentedSignature) -> {error, 8};
-check_privileges(Req0, BucketId, PrefixedObjectKey, BucketTenant, PresentedSignature) ->
+check_privileges(Req0, BucketId, Prefix, ObjectKey, BucketTenant, PresentedSignature) ->
     %% Extracts token from request headers and looks it up in "security" bucket
     case utils:get_token(Req0) of
 	undefined ->
 	    %% If signature provided, no need to hit DB to check session, therefore this check goes first
 	    TenantAPIKey = BucketTenant#tenant.api_key,
+	    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
 	    BucketPrefixedObjectKey = utils:prefixed_object_key(BucketId, PrefixedObjectKey),
 	    CalculatedSignature = crypto_utils:calculate_url_signature(get, BucketPrefixedObjectKey, "", TenantAPIKey),
 	    case PresentedSignature == CalculatedSignature of
@@ -103,6 +104,11 @@ has_access(Req0) ->
 		%% prefixed object key should go just after bucket id
 		erlang:binary_to_list(utils:join_binary_with_separator(lists:nthtail(1, PathInfo), <<"/">>))
 	end,
+    {Prefix, ObjectKey} = 
+	case PrefixedObjectKey of
+	    undefined -> {undefined, undefined};
+	    _ -> {utils:dirname(PrefixedObjectKey), filename:basename(PrefixedObjectKey)}
+	end,
     ParsedQs = cowboy_req:parse_qs(Req0),
     PresentedSignature =
 	case proplists:get_value(<<"signature">>, ParsedQs) of
@@ -112,21 +118,24 @@ has_access(Req0) ->
     case utils:is_valid_bucket_id(BucketId, undefined) of
 	false -> {error, 37};
 	true ->
-	    Bits = string:tokens(BucketId, "-"),
-	    TenantId = string:to_lower(lists:nth(2, Bits)),
-	    case admin_tenants_handler:get_tenant(TenantId) of
-		not_found -> {error, 37};
-		Tenant ->
-		    case check_privileges(Req0, BucketId, PrefixedObjectKey, Tenant, PresentedSignature) of
-			{error, Number} -> {error, Number};
-			{config_error, Code} -> {error, Code};
-			false -> {error, 37};
-			true -> {BucketId, PrefixedObjectKey, ParsedQs};
-			_User -> {BucketId, PrefixedObjectKey, ParsedQs}
+	    case utils:is_valid_hex_prefix(Prefix) of
+		false -> {error, 36};
+		true ->
+		    Bits = string:tokens(BucketId, "-"),
+		    TenantId = string:to_lower(lists:nth(2, Bits)),
+		    case admin_tenants_handler:get_tenant(TenantId) of
+			not_found -> {error, 37};
+			Tenant ->
+			    case check_privileges(Req0, BucketId, Prefix, ObjectKey, Tenant, PresentedSignature) of
+				{error, Number} -> {error, Number};
+				{config_error, Code} -> {error, Code};
+				false -> {error, 37};
+				true -> {BucketId, Prefix, ObjectKey, ParsedQs, undefined};
+				User -> {BucketId, Prefix, ObjectKey, ParsedQs, User}
+			    end
 		    end
 	    end
     end.
-
 
 %%
 %% Checks if Range request header is valid.
@@ -276,8 +285,8 @@ init(Req0, _Opts) ->
 		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 	    }, jsx:encode([{error, Number}]), Req0),
 	    {ok, Req1, []};
-	{BucketId, PrefixedObjectKey, _ParsedQs} ->
-	    case get_object_metadata(BucketId, PrefixedObjectKey) of
+	{BucketId, Prefix, ObjectKey, _ParsedQs, _User} ->
+	    case get_object_metadata(BucketId, Prefix, ObjectKey) of
 		not_found ->
 		    T1 = utils:timestamp(),
 		    Req1 = cowboy_req:reply(404, #{

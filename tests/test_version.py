@@ -1,6 +1,4 @@
 import unittest
-import json
-import requests
 
 from client_base import (
     TestClient,

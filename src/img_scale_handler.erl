@@ -382,7 +382,7 @@ handle_post(Req0, State) ->
 is_authorized(Req0, _State) ->
     case download_handler:has_access(Req0) of
 	{error, Number} -> js_handler:unauthorized(Req0, Number, stop);
-	{BucketId, PrefixedOjectKey, ParsedQs} ->
+	{BucketId, Prefix, ObjectKey, ParsedQs, _User} ->
 	    Width =
 		case proplists:get_value(<<"w">>, ParsedQs) of
 		    undefined -> ?DEFAULT_IMAGE_WIDTH;
@@ -399,8 +399,6 @@ is_authorized(Req0, _State) ->
 		    <<"0">> -> false;
 		    _ -> true
 		end,
-	    Prefix = utils:dirname(PrefixedOjectKey),
-	    ObjectKey = filename:basename(PrefixedOjectKey),
 	    {true, Req0, [
 		{bucket_id, BucketId},
 		{prefix, Prefix},

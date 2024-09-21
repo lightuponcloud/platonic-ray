@@ -75,6 +75,7 @@ prefixed_object_key(undefined, ObjectKey) -> ObjectKey;
 prefixed_object_key([], ObjectKey) -> ObjectKey;
 prefixed_object_key(".", ObjectKey) -> ObjectKey;
 prefixed_object_key(<<>>, ObjectKey) -> ObjectKey;
+prefixed_object_key(BucketId, undefined) -> BucketId;
 prefixed_object_key(Prefix, ObjectKey0) when erlang:is_binary(Prefix), erlang:is_binary(ObjectKey0) ->
     ObjectKey1 =
 	case starts_with(ObjectKey0, <<"/">>) of
@@ -365,6 +366,9 @@ even(X) when X >= 0 -> (X band 1) == 0.
 %%
 %% Checks if provided prefix consists of allowed characters
 %%
+is_valid_hex_prefix(undefined) -> true;
+is_valid_hex_prefix(HexPrefix) when erlang:is_list(HexPrefix) ->
+    is_valid_hex_prefix(erlang:list_to_binary(HexPrefix));
 is_valid_hex_prefix(HexPrefix) when erlang:is_binary(HexPrefix) ->
     F0 = fun(T) ->
 	    case even(erlang:byte_size(T)) of

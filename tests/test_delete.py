@@ -164,7 +164,7 @@ class DeleteTest(TestClient):
         first_name = generate_random_name()
         response = self.client.create_pseudo_directory(TEST_BUCKET_1, first_name)
         assert response.status_code == 204
-        for i in range(4):
+        for _ in range(4):
             name = generate_random_name()
             response = self.client.create_pseudo_directory(TEST_BUCKET_1, name,
                 prefix=encode_to_hex(dir_name=first_name))

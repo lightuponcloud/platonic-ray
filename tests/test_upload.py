@@ -4,7 +4,6 @@ import unittest
 from base64 import b64encode, b64decode
 import json
 import hashlib
-import hmac
 
 import requests
 from botocore import exceptions
@@ -18,14 +17,11 @@ from client_base import (
     FILE_UPLOAD_CHUNK_SIZE,
     UPLOADS_BUCKET_NAME,
     ACTION_LOG_FILENAME,
-    REGION,
     USERNAME_1,
     PASSWORD_1,
-    USERNAME_2,
-    PASSWORD_2,
     configure_boto3,
     TestClient)
-from light_client import LightClient, generate_random_name, encode_to_hex
+from light_client import LightClient
 
 
 class UploadTest(TestClient):
@@ -78,16 +74,13 @@ class UploadTest(TestClient):
         }
         req_headers.update(headers)
         # send request without the binary data first
-        return requests.post(url, files=form_data, headers=req_headers)
+        return requests.post(url, files=form_data, headers=req_headers, timeout=5)
 
     def test_big_upload_success(self):
         url = "{}/riak/upload/{}/".format(BASE_URL, TEST_BUCKET_1)
         fn = "20180111_165127.jpg"
-        t1 = time.time()
         result = self.upload_file(url, fn)
-        t2 = time.time()
         self.assertEqual(result["orig_name"], fn)
-        # print("Upload {}".format(int(t2-t1)))
 
         # Test SQLite db contents
         time.sleep(2)  # time necessary for server to update db
@@ -114,10 +107,7 @@ class UploadTest(TestClient):
     def test_small_upload_success(self):
         url = "{}/riak/upload/{}/".format(BASE_URL, TEST_BUCKET_1)
         fn = "README.md"
-        t1 = time.time()
         result = self.upload_file(url, fn)
-        t2 = time.time()
-        # print("Upload {}".format(int(t2-t1)))
         with open(fn, "rb") as fd:
             contents = self.download_file(TEST_BUCKET_1, "readme.md")
             self.assertEqual(fd.read(), contents)
@@ -152,10 +142,7 @@ class UploadTest(TestClient):
         """
         url = "{}/riak/upload/{}/".format(BASE_URL, TEST_BUCKET_3)
         fn = "README.md"
-        t1 = time.time()
         result = self.upload_file(url, fn)
-        t2 = time.time()
-        # print("Upload {}".format(int(t2-t1)))
         with open(fn, "rb") as fd:
             contents = self.download_file(TEST_BUCKET_3, "readme.md")
             self.assertEqual(fd.read(), contents)
@@ -176,10 +163,7 @@ class UploadTest(TestClient):
             "prefix": "",
             "guid": "",
         }
-        t1 = time.time()
         response = self._upload_request(headers, form_data)
-        t2 = time.time()
-        # print("Upload {}".format(int(t2-t1)))
         response_json = response.json()
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response_json.get("error"), 53)
@@ -193,10 +177,7 @@ class UploadTest(TestClient):
             "guid": "",
             "version": ""
         }
-        t1 = time.time()
         response = self._upload_request(headers, form_data)
-        t2 = time.time()
-        # print("Upload {}".format(int(t2-t1)))
         self.assertEqual(response.status_code, 400)
         response_json = response.json()
         self.assertEqual(response_json.get("error"), 44)
@@ -226,13 +207,8 @@ class UploadTest(TestClient):
             self.assertEqual(response_json.get("error"), 47)
 
         filename = "blahb"*55
-        form_data = {
-            "files[]": (filename, "something"),
-        }
-        t1 = time.time()
+        form_data = {"files[]": (filename, "something")}
         response = self._upload_request(headers, form_data)
-        t2 = time.time()
-        # print("Upload {}".format(int(t2-t1)))
         response_json = response.json()
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response_json.get("error"), 48)
@@ -244,10 +220,7 @@ class UploadTest(TestClient):
         }
         url = "{}/riak/upload/{}/".format(BASE_URL, TEST_BUCKET_1)
         fn = "20180111_165127.jpg"
-        t1 = time.time()
         response_json = self.upload_file(url, fn, form_data=form_data)
-        t2 = time.time()
-        # print("Upload {}".format(int(t2-t1)))
         self.assertEqual(response_json["width"], 1)
         self.assertEqual(response_json["height"], 1)
 
@@ -272,13 +245,8 @@ class UploadTest(TestClient):
         headers = {
             "content-range": "bytes 0-8/9"
         }
-        form_data = {
-            "md5": None,
-        }
-        t1 = time.time()
+        form_data = {"md5": None}
         response = self._upload_request(headers, form_data)
-        t2 = time.time()
-        # print("Upload {}".format(int(t2-t1)))
         response_json = response.json()
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response_json.get("error"), 40)
@@ -303,13 +271,8 @@ class UploadTest(TestClient):
         headers = {
             "content-range": "bytes 0-8/9"
         }
-        form_data = {
-            "md5": None,
-        }
-        t1 = time.time()
+        form_data = {"md5": None}
         response = self._upload_request(headers, form_data)
-        t2 = time.time()
-        # print("Upload {}".format(int(t2-t1)))
         response_json = response.json()
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response_json.get("error"), 40)
@@ -326,10 +289,7 @@ class UploadTest(TestClient):
         headers = {
             "content-range": None
         }
-        t1 = time.time()
         response = self._upload_request(headers, {})
-        t2 = time.time()
-        # print("Upload {}".format(int(t2-t1)))
         response_json = response.json()
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response_json.get("error"), 52)
@@ -372,8 +332,6 @@ class UploadTest(TestClient):
         self.assertEqual(response_json.get("error"), 24)
 
         fn = "20180111_165127.jpg"
-        stat = os.stat(fn)
-        size = stat.st_size
         with open(fn, "rb") as fd:
             _read_chunk = lambda: fd.read(FILE_UPLOAD_CHUNK_SIZE)
             for chunk in iter(_read_chunk, ""):
@@ -444,10 +402,7 @@ class UploadTest(TestClient):
 
         # no guid sent, no such object in db -> new GUID created
 
-        t1 = time.time()
         response = self._upload_request(headers, form_data)
-        t2 = time.time()
-        # print("Upload {}".format(int(t2-t1)))
         self.assertEqual(response.status_code, 200)
         response_json = response.json()
         guid = response_json["guid"]
@@ -620,8 +575,6 @@ class UploadTest(TestClient):
         self.assertEqual(response.json(), {'error': 40})  # incorrect md5
 
         headers = {"content-range": "bytes 0-1999999/2000001"}
-        md5_list = ["437b930db84b8079c2dd804a71936b5f", "437b930db84b8079c2dd804a71936b5f"]
-        etags = ",".join(["{},{}".format(i+1, md5_list[i]) for i in range(len(md5_list))])
         form_data.update({
             "md5": "b8ee024ff8e2616a09cfacf30516081a",
             "files[]": ("20180111_165127.jpg", "0"*2000000),
@@ -1038,7 +991,7 @@ class UploadTest(TestClient):
         dir_response = self.create_pseudo_directory(dir_name)
         self.assertEqual(dir_response.status_code, 204)
         fn = "20180111_165127.jpg"
-        res = self.client.upload(TEST_BUCKET_1, fn, prefix=prefix)
+        self.client.upload(TEST_BUCKET_1, fn, prefix=prefix)
         time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 2)
@@ -1050,40 +1003,14 @@ class UploadTest(TestClient):
         """
         url = "{}/riak/upload/{}/".format(BASE_URL, TEST_BUCKET_3)
         fn = "README.md"
-        result = self.upload_file(url, fn)
-        with open(fn, "rb") as fd:
-
-            # Get tenant's API key
-            api_key = os.getenv("ADMIN_API_KEY")
-
-            url = "{}/riak/admin/tenants/".format(BASE_URL)
-            headers={"authorization": "Token {}".format(api_key)}
-            response = requests.get(url, headers=headers)
-            self.assertEqual(response.status_code, 200)
-            data = response.json()
-            api_key = data['api_key']
-
-            path = "/riak/download/{}/{}/".format(TEST_BUCKET_3, "readme.md")
-            signature = self.calculate_url_signature(path, "", api_key)
-
-            url = "{}/riak/download/{}/{}?signature={}".format(BASE_URL, TEST_BUCKET_3, "readme.md", signature)
-            response = requests.get(url)
-            self.assertEqual(fd.read(), response.content)
-
-    def test_upload_download_with_api_key(self):
-        """
-        Make sure signature can be used to download file.
-        """
-        url = "{}/riak/upload/{}/".format(BASE_URL, TEST_BUCKET_3)
-        fn = "README.md"
-        result = self.upload_file(url, fn)
+        self.upload_file(url, fn)
         with open(fn, "rb") as fd:
             # Get tenant's API key
             api_key = os.getenv("ADMIN_API_KEY")
 
             url = "{}/riak/admin/tenants/".format(BASE_URL)
             headers={"authorization": "Token {}".format(api_key)}
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, timeout=5)
             self.assertEqual(response.status_code, 200)
             data = response.json()
             tenant = [i for i in data if i['id'] == "integrationtests"]
@@ -1094,7 +1021,7 @@ class UploadTest(TestClient):
             signature = self.calculate_url_signature("get", path, "", api_key)
 
             url = "{}/riak/download/{}/{}?signature={}".format(BASE_URL, TEST_BUCKET_3, "readme.md", signature)
-            response = requests.get(url)
+            response = requests.get(url, timeout=5)
             self.assertEqual(fd.read(), response.content)
 
             # make sure request fails with incorrect signature
@@ -1102,7 +1029,7 @@ class UploadTest(TestClient):
             path = "{}/{}".format(TEST_BUCKET_3, "readme.mf")
             signature = self.calculate_url_signature("get", path, "", api_key)
             url = "{}/riak/download/{}/{}?signature={}".format(BASE_URL, TEST_BUCKET_3, "readme.md", signature)
-            response = requests.get(url)
+            response = requests.get(url, timeout=5)
             self.assertEqual(response.status_code, 403)
 
 

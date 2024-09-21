@@ -84,8 +84,6 @@ class LockTest(TestClient):
         self.client.login(USERNAME_2, PASSWORD_2)
         response = self.client.patch(TEST_BUCKET_1, "unlock", [object_key])
         result = response.json()
-        # print(response.status_code)
-        # print(response.content.decode())
         # Lock remains active, as unlock was performed by different user
         self.assertEqual(result[0]['is_locked'], True)
 
@@ -147,7 +145,6 @@ class LockTest(TestClient):
         # 2-3. lock it and check for "is_locked": True
         response = self.client.patch(TEST_BUCKET_1, "lock", [object_key1])
         result = response.json()
-        # print(response.content.decode())
         self.assertEqual(result[0]['is_locked'], True)
         self.assertEqual(response.status_code, 200)
 
@@ -156,13 +153,11 @@ class LockTest(TestClient):
         last_seen_version = None
         for obj in response.json()['list']:
             if obj['object_key'] == object_key1:
-                # print(obj['version'])
                 last_seen_version = obj["version"]
         self.assertIsNotNone(last_seen_version)
 
         # 5. upload new version of file from the same user
         result = self.client.upload(TEST_BUCKET_1, fn, last_seen_version=last_seen_version)
-        # print(result)
         object_key2 = result['object_key']
         self.assertEqual(result['orig_name'], fn)
         self.assertEqual(result['is_locked'], True)
@@ -200,6 +195,7 @@ class LockTest(TestClient):
         self.assertEqual(response.status_code, 204)
 
         result = self.client.upload(TEST_BUCKET_1, fn, prefix=dir_name_prefix, last_seen_version=version)
+        assert "object_key" in result
         object_key2 = result['object_key']
         self.assertNotEqual(version, result['version'])
 
@@ -239,7 +235,6 @@ class LockTest(TestClient):
         # 4.2 Try to replace locked file by second file from directory by copy operation
         object_keys = {object_key3: fn}
         response = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, object_keys, dir_name_prefix)
-        # print(response.content.decode())
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'status': 'ok'})
 
@@ -259,6 +254,7 @@ class LockTest(TestClient):
 
         # Clean: delete the uploaded file and directory from User1
         self.client.login(USERNAME_1, PASSWORD_1)
+        time.sleep(2)
         response = self.client.patch(TEST_BUCKET_1, "unlock", [object_key1])
         self.assertEqual(response.json()[0]['is_locked'], False)
         self.assertEqual(response.status_code, 200)

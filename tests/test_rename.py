@@ -1,5 +1,4 @@
 import unittest
-from pprint import pprint
 import time
 
 from client_base import (
@@ -7,8 +6,6 @@ from client_base import (
     TEST_BUCKET_1,
     USERNAME_1,
     PASSWORD_1,
-    USERNAME_2,
-    PASSWORD_2,
     ACTION_LOG_FILENAME,
     configure_boto3,
     TestClient)
@@ -229,7 +226,7 @@ class RenameTest(TestClient):
         keys = [(i['prefix'], i['key']) for i in result]
         assert ('', encode_to_hex(another_random_new_name)[:-1]) in keys
         assert (encode_to_hex(another_random_new_name), encode_to_hex(random_new_name)[:-1]) in keys
-        assert ("{}{}".format(encode_to_hex(another_random_new_name), encode_to_hex(random_new_name)), object_key)
+        assert ("{}{}".format(encode_to_hex(another_random_new_name), encode_to_hex(random_new_name)), object_key) in keys
 
 
 if __name__ == '__main__':

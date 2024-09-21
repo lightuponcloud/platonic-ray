@@ -1,5 +1,4 @@
 import unittest
-from pprint import pprint
 import time
 
 from client_base import (
@@ -8,8 +7,6 @@ from client_base import (
     TEST_BUCKET_3,
     USERNAME_1,
     PASSWORD_1,
-    USERNAME_2,
-    PASSWORD_2,
     configure_boto3,
     ACTION_LOG_FILENAME,
     TestClient)

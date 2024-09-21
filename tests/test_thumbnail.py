@@ -12,13 +12,8 @@ from dvvset import DVVSet
 from client_base import (
     BASE_URL,
     TEST_BUCKET_1,
-    TEST_BUCKET_2,
-    TEST_BUCKET_3,
-    FILE_UPLOAD_CHUNK_SIZE,
-    UPLOADS_BUCKET_NAME,
     USERNAME_1,
     PASSWORD_1,
-    USERNAME_2,
     PASSWORD_2,
     configure_boto3,
     TestClient)

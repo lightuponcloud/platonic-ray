@@ -65,7 +65,7 @@ to_json(Req0, State) ->
 		User1 = admin_users_handler:user_to_proplist(User0),
 		proplists:get_value(groups, User1)
 	end,
-    ParsedQs = cowboy_req:parse_qs(Req0),
+    ParsedQs = proplists:get_value(parsed_qs, State, []),
     ShowDeleted =
 	case proplists:is_defined(<<"show-deleted">>, ParsedQs) of
 	    true ->
@@ -128,60 +128,30 @@ to_json(Req0, State) ->
 %% ( called after 'allowed_methods()' )
 %%
 is_authorized(Req0, _State) ->
-    case utils:get_token(Req0) of
-	undefined -> {true, Req0, undefined};
-	Token -> login_handler:get_user_or_error(Req0, Token)
+    case download_handler:has_access(Req0) of
+	{error, Number} -> js_handler:unauthorized(Req0, Number, stop);
+	{BucketId, Prefix, ObjectKey, ParsedQs, User} ->
+	    {true, Req0, [
+		{bucket_id, BucketId},
+		{prefix, Prefix},
+		{object_key, ObjectKey},
+		{parsed_qs, ParsedQs},
+		{user, User}
+	    ]}
     end.
 
 %%
-%% Checks if user has access
 %% ( called after 'is_authorized()' )
 %%
-forbidden(Req0, User) ->
-    BucketId =
-	case cowboy_req:binding(bucket_id, Req0) of
-	    undefined -> undefined;
-	    BV -> erlang:binary_to_list(BV)
-	end,
-    TenantId =
-	case User of
-	    undefined -> undefined;
-	    _ -> User#user.tenant_id
-	end,
-    case utils:is_valid_bucket_id(BucketId, TenantId) of
-	true ->
-	    UserBelongsToGroup =
-		case User of
-		    undefined -> undefined;
-		    _ -> lists:any(
-			    fun(Group) -> utils:is_bucket_belongs_to_group(BucketId, TenantId, Group#group.id) end,
-			    User#user.groups)
-		end,
-	    case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, TenantId) of
-		false ->
-		    case utils:is_restricted_bucket_id(BucketId) of
-			true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]};
-			false ->
-			    PUser = admin_users_handler:user_to_proplist(User),
-			    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser), ok)
-		    end;
-		true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]};
-		undefined -> {false, Req0, [{bucket_id, BucketId}]}
-	    end;
-	false -> js_handler:forbidden(Req0, 7, stop)
-    end.
+forbidden(Req0, State) ->
+    {false, Req0, State}.
 
 %%
 %% Validates request parameters
 %% ( called after 'content_types_provided()' )
 %%
 resource_exists(Req0, State) ->
-    ParsedQs = cowboy_req:parse_qs(Req0),
-    Prefix0 = proplists:get_value(<<"prefix">>, ParsedQs),
-    case utils:is_valid_hex_prefix(Prefix0) of
-	false -> {false, Req0, []};
-	true -> {true, Req0, State++[{prefix, Prefix0}]}
-    end.
+    {true, Req0, State}.
 
 previously_existed(Req0, _State) ->
     {false, Req0, []}.
@@ -304,12 +274,11 @@ patch_operation(Req0, lock, BucketId, Prefix, User, ObjectsList) ->
 	    lists:keyreplace(is_locked, 1, I, {is_locked, IsLocked})
 	end, UpdatedOnes1),
     Req1 = cowboy_req:set_resp_body(jsx:encode(UpdatedOnes2), Req0),
-    UpdatedKeys = [erlang:binary_to_list(proplists:get_value(object_key, I))
-		   || I <- UpdatedOnes1],
+    UpdatedKeys = [erlang:binary_to_list(proplists:get_value(object_key, I)) || I <- UpdatedOnes1],
     case indexing:update(BucketId, Prefix, [{modified_keys, UpdatedKeys}]) of
 	lock ->
 	    lager:warning("[list_handler] Can't update index during locking object, as index lock exists: ~p/~p",
-		       [BucketId, Prefix]),
+			  [BucketId, Prefix]),
 	    js_handler:too_many(Req1);
 	_ ->
 	    {true, Req1, []}
@@ -333,7 +302,7 @@ patch_operation(Req0, unlock, BucketId, Prefix, User, ObjectsList) ->
     case indexing:update(BucketId, Prefix, [{modified_keys, UpdatedKeys}]) of
 	lock ->
 	    lager:warning("[list_handler] Can't update index during unlocking object, as index lock exists",
-		       [BucketId, Prefix]),
+			  [BucketId, Prefix]),
 	    js_handler:too_many(Req1);
 	_ -> {true, Req1, []}
     end;
@@ -344,7 +313,7 @@ patch_operation(Req0, undelete, BucketId, Prefix, _User, ObjectsList) ->
     case indexing:update(BucketId, Prefix, [{modified_keys, ModifiedKeys1}]) of
 	lock ->
 	    lager:warning("[list_handler] Can't update index during undeleting object, as index lock exists: ~p/~p",
-		       [BucketId, Prefix]),
+			  [BucketId, Prefix]),
 	    js_handler:too_many(Req0);
 	_ -> {true, Req0, []}
     end;
@@ -355,7 +324,7 @@ patch_operation(Req0, access_token, BucketId, Prefix, _User, ObjectsList) ->
     case indexing:update(BucketId, Prefix, [{modified_keys, ModifiedKeys1}]) of
 	lock ->
 	    lager:warning("[list_handler] Can't update index during undeleting object, as index lock exists: ~p/~p",
-		       [BucketId, Prefix]),
+			  [BucketId, Prefix]),
 	    js_handler:too_many(Req0);
 	_ -> {true, Req0, []}
     end.
@@ -525,7 +494,6 @@ is_locked_for_user(BucketId, Prefix, ObjectKey, UserId)
 	when erlang:is_list(BucketId) andalso 
 	    erlang:is_list(Prefix) orelse Prefix =:= undefined andalso erlang:is_list(ObjectKey) 
 	    andalso erlang:is_list(UserId) ->
-
     %% Check if object is deleted
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
     case s3_api:head_object(BucketId, PrefixedObjectKey) of
@@ -552,7 +520,6 @@ is_locked_for_user(BucketId, Prefix, ObjectKey, UserId)
 			end
 		end
     end.
-
 
 %%
 %% Receives binary hex prefix value, returns lowercase hex string.
@@ -678,13 +645,13 @@ create_pseudo_directory(Req0, State) when erlang:is_list(State) ->
     case indexing:update(BucketId, PrefixedDirectoryName++"/") of
 	lock ->
 	    lager:warning("[list_handler] Can't update index during create pseudo dir, as index lock exists: ~p/~p",
-		       [BucketId, PrefixedDirectoryName++"/"]),
+			  [BucketId, PrefixedDirectoryName++"/"]),
 	    js_handler:too_many(Req0);
        _ ->
 	    case indexing:update(BucketId, Prefix) of
 		lock ->
 		    lager:warning("[list_handler] Can't update index during locking object as index lock exists: ~p/~p",
-			       [BucketId, Prefix]),
+				  [BucketId, Prefix]),
 		    js_handler:too_many(Req0);
 		_ ->
 		    User = proplists:get_value(user, State),
@@ -808,7 +775,7 @@ delete_pseudo_directory(BucketId, Prefix, HexDirName, User, ActionLogRecord0, Ti
 	    case indexing:update(BucketId, Prefix, [{to_delete, [{HexDirName, Timestamp}]}]) of
 		lock ->
 		    lager:warning("[list_handler] Can't update index during deleting pseudo-dir ~p/~p",
-			       [BucketId, Prefix]),
+				  [BucketId, Prefix]),
 		    lock;
 		_ ->
 		    PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(HexDirName)),
@@ -924,9 +891,6 @@ delete_resource(Req0, State) ->
 		tenant_name=User#user.tenant_name,
 		timestamp=io_lib:format("~p", [erlang:round(Timestamp/1000)])
 	    },
-%%	key = 
-%%	orig_name = 
-%%	version = 
 	    %% Set "uncommitted" flag only if ther's a lot of delete
 	    case length(PseudoDirectories) > 0 of
 		true ->
