@@ -10,6 +10,7 @@ from client_base import (
     USERNAME_1,
     PASSWORD_1,
     ACTION_LOG_FILENAME,
+    REGION,
     configure_boto3,
     TestClient)
 from light_client import LightClient
@@ -53,7 +54,7 @@ class ListTest(TestClient):
         assert tenant
         api_key = tenant[0]['api_key']
 
-        signature = self.calculate_url_signature("get", TEST_BUCKET_1, "", api_key)
+        signature = self.client.calculate_url_signature(REGION, "get", TEST_BUCKET_1, "", api_key)
 
         url = "{}/riak/list/{}/?signature={}".format(BASE_URL, TEST_BUCKET_1, signature)
         response = requests.get(url, timeout=2)

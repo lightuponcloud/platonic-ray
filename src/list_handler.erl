@@ -238,7 +238,6 @@ validate_patch(Body, State) ->
 			<<"lock">> -> {Prefix1, ObjectsList1, lock};
 			<<"unlock">> -> {Prefix1, ObjectsList1, unlock};
 			<<"undelete">> -> {Prefix1, ObjectsList1, undelete};
-			<<"access-token">> -> {Prefix1, ObjectsList1, access_token};
 			_ -> {error, 41}
 		    end
 	    end
@@ -306,56 +305,107 @@ patch_operation(Req0, unlock, BucketId, Prefix, User, ObjectsList) ->
 	    js_handler:too_many(Req1);
 	_ -> {true, Req1, []}
     end;
-patch_operation(Req0, undelete, BucketId, Prefix, _User, ObjectsList) ->
-    ModifiedKeys0 = [undelete(BucketId, Prefix, K) || K <- ObjectsList],
-    ModifiedKeys1 = [erlang:binary_to_list(proplists:get_value(object_key, I))
-		     || I <- ModifiedKeys0, I =/= not_found],
-    case indexing:update(BucketId, Prefix, [{modified_keys, ModifiedKeys1}]) of
+patch_operation(Req0, undelete, BucketId, Prefix, User, ObjectsList) ->
+    Timestamp = utils:timestamp(),
+    ActionLogRecord0 = #action_log_record{
+	action="undelete",
+	user_id=User#user.id,
+	user_name=User#user.name,
+	tenant_name=User#user.tenant_name,
+	timestamp=io_lib:format("~p", [erlang:round(Timestamp/1000)])
+    },
+    ModifiedKeys0 = undelete(BucketId, Prefix, ObjectsList, ActionLogRecord0),
+    case indexing:update(BucketId, Prefix, [{modified_keys, ModifiedKeys0}]) of
 	lock ->
 	    lager:warning("[list_handler] Can't update index during undeleting object, as index lock exists: ~p/~p",
 			  [BucketId, Prefix]),
 	    js_handler:too_many(Req0);
 	_ -> {true, Req0, []}
+    end.
+
+%%
+%% Restore pseudo-directory.
+%%
+undelete(BucketId, Prefix, [], ActionLogRecord0) ->
+    DirPath = utils:dirname(Prefix),
+    DstDirectoryName0 = utils:unhex(erlang:list_to_binary(filename:basename(Prefix))),
+    %% remove -deleted-timestamp suffix
+    DstDirectoryName1 = lists:nth(1, string:tokens(
+	erlang:binary_to_list(filename:basename(DstDirectoryName0)), "-deleted-")),
+
+    Result = rename_handler:rename_pseudo_directory(BucketId, DirPath, Prefix,
+	unicode:characters_to_binary(DstDirectoryName1), ActionLogRecord0),
+
+    case Result of
+	lock -> lock;
+	{accepted, _} -> undefined; %% Rename is not complete, as Riak CS was busy.
+	{error, _} -> undefined; %% Client should retry attempt to delete the directory
+	{dir_name, _} -> ok
     end;
-patch_operation(Req0, access_token, BucketId, Prefix, _User, ObjectsList) ->
-    ModifiedKeys0 = [set_access_token(BucketId, Prefix, K) || K <- ObjectsList],
-    ModifiedKeys1 = [erlang:binary_to_list(proplists:get_value(object_key, I))
-		     || I <- ModifiedKeys0, I =/= not_found],
-    case indexing:update(BucketId, Prefix, [{modified_keys, ModifiedKeys1}]) of
-	lock ->
-	    lager:warning("[list_handler] Can't update index during undeleting object, as index lock exists: ~p/~p",
-			  [BucketId, Prefix]),
-	    js_handler:too_many(Req0);
-	_ -> {true, Req0, []}
-    end.
 
-set_access_token(_BucketId, Prefix, K) ->
-    utils:prefixed_object_key(Prefix, K).
-
-%% TODO: test this
-undelete(BucketId, Prefix, ObjectKey) ->
-    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
-    case s3_api:head_object(BucketId, PrefixedObjectKey) of
-	{error, Reason} ->
-	    lager:error("[list_handler] head_object failed ~p/~p: ~p", [BucketId, PrefixedObjectKey, Reason]),
-	    not_found;
-	not_found -> not_found;
-	Metadata0 ->
-	    LockModifiedTime =  io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
-	    Meta = parse_object_record(Metadata0, [{lock_modified_utc, LockModifiedTime}]),
-	    IsLocked = proplists:get_value("is-locked", Meta),
-	    Response = s3_api:put_object(BucketId, Prefix, ObjectKey, <<>>, [{meta, Meta}]),
-	    case Response of
-		ok ->
-		    [{object_key, ObjectKey},
-		     {is_locked, IsLocked},
-		     {lock_modified_utc, LockModifiedTime}];
+%%
+%% Restores list of objects
+%%
+undelete(BucketId, Prefix, ObjectKeys, ActionLogRecord0) ->
+    T0 = utils:timestamp(),
+    RestoredObjectKeys = lists:filtermap(
+	fun(ObjectKey) ->
+	    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
+	    case s3_api:head_object(BucketId, PrefixedObjectKey) of
 		{error, Reason} ->
-		    lager:error("[list_handler] Can't put object: ~p/~p/~p: ~p",
-				[BucketId, Prefix, ObjectKey, Reason]),
-		    error
+		    lager:error("[list_handler] head_object failed ~p/~p: ~p", [BucketId, PrefixedObjectKey, Reason]),
+		    false;
+		not_found -> false;
+		Metadata0 ->
+		    Meta = parse_object_record(Metadata0, [{is_deleted, "false"}]),
+		    OrigName0 = proplists:get_value("orig-filename", Meta),
+		    OrigName1 = utils:unhex(erlang:list_to_binary(OrigName0)),
+		    Response = s3_api:put_object(BucketId, Prefix, ObjectKey, <<>>, [{meta, Meta}]),
+		    case Response of
+			ok ->
+			    %% Update SQLite db
+			    Obj = #object{
+				key = ObjectKey,
+				orig_name = OrigName1,
+				bytes = proplists:get_value("bytes", Meta),
+				guid = proplists:get_value("guid", Meta),
+				md5 = proplists:get_value("md5", Meta),
+				version = proplists:get_value("version", Meta),
+				upload_time = proplists:get_value("upload-time", Meta),
+				is_deleted = proplists:get_value("is-deleted", Meta),
+				author_id = proplists:get_value("author-id", Meta),
+				author_name = proplists:get_value("author-name", Meta),
+				author_tel = proplists:get_value("author-tel", Meta),
+				is_locked = false,
+				lock_user_id = "",
+				lock_user_name = "",
+				lock_user_tel = "",
+				lock_modified_utc = proplists:get_value("lock-modified-utc", Meta)
+			    },
+			    sqlite_server:add_object(BucketId, Prefix, Obj),
+			    {true, {ObjectKey, OrigName1}};
+			{error, Reason} ->
+			    lager:error("[list_handler] Can't put object: ~p/~p/~p: ~p",
+					[BucketId, Prefix, ObjectKey, Reason]),
+			    error
+		    end
 	    end
-    end.
+	end, ObjectKeys),
+
+    T1 = utils:timestamp(),
+    OrigNames = utils:join_list_with_separator([element(2, I) || I <- RestoredObjectKeys], " ", []),
+    UserName = unicode:characters_to_list(utils:unhex(erlang:list_to_binary(ActionLogRecord0#action_log_record.user_name))),
+    ActionLogRecord1 = ActionLogRecord0#action_log_record{
+	details = io_lib:format("Restored by ~p: ~p", [UserName, OrigNames]),
+	duration = io_lib:format("~.2f", [utils:to_float(T1-T0)/1000]),
+	is_locked = false,
+	lock_user_id = undefined,
+	lock_user_name = undefined,
+	lock_user_tel = undefined,
+	lock_modified_utc = undefined
+    },
+    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord1),
+    [element(1, I) || I <- RestoredObjectKeys].
 
 %%
 %% Update lock on object by replacing it with new metadata.
@@ -530,7 +580,9 @@ is_locked_for_user(BucketId, Prefix, ObjectKey, UserId)
 prefix_lowercase(<<>>) -> undefined;
 prefix_lowercase(undefined) -> undefined;
 prefix_lowercase(Prefix0) when erlang:is_binary(Prefix0) ->
-   Prefix1 = string:to_lower(lists:flatten(erlang:binary_to_list(Prefix0))),
+    prefix_lowercase(erlang:binary_to_list(Prefix0));
+prefix_lowercase(Prefix0) when erlang:is_list(Prefix0) ->
+   Prefix1 = string:to_lower(lists:flatten(Prefix0)),
    case utils:ends_with(Prefix0, <<"/">>) of
        true -> Prefix1;
        false -> Prefix1++"/"

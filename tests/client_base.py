@@ -272,16 +272,6 @@ class TestClient(unittest.TestCase):
             result = response_json
         return result
 
-    def calculate_url_signature(self, method, path, qs, api_key):
-        canonical_request = "{}\n{}\n{}".format(method, path, qs)
-        canonical_request_hash = hashlib.sha256(canonical_request.encode()).hexdigest()
-        string_to_sign = "HMAC-SHA256\n{}/s3/\n{}".format(REGION, canonical_request_hash)
-
-        region_key = hmac.new("LightUp{}".format(api_key).encode(), REGION.encode(), hashlib.sha256).digest()
-        signing_key = hmac.new(region_key, b"s3", hashlib.sha256).digest()
-
-        return hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
-
     def download_object(self, bucketId, objectKey):
         """
         This method downloads aby object from the object storage.
@@ -296,7 +286,7 @@ class TestClient(unittest.TestCase):
         """
         This method uses /riak/download/ API endpoint to download file
         """
-        url = "{}/riak/download/{}/{}".format(BASE_URL, bucketId, objectKey)
+        url = "{}/riak/download/{}/?object_key={}".format(BASE_URL, bucketId, objectKey)
         response = requests.get(url, headers={"authorization": "Token {}".format(self.token)})
         return response.content
 

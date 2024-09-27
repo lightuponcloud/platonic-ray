@@ -125,7 +125,7 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
       if(v.is_deleted) return true;
       var dir_name = v.prefix;
       if(hex_prefix) {
-	dir_name = dir_name.replace(hex_prefix, '');
+        dir_name = dir_name.replace(hex_prefix, '');
       }
       if(dir_name.indexOf('/')==0) dir_name = dir_name.substring(1, dir_name.length);
       directories.push({'name': dir_name, 'prefix': hex_prefix, 'guid': guid()});
@@ -200,7 +200,7 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
      if(embedded) button='';
      var gid=v.guid;
      var lock_tel=(v.lock_user_tel==undefined?'':'. Tel: '+v.lock_user_tel);
-     var thumb_url='/riak/thumbnail/'+bucket_id+''+(hex_prefix+""=="NaN"?'':hex_prefix)+'/'+decodeURIComponent(obj_name);
+     var thumb_url='/riak/thumbnail/'+bucket_id+''+(hex_prefix+""=="NaN"?'':hex_prefix)+'/?object_key='+decodeURIComponent(obj_name);
      var pswp_width=v.width;
      var pswp_height=v.height;
      if(v.width+""!="NaN"){
@@ -232,7 +232,7 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
 
      var ve = $(lstEl).append('<div class="file-item clearfix" id="'+gid+'">'+input+'<div class="file-name" id="'+v.version+'">'+anchor+'</div><div class="file-size" data-bytes="'+v.bytes+'">'+fsize+'</div><div class="file-modified">'+modified+'</div><div class="file-preview-url">'+(v.is_locked==true?'<img src="'+static_root+'lock.png" title="'+v.lock_user_name+lock_tel+'"/>':'&nbsp;')+'</div><div class="file-url"><a href="'+url+'">link</a></div>'+button+'</div>');
      if(v.ct.substring(0, 5)=='image'||v.ct.substring(0, 5)=='video'){
-	$(ve).find('div#'+gid).find('.doc-icon').css('background-image', 'url("/riak/thumbnail/'+bucket_id+'/'+(hex_prefix+""=="NaN"?'':hex_prefix+'/')+decodeURIComponent(obj_name)+'?w=50&h=50")');
+	$(ve).find('div#'+gid).find('.doc-icon').css('background-image', 'url("/riak/thumbnail/'+bucket_id+'/'+(hex_prefix+""=="NaN"?'':hex_prefix+'/')+'?object_key='+decodeURIComponent(obj_name)+'&w=50&h=50")');
      }
     });
 }
@@ -241,7 +241,9 @@ function fetch_file_list(bucket_id, hex_prefix, msgEid, targetE, embedded){
   var root_uri=$('body').attr('data-root-uri');
   var bucket_id=$('body').attr('data-bucket-id');
 
-  var stack = $.stack({'errorElementID': msgEid, 'loadingMsgColor': 'black', 'rpc_url': root_uri+'list/'+bucket_id+'/', 'onSuccess': function(data, status){
+  var rpc_url = root_uri+'list/'+bucket_id+'/';
+  if(hex_prefix) rpc_url += hex_prefix;
+  var stack = $.stack({'errorElementID': msgEid, 'loadingMsgColor': 'black', 'rpc_url': rpc_url, 'onSuccess': function(data, status){
     $('#'+msgEid).empty();
     if(isMobile.any() || $(window).width()<670){
 	$('#shadow').empty().hide();
@@ -403,6 +405,8 @@ function refreshMenu(){
 	document.location = $(this).attr('href'); //'/'+surl;
     }else if(op=='menu-delete'){
 	var msg='file';
+        var rpc_url = root_uri+'list/'+bucket_id+'/';
+	if(hex_prefix) rpc_url += hex_prefix;
 	if($('#'+lid).hasClass('dir')) msg='directory';
 	$('#id-dialog-obj-rm-msg').empty().append(msg+' <br/><b>'+orig_name+'</b>?');
 	$(".confirm").show();
@@ -419,7 +423,7 @@ function refreshMenu(){
 	    if($('#'+lid).hasClass('dir')){
 		$('#'+lid).addClass('inactive');
 	    }
-	    var stack = $.stack({'errorElementID': 'id-status', 'rpc_url': root_uri+'list/'+bucket_id+'/', 'onSuccess': function(data){
+	    var stack = $.stack({'errorElementID': 'id-status', 'rpc_url': rpc_url, 'onSuccess': function(data){
 		$('#'+lid).remove();
 		$('#id-status').empty();
 	    }, 'onFailure': function(msg, xhr, e){
@@ -428,7 +432,7 @@ function refreshMenu(){
 		if(msg&&msg.hasOwnProperty('error')){
 		    $('#id-status').append('<span class="err">'+gettext(msg['error'])+'</span>');
 		} else {
-		    $('#id-status').append('<span class="err">Something\'s went horribly wrong</span>');
+		    $('#id-status').append('<span class="err">Something\'s went wrong</span>');
 		}
 	    }});
 	    var bits = decodeURIComponent($("#context-menu").attr('data-obj-n'));
@@ -636,6 +640,7 @@ function submit_rename(bucket_id, hex_prefix, from_object_key, is_dir){
     var root_uri=$('body').attr('data-root-uri');
     var dst_object_name = $('#id_object_name').val();
     var rpc_url = root_uri+'rename/'+bucket_id+'/';
+    if(hex_prefix) rpc_url += hex_prefix;
     var stack = $.stack({'errorElementID': 'id-status', 'rpc_url': rpc_url, 'onSuccess': function(data){
 	$('#id-status').empty();
 	$("#shadow").empty().css('z-index', 9).hide();
@@ -733,6 +738,7 @@ function submit_restore(bucket_id, hex_prefix, object_key, last_modified_utc){
 
     var root_uri=$('body').attr('data-root-uri');
     var rpc_url = root_uri+'action-log/'+bucket_id+'/';
+    if(hex_prefix) rpc_url += hex_prefix;
     var stack = $.stack({'errorElementID': 'id-status', 'rpc_url': rpc_url, 'onSuccess': function(data){
 	$('#id-status').empty();
 	$("#shadow").empty().css('z-index', 9).hide();
@@ -755,10 +761,12 @@ function lock_action(e, object_key){
  var bucket_id = $("body").attr("data-bucket-id");
  var root_uri=$('body').attr('data-root-uri');
  var hex_prefix=$("body").attr("data-hex-prefix");
+ var rpc_url = root_uri+'list/'+bucket_id+'/';
+ if(hex_prefix) rpc_url += hex_prefix;
  var stack = $.stack({
        'errorElementID': "id-status",
        'loadingMsgColor': 'black',
-       'rpc_url': root_uri+'list/'+bucket_id,
+       'rpc_url': rpc_url,
        'onSuccess': function(data, status){
            $('#id-dialog-loading-message-text').hide();
         }
@@ -770,6 +778,8 @@ function changelog_dialog(e, object_key, orig_name){
  var bucket_id = $("body").attr("data-bucket-id");
  var root_uri=$('body').attr('data-root-uri');
  var hex_prefix=$("body").attr("data-hex-prefix");
+ var rpc_url = root_uri+'action-log/'+bucket_id+'/';
+ if(hex_prefix) rpc_url += hex_prefix+'?object_key='+object_key;
  $("#dialog").dialog({
   title: '"'+object_key+'" changelog',
   autoOpen: false,
@@ -784,7 +794,7 @@ function changelog_dialog(e, object_key, orig_name){
     var stack = $.stack({
        'errorElementID': "id-dialog-loading-message-text",
        'loadingMsgColor': 'black',
-       'rpc_url': root_uri+'action-log/'+bucket_id+'/?prefix='+hex_prefix+'&object_key='+object_key,
+       'rpc_url': rpc_url,
        'onSuccess': function(data, status){
 	   if(data.length==0){
 	    $('#id-dialog-changelog-records').empty().append("<br/><br/><center><b>No changes were recorded yet.</b></center><br/><br/>");
@@ -908,9 +918,9 @@ function submit_dirname(hex_prefix){
  if(!vresult){
     return;
  }
- var stack = $.stack({'errorElementID': 'id-status',
-	'rpc_url': root_uri+'list/'+bucket_id+'/',
-	'onSuccess': function(data){
+ var rpc_url = root_uri+'list/'+bucket_id+'/';
+ if(hex_prefix) rpc_url += hex_prefix;
+ var stack = $.stack({'errorElementID': 'id-status', 'rpc_url': rpc_url, 'onSuccess': function(data){
       $("#shadow").empty().css('z-index', 9).hide();
       enable_menu_item('menu-createdir');
       $('#id_submit_createdir').attr("disabled", false);
@@ -962,7 +972,8 @@ function upload_files(bucket_id, hex_prefix, files, dom_ids){
   var dom_id = dom_ids.shift();
   var root_uri=$('body').attr('data-root-uri');
 
-  var stack = $.stack({'errorElementID': 'id-progress_'+dom_id, rpc_url: root_uri+'upload/'+bucket_id+'/', 'chunk_size': 2000000, 'onSuccess': function(data, status){
+  var rpc_url = root_uri+'upload/'+bucket_id+'/';
+  var stack = $.stack({'errorElementID': 'id-progress_'+dom_id, 'rpc_url': rpc_url, 'chunk_size': 2000000, 'onSuccess': function(data, status){
    if(data&&data.hasOwnProperty('error')){
       $('#id-progress_'+dom_id).empty().append('<span class="err">'+gettext(data['error'])+'</span>');
       return;
@@ -1213,6 +1224,8 @@ $('span.pushbutton').on('click', '#id-action-log', function(){
  var root_uri = $('body').attr('data-root-uri');
 
  var readable_prefix=unhex(hex_prefix);
+ var rpc_url = root_uri+'action-log/'+bucket_id+'/';
+ if(hex_prefix) rpc_url += hex_prefix;
  $("#dialog").dialog({
   title: 'History for Directory "'+(readable_prefix==""?"/":readable_prefix)+'"',
   autoOpen: false,
@@ -1227,7 +1240,7 @@ $('span.pushbutton').on('click', '#id-action-log', function(){
     var stack = $.stack({
        'errorElementID': "id-dialog-loading-message-text",
        'loadingMsgColor': 'black',
-       'rpc_url': root_uri+'action-log/'+bucket_id+'/',
+       'rpc_url': rpc_url,
        'onSuccess': function(data, status){
            $('#id-dialog-action-log-records').append('<div class="dry-data-container"><table class="dry-data-table" cellpadding="0" cellspacing="0"><thead><tr class="first-row"><th class="first-col" style="width:45%;">Event</th><th>&nbsp;</th><th class="last-col" style="width:20%;">User</th><th class="last-col" style="width:20%;">Date</th></tr></thead><tbody id="id-dialog-action-log-records-tbody"></tbody></table></div>');
            for(var i=0;i!=data.length;i++){

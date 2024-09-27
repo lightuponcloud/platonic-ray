@@ -12,7 +12,7 @@
 
 %% Conversions
 -export([to_integer/1, to_integer/2, to_float/1, to_float/2, to_number/1, to_list/1,
-	 to_binary/1, to_atom/1, to_boolean/1]).
+	 to_binary/1, to_binary/2, to_atom/1, to_boolean/1, bytes_to_string/1]).
 
 %% Ancillary
 -export([slugify_object_key/1, prefixed_object_key/2, alphanumeric/1,
@@ -24,6 +24,8 @@
 -include("storage.hrl").
 -include("general.hrl").
 -include("entities.hrl").
+
+-define(MULTI_BYTE_UNITS, [<<"KB">>, <<"MB">>, <<"GB">>, <<"TB">>, <<"PB">>, <<"EB">>, <<"ZB">>, <<"YB">>]).
 
 %%
 %% Extracts letters and digits from binary.
@@ -242,6 +244,11 @@ to_binary(X) when erlang:is_list(X) ->
     erlang:iolist_to_binary(X);
 to_binary(X) when erlang:is_binary(X) ->
     X.
+
+to_binary(PositiveNumber, Decimals) when erlang:is_integer(PositiveNumber) andalso erlang:is_integer(Decimals) ->
+    to_binary(erlang:float(PositiveNumber), Decimals);
+to_binary(PositiveNumber, Decimals) when erlang:is_float(PositiveNumber) andalso erlang:is_integer(Decimals) ->
+    erlang:float_to_binary(PositiveNumber, [{decimals, Decimals}]).
 
 -spec to_boolean(binary() | string() | atom()) ->
                         boolean().
@@ -681,3 +688,69 @@ get_temp_path(App) ->
     TempPath = proplists:get_value(temp_path, Config),
 
     filename:join([TempPath, crypto_utils:random_string()]).
+
+
+-spec split_thousands(binary()) -> [<<_:24>>].
+split_thousands(Bin) ->
+    split_thousands(Bin, []).
+
+-spec split_thousands(binary(), [<<_:24>>]) -> [<<_:24>>].
+split_thousands(<<>>, List) ->
+    lists:reverse(List);
+split_thousands(<<B:3/binary, Rest/binary>>, List) ->
+    split_thousands(Rest, [B | List]).
+
+
+-spec format_bytes(integer()) -> string().
+
+format_bytes(Number) when erlang:is_integer(Number) orelse erlang:is_float(Number) ->
+    PositiveNumber = case Number < 0 of
+        false -> Number;
+        true  -> erlang:abs(Number)
+    end,
+    BinNum = utils:to_binary(PositiveNumber, 1),
+    {IntegerPart, DecimalPart} = case binary:split(BinNum, <<".">>, [global]) of
+        [I, D] -> {I, D}; % ex: <<"12.345">> -> [<<"12">>, <<"345">>]
+        [I] -> {I, <<>>} % ex: <<"12345">> -> [<<"12345">>] (when Precision < 1)
+    end,
+    HeadSize = erlang:byte_size(IntegerPart) rem 3,
+    <<Head:HeadSize/binary, IntRest/binary>> = IntegerPart, % ex: <<"12", "345678">> = <<"12345678">>
+    ThousandParts = split_thousands(IntRest), % ex: <<"345678">> -> [<<"345">>, <<678>>]
+    AllIntegerParts = case HeadSize > 0 of
+        true  -> [Head|ThousandParts];
+        false -> ThousandParts
+    end,
+    % Join with thousands separator
+    FormattedIntegerPart = utils:join_binary_with_separator(AllIntegerParts, <<",">>),
+    PositiveFormattedNumber = case DecimalPart of
+        <<>> ->
+            FormattedIntegerPart;
+        _    ->
+            DecimalPoint = <<".">>,
+            <<FormattedIntegerPart/binary, DecimalPoint/binary, DecimalPart/binary>>
+    end,
+    % Insert "-" before number if negative
+    FormattedNumber1 = case Number < 0 of
+        false -> PositiveFormattedNumber;
+        true  -> <<"-", PositiveFormattedNumber/binary>>
+    end,
+    FormattedNumber1.
+
+
+bytes_to_string(Size) ->
+    bytes_to_string(Size, 1).
+
+bytes_to_string(Size0, N) ->
+    Power = math:pow(2, 10),
+    Size1 = Size0/Power,
+    case Size1 < 1024 of
+	true -> 
+	    Number = format_bytes(Size1),
+	    Units =
+		case N > length(?MULTI_BYTE_UNITS) of
+		    true -> lists:nth(length(?MULTI_BYTE_UNITS), ?MULTI_BYTE_UNITS);
+		    false -> lists:nth(N, ?MULTI_BYTE_UNITS)
+		end,
+	    << Number/binary, <<" ">>/binary, Units/binary >>;
+	false -> bytes_to_string(Size1, N+1)
+    end.

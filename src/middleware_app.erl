@@ -14,6 +14,7 @@ start(_Type, _Args) ->
     Dispatch = cowboy_router:compile([
 	{'_', [
 	    {"/riak/list/[...]", list_handler, []},
+	    {"/riak/download/[...]", download_handler, []},
 	    {"/riak/thumbnail/[...]", img_scale_handler, []},
 	    {"/riak/video/[:bucket_id]/", video_handler, []},
 	    {"/riak/version/[:bucket_id]/", version_handler, []},
@@ -21,13 +22,11 @@ start(_Type, _Args) ->
 	    {"/riak/upload/[:bucket_id]/", upload_handler, []},
 	    {"/riak/upload/[:bucket_id]/[:upload_id]/[:part_num]/", upload_handler, []},
 
-	    {"/riak/download/[...]", download_handler, []},
-
 	    {"/riak/copy/[:src_bucket_id]/", copy_handler, []},
 	    {"/riak/move/[:src_bucket_id]/", move_handler, []},
-	    {"/riak/rename/[:bucket_id]/", rename_handler, []},
+	    {"/riak/rename/[...]/", rename_handler, []},
 
-	    {"/riak/action-log/[:bucket_id]/", action_log, []},
+	    {"/riak/action-log/[...]/", action_log, []},
 	    {"/riak-search/", search_handler, []},
 
 	    {"/riak/admin/users/", admin_users_handler, []},

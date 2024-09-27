@@ -191,8 +191,7 @@ to_json(Req0, State) ->
     BucketId = proplists:get_value(bucket_id, State),
     Prefix = proplists:get_value(prefix, State),
 
-    ParsedQs = cowboy_req:parse_qs(Req0),
-    case proplists:get_value(<<"object_key">>, ParsedQs) of
+    case proplists:get_value(object_key, State) of
 	undefined -> get_action_log(Req0, State, BucketId, Prefix, undefined);
 	ObjectKey0 ->
 	    ObjectKey1 = unicode:characters_to_list(ObjectKey0),
@@ -353,45 +352,25 @@ handle_post(Req0, State0) ->
 %% ( called after 'allowed_methods()' )
 %%
 forbidden(Req0, _State) ->
-    case utils:get_token(Req0) of
-	undefined -> js_handler:forbidden(Req0, 28, stop);
-	Token ->
-	    %% Extracts token from request headers and looks it up in "security" bucket
-	    case login_handler:check_token(Token) of
-		not_found -> js_handler:forbidden(Req0, 28, stop);
-		expired -> js_handler:forbidden(Req0, 38, stop);
-		User -> {false, Req0, [{user, User}]}
-	    end
+    case download_handler:has_access(Req0) of
+	{error, Number} -> js_handler:unauthorized(Req0, Number, stop);
+	{BucketId, Prefix, ObjectKey, ParsedQs, User} ->
+	    {false, Req0, [
+		{bucket_id, BucketId},
+		{prefix, Prefix},
+		{object_key, ObjectKey},
+		{parsed_qs, ParsedQs},
+		{user, User}
+	    ]}
     end.
+
 
 %%
 %% Validates request parameters
 %% ( called after 'content_types_provided()' )
 %%
 resource_exists(Req0, State) ->
-    BucketId = erlang:binary_to_list(cowboy_req:binding(bucket_id, Req0)),
-    User = proplists:get_value(user, State),
-    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
-	true ->
-	    UserBelongsToGroup =
-		lists:any(
-		    fun(Group) ->
-			utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id)
-		    end, User#user.groups),
-	    case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, User#user.tenant_id) of
-		false ->{false, Req0, []};
-		true ->
-		    ParsedQs = cowboy_req:parse_qs(Req0),
-		    case list_handler:validate_prefix(BucketId, proplists:get_value(<<"prefix">>, ParsedQs)) of
-			{error, Number} ->
-			    Req1 = cowboy_req:set_resp_body(jsx:encode([{error, Number}]), Req0),
-			    {false, Req1, []};
-			Prefix ->
-			    {true, Req0, [{user, User}, {bucket_id, BucketId}, {prefix, Prefix}]}
-		    end
-	    end;
-	false -> js_handler:forbidden(Req0, 7, stop)
-    end.
+    {true, Req0, State}.
 
 previously_existed(Req0, _State) ->
     {false, Req0, []}.

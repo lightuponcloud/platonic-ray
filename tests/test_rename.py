@@ -189,6 +189,7 @@ class RenameTest(TestClient):
 
         prefixed_action_log = "{}{}".format(encoded_random_prefix, ACTION_LOG_FILENAME)
         action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=prefixed_action_log)
+        import pdb;pdb.set_trace()
         self.assertEqual(len(action_log), 2)
         rename_dir_record = [i for i in action_log if i["action"] == "rename"][0]
         self.assertEqual(rename_dir_record["orig_name"], random_new_name)

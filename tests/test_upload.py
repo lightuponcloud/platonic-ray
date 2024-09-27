@@ -17,6 +17,7 @@ from client_base import (
     FILE_UPLOAD_CHUNK_SIZE,
     UPLOADS_BUCKET_NAME,
     ACTION_LOG_FILENAME,
+    REGION,
     USERNAME_1,
     PASSWORD_1,
     configure_boto3,
@@ -363,7 +364,7 @@ class UploadTest(TestClient):
         self.assertEqual(result[0]["orig_name"], fn)
         self.assertTrue(("guid" in result[0]))
         self.assertEqual(result[0]["action"], "upload")
-        self.assertEqual(result[0]["details"], "Uploaded \"20180111_165127.jpg\" ( 2773205 B )")
+        self.assertEqual(result[0]["details"], "Uploaded \"20180111_165127.jpg\" ( 2.6 MB )")
         self.assertTrue(("user_id" in result[0]))
         self.assertTrue(("user_name" in result[0]))
         self.assertTrue(("tenant_name" in result[0]))
@@ -382,7 +383,7 @@ class UploadTest(TestClient):
         self.assertTrue(("guid" in rec))
         self.assertEqual(rec["is_dir"], False)
         self.assertEqual(rec["action"], "upload")
-        self.assertEqual(rec["details"], 'Uploaded "{}" ( 2773205 B )'.format(fn))
+        self.assertEqual(rec["details"], 'Uploaded "{}" ( 2.6 MB )'.format(fn))
         self.assertTrue(("user_id" in rec))
         self.assertTrue(("user_name" in rec))
         self.assertTrue(("tenant_name" in rec))
@@ -1018,19 +1019,26 @@ class UploadTest(TestClient):
             api_key = tenant[0]['api_key']
 
             path = "{}/{}".format(TEST_BUCKET_3, "readme.md")
-            signature = self.calculate_url_signature("get", path, "", api_key)
+            signature = self.client.calculate_url_signature(REGION, "get", path, "", api_key)
 
-            url = "{}/riak/download/{}/{}?signature={}".format(BASE_URL, TEST_BUCKET_3, "readme.md", signature)
+            url = "{}/riak/download/{}/?object_key={}&signature={}".format(BASE_URL, TEST_BUCKET_3, "readme.md", signature)
             response = requests.get(url, timeout=5)
             self.assertEqual(fd.read(), response.content)
 
             # make sure request fails with incorrect signature
 
             path = "{}/{}".format(TEST_BUCKET_3, "readme.mf")
-            signature = self.calculate_url_signature("get", path, "", api_key)
-            url = "{}/riak/download/{}/{}?signature={}".format(BASE_URL, TEST_BUCKET_3, "readme.md", signature)
+            signature = self.client.calculate_url_signature(REGION, "get", path, "", api_key)
+            url = "{}/riak/download/{}/?object_key={}&signature={}".format(BASE_URL, TEST_BUCKET_3, "readme.md", signature)
             response = requests.get(url, timeout=5)
             self.assertEqual(response.status_code, 403)
+
+            # negative test case: no object key specified
+
+            signature = self.client.calculate_url_signature(REGION, "get", TEST_BUCKET_3, "", api_key)
+            url = "{}/riak/download/{}/?signature={}".format(BASE_URL, TEST_BUCKET_3, signature)
+            response = requests.get(url, timeout=5)
+            self.assertEqual(response.status_code, 404)
 
 
 if __name__ == "__main__":

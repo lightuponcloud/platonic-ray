@@ -5,12 +5,14 @@ https://github.com/lightuponcloud/dubstack
 """
 import os
 import hashlib
-import requests
-from base64 import b64encode, b64decode
+import hmac
 import json
 import string
 import random
 import codecs
+
+import requests
+from base64 import b64encode, b64decode
 
 from dvvset import DVVSet
 
@@ -67,7 +69,7 @@ class LightClient:
         """
         creds = {"login": username, "password": password}
         url = "{}riak/login/".format(self.url)
-        response = requests.post(url, data=json.dumps(creds),
+        response = requests.post(url, data=json.dumps(creds), timeout=2,
                                  headers={"content-type": "application/json"})
         data = response.json()
         self.token = data["token"]
@@ -235,8 +237,13 @@ class LightClient:
         Code : 403 Forbidden When user has no access to bucket
         Code : 404 Not Found When prefix not found
         """
+        if prefix:
+            if not prefix.endswith("/"):
+                prefix += "/"
+            url = "{}riak/list/{}/{}".format(self.url, bucket_id, prefix)
+        else:
+            url = "{}riak/list/{}/".format(self.url, bucket_id)
 
-        url = "{}riak/list/{}/?prefix={}".format(self.url, bucket_id, prefix)
         headers = {
             "accept": "application/json",
             "authorization": "Token {}".format(self.token),
@@ -264,7 +271,6 @@ class LightClient:
         Success Response
         Code : 200 OK
         """
-
         url = "{}riak/list/{}/".format(self.url, bucket_id)
         data = {"object_keys": object_keys, "prefix": prefix}
         headers = {
@@ -272,6 +278,33 @@ class LightClient:
             "authorization": "Token {}".format(self.token),
         }
         return requests.delete(url, data=json.dumps(data), headers=headers)
+
+    def undelete(self, bucket_id, object_keys: list, prefix: str = None):
+        """
+        DELETE /riak/list/[:bucket_id]
+        Used to restore files and pseudo-directories.
+
+        Parameters
+        "object_keys": ["string", "string", ..] - required
+        "prefix": "string" - optional
+
+        In order to restore pseudo-directory, its name should be encoded as hex value and passed as "object_key" with "/" at the end.
+        For example:
+        "object_keys": ["64656d6f/", "something.jpg"]
+        "prefix": "74657374/"
+
+        Auth required : YES
+
+        Success Response
+        Code : 200 OK
+        """
+        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        data = {"object_keys": object_keys, "prefix": prefix}
+        headers = {
+            "accept": "application/json",
+            "authorization": "Token {}".format(self.token),
+        }
+        return requests.patch(url, data=json.dumps(data), headers=headers)
 
     def create_pseudo_directory(self, bucket_id, name: str, prefix: str = ""):
         """
@@ -437,6 +470,21 @@ class LightClient:
             "content-type": "application/json",
             "authorization": "Token {}".format(self.token),
         }
-        url = "{}riak/action-log/{}/".format(self.url, bucket_id)
+        if prefix:
+            if not prefix.endswith("/"):
+                prefix += "/"
+            url = "{}riak/action-log/{}/{}".format(self.url, bucket_id, prefix)
+        else:
+            url = "{}riak/action-log/{}/".format(self.url, bucket_id)
         response = requests.get(url, headers=headers)
         return response
+
+    def calculate_url_signature(self, region, method, path, qs, api_key):
+        canonical_request = "{}\n{}\n{}".format(method, path, qs)
+        canonical_request_hash = hashlib.sha256(canonical_request.encode()).hexdigest()
+        string_to_sign = "HMAC-SHA256\n{}/s3/\n{}".format(region, canonical_request_hash)
+
+        region_key = hmac.new("LightUp{}".format(api_key).encode(), region.encode(), hashlib.sha256).digest()
+        signing_key = hmac.new(region_key, b"s3", hashlib.sha256).digest()
+
+        return hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()

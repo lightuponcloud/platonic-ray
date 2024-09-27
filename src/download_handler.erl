@@ -15,6 +15,7 @@
 %% If authenticated, check if user has access to provided bucket name, then check if object exists.
 %% Returns object's real path.
 %%
+get_object_metadata(_BucketId, _Prefix, undefined) -> not_found;
 get_object_metadata(BucketId, Prefix, ObjectKey) ->
     %% Check if object exist
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
@@ -97,19 +98,21 @@ has_access(Req0) ->
 	    <<>> -> undefined;
 	    BV -> erlang:binary_to_list(BV)
 	end,
-    PrefixedObjectKey =
+    Prefix =
 	case length(PathInfo) < 2 of
 	    true -> undefined;
 	    false ->
-		%% prefixed object key should go just after bucket id
+		%% prefix should go just after bucket id
 		erlang:binary_to_list(utils:join_binary_with_separator(lists:nthtail(1, PathInfo), <<"/">>))
 	end,
-    {Prefix, ObjectKey} = 
-	case PrefixedObjectKey of
-	    undefined -> {undefined, undefined};
-	    _ -> {utils:dirname(PrefixedObjectKey), filename:basename(PrefixedObjectKey)}
-	end,
     ParsedQs = cowboy_req:parse_qs(Req0),
+    ObjectKey =
+	case proplists:get_value(<<"object_key">>, ParsedQs) of
+	    undefined -> undefined;
+	    null -> undefined;
+	    <<>> -> undefined;
+	    K -> unicode:characters_to_list(K)
+	end,
     PresentedSignature =
 	case proplists:get_value(<<"signature">>, ParsedQs) of
 	    undefined -> undefined;

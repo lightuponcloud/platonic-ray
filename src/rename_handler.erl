@@ -189,7 +189,7 @@ copy_delete(BucketId, PrefixedSrcDirectoryName, PrefixedDstDirectoryName, Prefix
     end.
 
 %%
-%% Rename can be performed within one bucket only for now.
+%% Rename moves nested objects to new pseudo-directory within the same bucket.
 %%
 %% Prefix0 -- current pseudo-directory
 %%
@@ -495,35 +495,24 @@ allowed_methods(Req, State) ->
 
 %%
 %% Checks if provided token is correct.
+%% Extracts token from request headers and looks it up in "security" bucket.
 %% ( called after 'allowed_methods()' )
 %%
 is_authorized(Req0, _State) ->
-    case utils:get_token(Req0) of
-	undefined -> js_handler:unauthorized(Req0, 28, stop);
-	Token -> login_handler:get_user_or_error(Req0, Token)
+    case download_handler:has_access(Req0) of
+	{error, Number} -> js_handler:unauthorized(Req0, Number, stop);
+	{BucketId, Prefix, ObjectKey, ParsedQs, User} ->
+	    {true, Req0, [
+		{bucket_id, BucketId},
+		{prefix, Prefix},
+		{object_key, ObjectKey},
+		{parsed_qs, ParsedQs},
+		{user, User}
+	    ]}
     end.
 
 %%
-%% Checks if user has access
 %% ( called after 'is_authorized()' )
 %%
-forbidden(Req0, User) ->
-    BucketId =
-	case cowboy_req:binding(bucket_id, Req0) of
-	    undefined -> undefined;
-	    BV -> erlang:binary_to_list(BV)
-	end,
-    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
-	true ->
-	    UserBelongsToGroup = lists:any(
-		fun(Group) ->
-		    utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id)
-		end, User#user.groups),
-	    case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, User#user.tenant_id) of
-		false ->
-		    PUser = admin_users_handler:user_to_proplist(User),
-		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser), stop);
-		true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]}
-	    end;
-	false -> js_handler:forbidden(Req0, 7, stop)
-    end.
+forbidden(Req0, State) ->
+    {false, Req0, State}.

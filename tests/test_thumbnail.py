@@ -36,7 +36,7 @@ class UploadTest(TestClient):
 
         fn = "246x0w.png"
         object_key = "20180111_165127.jpg"
-        url = "{}/riak/thumbnail/{}/{}".format(BASE_URL, TEST_BUCKET_1, object_key)
+        url = "{}/riak/thumbnail/{}/?object_key={}".format(BASE_URL, TEST_BUCKET_1, object_key)
         # t1 = time.time()
         result = self.upload_thumbnail(url, fn, object_key, form_data={"width": 2560, "height":1600})
 
@@ -61,7 +61,7 @@ class UploadTest(TestClient):
 
         fn = "246x0w.png"
         object_key = "20180111_165127.jpg"
-        url = "{}/riak/thumbnail/{}/{}/{}".format(BASE_URL, TEST_BUCKET_1, hex_prefix, object_key)
+        url = "{}/riak/thumbnail/{}/{}/?object_key={}".format(BASE_URL, TEST_BUCKET_1, hex_prefix, object_key)
         t1 = time.time()
         form_data = {
             "width": 2560,

@@ -255,7 +255,7 @@ add_action_log_record(State) ->
 
     UnicodeObjectKey = unicode:characters_to_list(OrigName),
     Summary = lists:flatten([["Uploaded \""], [UnicodeObjectKey],
-			    [io_lib:format("\" ( ~p B )", [TotalBytes])]]),
+			     [io_lib:format("\" ( ~s )", [utils:bytes_to_string(TotalBytes)])]]),
     T1 = utils:timestamp()/1000,
     ActionLogRecord = #action_log_record{
 	key = ObjectKey,
