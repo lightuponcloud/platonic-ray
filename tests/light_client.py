@@ -220,7 +220,7 @@ class LightClient:
                     break
         return result
 
-    def get_list(self, bucket_id, prefix: str = ""):
+    def get_list(self, bucket_id, prefix: str = "", show_deleted=False):
         """
         GET /riak/list/[:bucket_id]
         Method uses this API endpoint to get the list of objects. It returns contents of cached index, containing list
@@ -243,6 +243,9 @@ class LightClient:
             url = "{}riak/list/{}/{}".format(self.url, bucket_id, prefix)
         else:
             url = "{}riak/list/{}/".format(self.url, bucket_id)
+
+        if show_deleted:
+            url += "?show-deleted=1"
 
         headers = {
             "accept": "application/json",

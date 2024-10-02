@@ -326,22 +326,66 @@ patch_operation(Req0, undelete, BucketId, Prefix, User, ObjectsList) ->
 %%
 %% Restore pseudo-directory.
 %%
-undelete(BucketId, Prefix, [], ActionLogRecord0) ->
-    DirPath = utils:dirname(Prefix),
-    DstDirectoryName0 = utils:unhex(erlang:list_to_binary(filename:basename(Prefix))),
-    %% remove -deleted-timestamp suffix
-    DstDirectoryName1 = lists:nth(1, string:tokens(
-	erlang:binary_to_list(filename:basename(DstDirectoryName0)), "-deleted-")),
+undelete_pseudo_directory(BucketId, Prefix, HexDirectoryName, ActionLogRecord0) ->
+    DstDirectoryName0 = utils:unhex(erlang:list_to_binary(HexDirectoryName)),
+    %% Remove -deleted-timestamp suffix
+    DstDirectoryName1 = lists:nth(1, binary:split(DstDirectoryName0, <<"-deleted-">>, [global])),
+    PrefixedSrcDirectoryName = utils:prefixed_object_key(Prefix, HexDirectoryName),
 
-    Result = rename_handler:rename_pseudo_directory(BucketId, DirPath, Prefix,
+    Result = rename_handler:rename_pseudo_directory(BucketId, Prefix, PrefixedSrcDirectoryName,
 	unicode:characters_to_binary(DstDirectoryName1), ActionLogRecord0),
 
     case Result of
 	lock -> lock;
 	{accepted, _} -> undefined; %% Rename is not complete, as Riak CS was busy.
-	{error, _} -> undefined; %% Client should retry attempt to delete the directory
-	{dir_name, _} -> ok
-    end;
+	{error, Reason} -> {error, Reason}; %% Client should retry attempt to delete the directory
+	{dir_name, renamed, DirectoryName} -> DirectoryName
+    end.
+
+%%
+%% Restore object.
+%%
+undelete_object(BucketId, Prefix, ObjectKey) ->
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
+    case s3_api:head_object(BucketId, PrefixedObjectKey) of
+	{error, Reason} ->
+	    lager:error("[list_handler] head_object failed ~p/~p: ~p", [BucketId, PrefixedObjectKey, Reason]),
+	    {error, Reason};
+	not_found -> {error, not_found};
+	Metadata0 ->
+	    Meta = parse_object_record(Metadata0, [{is_deleted, "false"}]),
+	    OrigName0 = proplists:get_value("orig-filename", Meta),
+	    OrigName1 = utils:unhex(erlang:list_to_binary(OrigName0)),
+	    Response = s3_api:put_object(BucketId, Prefix, ObjectKey, <<>>, [{meta, Meta}]),
+	    case Response of
+		ok ->
+		    %% Update SQLite db
+		    Obj = #object{
+			key = ObjectKey,
+			orig_name = OrigName1,
+			bytes = proplists:get_value("bytes", Meta),
+			guid = proplists:get_value("guid", Meta),
+			md5 = proplists:get_value("md5", Meta),
+			version = proplists:get_value("version", Meta),
+			upload_time = proplists:get_value("upload-time", Meta),
+			is_deleted = proplists:get_value("is-deleted", Meta),
+			author_id = proplists:get_value("author-id", Meta),
+			author_name = proplists:get_value("author-name", Meta),
+			author_tel = proplists:get_value("author-tel", Meta),
+			is_locked = false,
+			lock_user_id = "",
+			lock_user_name = "",
+			lock_user_tel = "",
+			lock_modified_utc = proplists:get_value("lock-modified-utc", Meta)
+		    },
+		    sqlite_server:add_object(BucketId, Prefix, Obj),
+		    {ObjectKey, OrigName1};
+		{error, Reason} ->
+		    lager:error("[list_handler] Can't put object: ~p/~p/~p: ~p",
+				[BucketId, Prefix, ObjectKey, Reason]),
+		    {error, Reason}
+	    end
+    end.
 
 %%
 %% Restores list of objects
@@ -350,53 +394,27 @@ undelete(BucketId, Prefix, ObjectKeys, ActionLogRecord0) ->
     T0 = utils:timestamp(),
     RestoredObjectKeys = lists:filtermap(
 	fun(ObjectKey) ->
-	    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
-	    case s3_api:head_object(BucketId, PrefixedObjectKey) of
-		{error, Reason} ->
-		    lager:error("[list_handler] head_object failed ~p/~p: ~p", [BucketId, PrefixedObjectKey, Reason]),
-		    false;
-		not_found -> false;
-		Metadata0 ->
-		    Meta = parse_object_record(Metadata0, [{is_deleted, "false"}]),
-		    OrigName0 = proplists:get_value("orig-filename", Meta),
-		    OrigName1 = utils:unhex(erlang:list_to_binary(OrigName0)),
-		    Response = s3_api:put_object(BucketId, Prefix, ObjectKey, <<>>, [{meta, Meta}]),
-		    case Response of
-			ok ->
-			    %% Update SQLite db
-			    Obj = #object{
-				key = ObjectKey,
-				orig_name = OrigName1,
-				bytes = proplists:get_value("bytes", Meta),
-				guid = proplists:get_value("guid", Meta),
-				md5 = proplists:get_value("md5", Meta),
-				version = proplists:get_value("version", Meta),
-				upload_time = proplists:get_value("upload-time", Meta),
-				is_deleted = proplists:get_value("is-deleted", Meta),
-				author_id = proplists:get_value("author-id", Meta),
-				author_name = proplists:get_value("author-name", Meta),
-				author_tel = proplists:get_value("author-tel", Meta),
-				is_locked = false,
-				lock_user_id = "",
-				lock_user_name = "",
-				lock_user_tel = "",
-				lock_modified_utc = proplists:get_value("lock-modified-utc", Meta)
-			    },
-			    sqlite_server:add_object(BucketId, Prefix, Obj),
-			    {true, {ObjectKey, OrigName1}};
-			{error, Reason} ->
-			    lager:error("[list_handler] Can't put object: ~p/~p/~p: ~p",
-					[BucketId, Prefix, ObjectKey, Reason]),
-			    error
+	    case utils:ends_with(ObjectKey, <<"/">>) of
+		true ->
+		    case undelete_pseudo_directory(BucketId, Prefix, ObjectKey, ActionLogRecord0) of
+			lock -> false;
+			undefined -> false;
+			{error, _Reason} -> false;
+			DirName -> {true, {undefined, DirName}}
+		    end;
+		false ->
+		    case undelete_object(BucketId, Prefix, ObjectKey) of
+			{error, _Reason} -> false;
+			{ObjectKey, OrigName} -> {true, {ObjectKey, OrigName}}
 		    end
 	    end
 	end, ObjectKeys),
 
     T1 = utils:timestamp(),
-    OrigNames = utils:join_list_with_separator([element(2, I) || I <- RestoredObjectKeys], " ", []),
-    UserName = unicode:characters_to_list(utils:unhex(erlang:list_to_binary(ActionLogRecord0#action_log_record.user_name))),
+    OrigNames = utils:join_binary_with_separator([element(2, I) || I <- RestoredObjectKeys], <<" ">>),
+    UserName = utils:unhex(erlang:list_to_binary(ActionLogRecord0#action_log_record.user_name)),
     ActionLogRecord1 = ActionLogRecord0#action_log_record{
-	details = io_lib:format("Restored by ~p: ~p", [UserName, OrigNames]),
+	details = << "Restored by \"", UserName/binary, "\": ", OrigNames/binary >>,
 	duration = io_lib:format("~.2f", [utils:to_float(T1-T0)/1000]),
 	is_locked = false,
 	lock_user_id = undefined,
@@ -578,6 +596,7 @@ is_locked_for_user(BucketId, Prefix, ObjectKey, UserId)
 -spec prefix_lowercase(binary()|undefined) -> list()|undefined.
 
 prefix_lowercase(<<>>) -> undefined;
+prefix_lowercase(null) -> undefined;
 prefix_lowercase(undefined) -> undefined;
 prefix_lowercase(Prefix0) when erlang:is_binary(Prefix0) ->
     prefix_lowercase(erlang:binary_to_list(Prefix0));
@@ -634,11 +653,10 @@ validate_prefix(Prefix0) ->
     end.
 
 validate_directory_name(_BucketId, _Prefix, null) -> {error, 12};
-validate_directory_name(_BucketId, null, _DirectoryName0) -> {error, 36};
 validate_directory_name(_BucketId, _Prefix, undefined) -> {error, 12};
 validate_directory_name(BucketId, Prefix0, DirectoryName0)
 	when erlang:is_list(BucketId),
-	     erlang:is_binary(Prefix0) orelse Prefix0 =:= undefined,
+	     erlang:is_binary(Prefix0) orelse Prefix0 =:= undefined orelse Prefix0 =:= null,
 	     erlang:is_binary(DirectoryName0) ->
     case utils:is_valid_object_key(DirectoryName0) of
 	false -> {error, 12};
@@ -820,7 +838,7 @@ delete_pseudo_directory(BucketId, Prefix, HexDirName, User, ActionLogRecord0, Ti
     %%     - leave record in action log
     DstDirectoryName0 = utils:unhex(HexDirName),
     DstDirectoryName1 = unicode:characters_to_list(DstDirectoryName0),
-
+    T0 = utils:timestamp(),
     case string:str(DstDirectoryName1, "-deleted-") of
 	0 ->
 	    %% "-deleted-" string was not found
@@ -838,9 +856,17 @@ delete_pseudo_directory(BucketId, Prefix, HexDirName, User, ActionLogRecord0, Ti
 			lock -> lock;
 			{accepted, _} -> undefined; %% Rename is not complete, as Riak CS was busy.
 			{error, _} -> undefined; %% Client should retry attempt to delete the directory
-			{dir_name, _} ->
-			    sqlite_server:delete_pseudo_directory(BucketId, Prefix,
-				DstDirectoryName0, User#user.id),
+			{dir_name, deleted, _} ->
+			    sqlite_server:delete_pseudo_directory(BucketId, Prefix, DstDirectoryName0, User#user.id),
+
+			    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName1, ["/\"."]]),
+			    T1 = utils:timestamp(), %% measure time of request
+			    ActionLogRecord1 = ActionLogRecord0#action_log_record{
+				orig_name=DstDirectoryName1,
+				details=Summary0,
+				duration=io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+			    },
+			    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord1),
 			    HexDirName
 		    end
 	    end;

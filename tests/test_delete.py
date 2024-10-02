@@ -235,30 +235,42 @@ class DeleteTest(TestClient):
         action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
         self.assertTrue((len(action_log) > 7)) # 2 create dirs + 3 deletes + between 2 and 10 create dirs
 
-    def test_delete_undelete_files_in_root(self):
+    def test_delete_undelete_files_in_root(self, prefix=None):
         """
-        # Delete files from root: one and many
+        # Restore deleted files in root dir: one and many
         """
-        # upload 1 file
+        # Upload 1 file
         fn = "20180111_165127.jpg"
-        result = self.client.upload(TEST_BUCKET_1, fn)
+        result = self.client.upload(TEST_BUCKET_1, fn, prefix=prefix)
         self.assertEqual(result['orig_name'], fn)
 
-        # delete 1 uploaded file
+        # Delete 1 uploaded file
         object_keys = [fn]
-        response = self.client.delete(TEST_BUCKET_1, object_keys)
+        response = self.client.delete(TEST_BUCKET_1, object_keys, prefix=prefix)
         result = response.json()
         self.assertEqual(result, [fn])
 
-        response = self.client.patch(TEST_BUCKET_1, "undelete", object_keys)
+        response = self.client.get_list(TEST_BUCKET_1, prefix=prefix)
+        result = response.json()
+
+        # Make sure file is marked as deleted
+        for filename in [fn]:
+            for obj in result['list']:
+                if filename == obj['orig_name']:
+                    self.assertEqual(obj['is_deleted'], True)
+
+        response = self.client.patch(TEST_BUCKET_1, "undelete", object_keys, prefix=prefix)
         self.assertEqual(response.status_code, 204)
 
         time.sleep(2)
 
+        # Check DB
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
-        self.assertEqual(len(result), 1)
-        rec = result[0]
-        self.assertEqual(rec['prefix'], '')
+        rec = [i for i in result if i['key'] == fn][0]
+        expected_prefix = ''
+        if prefix:
+            expected_prefix = prefix
+        self.assertEqual(rec['prefix'], expected_prefix)
         self.assertEqual(rec['key'], fn)
         self.assertEqual(rec['orig_name'], fn)
         self.assertEqual(rec['is_dir'], 0)
@@ -283,17 +295,110 @@ class DeleteTest(TestClient):
         self.assertTrue(('md5' in rec))
         self.assertTrue(rec['md5'])
 
-
-        response = self.client.get_list(TEST_BUCKET_1)
+        response = self.client.get_list(TEST_BUCKET_1, prefix=prefix)
         result = response.json()
 
+        # Make sure file is restored
         for filename in [fn]:
             for obj in result['list']:
                 if filename == obj['orig_name']:
                     self.assertEqual(obj['is_deleted'], False)
 
-        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
+        # Check action log
+        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key="{}{}".format((prefix or ''), ACTION_LOG_FILENAME))
+
         self.assertEqual(len(action_log), 3) # 1. uploaded 2. deleted 3. restored
+
+        item = [i for i in action_log if i['action'] == 'undelete'][0]
+        self.assertEqual(item['details'], 'Restored by "integration1": "{}"'.format(fn))
+        self.assertEqual(item['is_dir'], 0)
+        self.assertTrue(item['user_id'])
+        self.assertTrue(item['user_name'])
+        self.assertTrue(item['tenant_name'])
+        self.assertTrue(item['timestamp'])
+        self.assertTrue(item['duration'])
+        self.assertEqual(item['version'], '')
+        self.assertEqual(item['is_locked'], 0)
+        self.assertEqual(item['lock_user_id'], None)
+        self.assertEqual(item['lock_user_name'], None)
+        self.assertEqual(item['lock_user_tel'], None)
+        self.assertEqual(item['lock_modified_utc'], None)
+
+    def test_delete_undelete_files_in_prefix(self):
+        # 1. create a directory
+        dir_name1 = generate_random_name()
+        hex_dir_name1 = encode_to_hex(dir_name1)
+        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name1)
+        self.assertEqual(response.status_code, 204)
+
+        self.test_delete_undelete_files_in_root(prefix=hex_dir_name1)
+
+    def test_delete_undelete_directories_in_root(self, prefix=None):
+        """
+        # Restore deleted files in root dir: one and many
+        """
+        # 1. create a directory
+        dir_name1 = generate_random_name()
+        hex_dir_name1 = encode_to_hex(dir_name1)
+        response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name1, prefix=prefix)
+        self.assertEqual(response.status_code, 204)
+
+        # Upload 1 file to directory
+        fn = "20180111_165127.jpg"
+        result = self.client.upload(TEST_BUCKET_1, fn, prefix="{}{}".format((prefix or ''), hex_dir_name1))
+        self.assertEqual(result['orig_name'], fn)
+
+        # Delete directory
+        object_keys = [hex_dir_name1]
+        response = self.client.delete(TEST_BUCKET_1, object_keys)
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual(result, [hex_dir_name1])
+
+        response = self.client.get_list(TEST_BUCKET_1, prefix=prefix, show_deleted=True)
+        result = response.json()
+
+        # Make sure directory is marked as deleted
+        for item in result['dirs']:
+            if bytes.fromhex(item['prefix'][:-1]) == dir_name1:
+                self.assertEqual(item['is_deleted'], True)
+
+        response = self.client.patch(TEST_BUCKET_1, "undelete", object_keys, prefix=prefix)
+        self.assertEqual(response.status_code, 204)
+
+        time.sleep(2)
+
+        # Check DB
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(result, [])
+
+        response = self.client.get_list(TEST_BUCKET_1, prefix=prefix, show_deleted=True)
+        result = response.json()
+
+        # Make sure file is restored
+        for filename in [fn]:
+            for obj in result['list']:
+                if filename == obj['orig_name']:
+                    self.assertEqual(obj['is_deleted'], False)
+
+        # Check action log
+        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key="{}{}".format((prefix or ''), ACTION_LOG_FILENAME))
+
+        self.assertEqual(len(action_log), 3) # 1. mkdir 2. delete 3. undelete
+
+        item = [i for i in action_log if i['action'] == 'undelete'][0]
+        self.assertEqual(item['details'], 'Restored by "integration1": {}'.format(dir_name1))
+        self.assertTrue(item['user_id'])
+        self.assertTrue(item['user_name'])
+        self.assertTrue(item['tenant_name'])
+        self.assertTrue(item['timestamp'])
+        self.assertTrue(item['duration'])
+        self.assertEqual(item['version'], '')
+        self.assertEqual(item['is_locked'], 0)
+        self.assertEqual(item['lock_user_id'], None)
+        self.assertEqual(item['lock_user_name'], None)
+        self.assertEqual(item['lock_user_tel'], None)
+        self.assertEqual(item['lock_modified_utc'], None)
 
 
 if __name__ == '__main__':
