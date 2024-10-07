@@ -76,7 +76,7 @@ class RenameTest(TestClient):
         res = self.client.upload(TEST_BUCKET_1, fn)
         object_key = res['object_key']
 
-        time.sleep(2)  # time necessary for server to update db
+        time.sleep(3)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["key"], fn)
@@ -92,7 +92,7 @@ class RenameTest(TestClient):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()['orig_name'], random_name)
 
-        time.sleep(2)  # time necessary for server to update db
+        time.sleep(3)  # time necessary for server to update db
         action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
         self.assertEqual(len(action_log), 2)
         rename_record = [i for i in action_log if i["action"] == "rename"][0]
@@ -124,7 +124,7 @@ class RenameTest(TestClient):
         res = self.client.create_pseudo_directory(TEST_BUCKET_1, random_dir_name)
         self.assertEqual(res.status_code, 204)
 
-        time.sleep(2)  # time necessary for server to update db
+        time.sleep(3)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 2)
         names = [i["orig_name"] for i in result]
@@ -183,13 +183,12 @@ class RenameTest(TestClient):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()['dir_name'], random_new_name)
 
-        time.sleep(2)  # time necessary for server to update db
+        time.sleep(3)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 5)
 
         prefixed_action_log = "{}{}".format(encoded_random_prefix, ACTION_LOG_FILENAME)
         action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=prefixed_action_log)
-        import pdb;pdb.set_trace()
         self.assertEqual(len(action_log), 2)
         rename_dir_record = [i for i in action_log if i["action"] == "rename"][0]
         self.assertEqual(rename_dir_record["orig_name"], random_new_name)

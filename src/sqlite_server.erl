@@ -378,7 +378,7 @@ update_db(BucketId, Prefix, BucketQueue0) ->
 				SQL ->
 				    case sqlite3:sql_exec(DbName, SQL) of
 					{error, _, Reason0} ->
-					    lager:error("[sqlite_server] SQL: ~p Error: ", [SQL, Reason0]),
+					    lager:error("[sqlite_server] ~p SQL: ~p Error: ", [BucketId, SQL, Reason0]),
 					    {Module, Func, Args};  %% adding it back to queue
 					_Result -> []
 				    end

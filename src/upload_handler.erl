@@ -1155,10 +1155,9 @@ delete_previous_one(BucketId, GUID, UploadId, Version) ->
     %% created by copy operation, it remains accessible. We need to provide user
     %% with an expectable version history: one version of file per day, in order to
     %% exclude meaningless versions from history, that we show to user.
-    RemovedUploadId = indexing:remove_previous_version(BucketId, GUID, UploadId, Version),
-    case RemovedUploadId of
-	undefined -> ok;  %% No previous upload was found
-	_ ->
+    RemovedUploadIds = indexing:remove_previous_version(BucketId, GUID, UploadId, Version),
+    lists:foreach(
+	fun(RemovedUploadId) ->
 	    %% Check whether we can remove an old upload
 	    PrefixedGUID = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID),
 	    StopObjectName = RemovedUploadId ++ ?STOP_OBJECT_SUFFIX,
@@ -1180,7 +1179,7 @@ delete_previous_one(BucketId, GUID, UploadId, Version) ->
 		    %% TODO
 		_ -> ok
 	    end
-    end.
+	end, RemovedUploadIds).
 
 %%
 %% Checks if provided token is correct.

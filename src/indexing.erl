@@ -608,7 +608,6 @@ remove_expired_dvv_lock(BucketId, GUID) ->
 	    end
     end.
 
-
 %%
 %% Removes previous version ( on the same day ) from the DVV index,
 %% if exists and returns a previous upload id.
@@ -638,29 +637,32 @@ remove_previous_version(BucketId, GUID, UploadId0, Version) when erlang:is_list(
 	end, List0),
     [VVTimestamp] = dvvset:values(Version),
     VVDate = utils:format_timestamp(utils:to_integer(VVTimestamp)),
-    PreviousOne = [I || I <- DVVs, element(1, I) =/= UploadId0 andalso element(2, I) =:= VVDate],
-    case PreviousOne of
-	[{UploadId2, _Date, _VV}] ->
-	    NewDVVs = lists:keydelete(UploadId2, 1, List0),
-	    case remove_expired_dvv_lock(BucketId, GUID) of
-		lock -> lock;
-		ok ->
-		    RealPrefix = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID++"/"),
-                    %% Update index
-		    Response = s3_api:put_object(BucketId, RealPrefix, ?DVV_INDEX_FILENAME,
-						 term_to_binary(NewDVVs)),
-		    case Response of
-			{error, Reason} -> lager:error("[indexing] Can't put object ~p/~p/~p: ~p",
-						       [BucketId, RealPrefix, ?DVV_INDEX_FILENAME, Reason]);
-			_ -> ok
-		    end,
-		    %% Remove lock
-		    PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?LOCK_DVV_INDEX_FILENAME),
-		    s3_api:delete_object(BucketId, PrefixedLockFilename),
-		    UploadId2
-	    end;
-	[] -> undefined
-    end.
+    PreviousOnes = [I || I <- DVVs, element(1, I) =/= UploadId0 andalso element(2, I) =:= VVDate],
+    lists:filtermap(
+	fun(PreviousOne) ->
+	    case PreviousOne of
+		[{UploadId2, _Date, _VV}] ->
+		    NewDVVs = lists:keydelete(UploadId2, 1, List0),
+		    case remove_expired_dvv_lock(BucketId, GUID) of
+			lock -> false;
+			ok ->
+			    RealPrefix = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID++"/"),
+			    %% Update index
+			    Response = s3_api:put_object(BucketId, RealPrefix, ?DVV_INDEX_FILENAME,
+							 term_to_binary(NewDVVs)),
+			    case Response of
+				{error, Reason} -> lager:error("[indexing] Can't put object ~p/~p/~p: ~p",
+							       [BucketId, RealPrefix, ?DVV_INDEX_FILENAME, Reason]);
+				_ -> ok
+			    end,
+			    %% Remove lock
+			    PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?LOCK_DVV_INDEX_FILENAME),
+			    s3_api:delete_object(BucketId, PrefixedLockFilename),
+			    {true, UploadId2}
+		    end;
+		[] -> false
+	    end
+	end, PreviousOnes).
 
 %%
 %% Adds dot to the saved version vector history

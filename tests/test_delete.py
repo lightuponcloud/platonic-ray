@@ -306,7 +306,7 @@ class DeleteTest(TestClient):
 
         # Check action log
         action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key="{}{}".format((prefix or ''), ACTION_LOG_FILENAME))
-
+        import pdb;pdb.set_trace()
         self.assertEqual(len(action_log), 3) # 1. uploaded 2. deleted 3. restored
 
         item = [i for i in action_log if i['action'] == 'undelete'][0]
