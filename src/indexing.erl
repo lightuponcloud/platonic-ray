@@ -641,7 +641,7 @@ remove_previous_version(BucketId, GUID, UploadId0, Version) when erlang:is_list(
     lists:filtermap(
 	fun(PreviousOne) ->
 	    case PreviousOne of
-		[{UploadId2, _Date, _VV}] ->
+		{UploadId2, _Date, _VV} ->
 		    NewDVVs = lists:keydelete(UploadId2, 1, List0),
 		    case remove_expired_dvv_lock(BucketId, GUID) of
 			lock -> false;
