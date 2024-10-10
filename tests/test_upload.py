@@ -1007,7 +1007,7 @@ class UploadTest(TestClient):
         self.upload_file(url, fn)
         with open(fn, "rb") as fd:
             # Get tenant's API key
-            api_key = os.getenv("ADMIN_API_KEY")
+            api_key = os.getenv("USER_1_API_KEY")
 
             url = "{}/riak/admin/tenants/".format(BASE_URL)
             headers={"authorization": "Token {}".format(api_key)}

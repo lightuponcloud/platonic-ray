@@ -15,6 +15,7 @@ from client_base import (
     USERNAME_1,
     PASSWORD_1,
     PASSWORD_2,
+    REGION,
     configure_boto3,
     TestClient)
 from light_client import LightClient, generate_random_name, encode_to_hex
@@ -77,7 +78,14 @@ class UploadTest(TestClient):
         response_md5 = hashlib.md5(response.content).hexdigest()
         self.assertEqual(response_md5, '274a1939f67a3f036c8d0ab763d67c65')
 
-        # t2 = time.time()
+        path = "{}/{}/{}".format(TEST_BUCKET_1, hex_prefix, object_key)
+        api_key = os.getenv("USER_1_API_KEY")
+        signature = self.client.calculate_url_signature(REGION, "get", path, "", api_key)
+
+        url = "{}/riak/thumbnail/{}/{}/?object_key={}&signature={}".format(
+            BASE_URL, TEST_BUCKET_1, hex_prefix, object_key, signature)
+        response = requests.get(url, timeout=5)
+        self.assertEqual(response.status_code, 200)
 
 
 if __name__ == "__main__":

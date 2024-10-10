@@ -279,7 +279,7 @@ $('body').on('click', 'a[id^=id-delete-user_]', function(e){
 {% if path_tenant %}
 function submit_tenant(e){
  var groups=$('input[name=tenant_group_names]').val();
- var api_key = '{% if path_tenant.api_key %}{{ path_tenant.api_key }}{% endif %}';
+ var api_key = '{% if path_tenant.api_key == "undefined" %}{% else %}{{ path_tenant.api_key }}{% endif %}';
  if(api_key=='') api_key=guid();
  var enabled = {{ path_tenant.enabled }};
  var tenant_form = '<form method="POST" id="id-tenant-form" name="tenant_form" > \

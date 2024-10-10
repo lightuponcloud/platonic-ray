@@ -423,8 +423,11 @@ validate_post(Body) ->
 	    TenantName0 = validate_tenant_name(proplists:get_value(<<"name">>, FieldValues), required),
 	    Groups0 = validate_groups(proplists:get_value(<<"groups">>, FieldValues), []),
 	    IsEnabled0 = validate_boolean(proplists:get_value(<<"enabled">>, FieldValues), enabled, true),
-	    APIKey = crypto_utils:validate_guid(proplists:get_value(<<"api_key">>, FieldValues)),
-
+	    APIKey =
+		case crypto_utils:validate_guid(proplists:get_value(<<"api_key">>, FieldValues)) of
+		    {error, _Number} -> {error, "Incorrect API Key"};
+		    V -> V
+		end,
 	    Errors = [element(2, F) || F <- [TenantName0, Groups0, APIKey, IsEnabled0], element(1, F) =:= error],
 	    case length(Errors) > 0 of
 		true -> {error, Errors};
