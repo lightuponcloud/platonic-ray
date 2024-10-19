@@ -17,6 +17,7 @@ from client_base import (
     FILE_UPLOAD_CHUNK_SIZE,
     UPLOADS_BUCKET_NAME,
     ACTION_LOG_FILENAME,
+    ADMIN_API_KEY,
     REGION,
     USERNAME_1,
     PASSWORD_1,
@@ -110,7 +111,8 @@ class UploadTest(TestClient):
         fn = "README.md"
         result = self.upload_file(url, fn)
         with open(fn, "rb") as fd:
-            contents = self.download_file(TEST_BUCKET_1, "readme.md")
+            status_code, contents = self.download_file(TEST_BUCKET_1, "readme.md")
+            self.assertEqual(status_code, 200)
             self.assertEqual(fd.read(), contents)
 
         # Test SQLite db contents
@@ -145,7 +147,8 @@ class UploadTest(TestClient):
         fn = "README.md"
         result = self.upload_file(url, fn)
         with open(fn, "rb") as fd:
-            contents = self.download_file(TEST_BUCKET_3, "readme.md")
+            status_code, contents = self.download_file(TEST_BUCKET_3, "readme.md")
+            self.assertEqual(status_code, 200)
             self.assertEqual(fd.read(), contents)
 
         # Test SQLite db contents
@@ -608,8 +611,8 @@ class UploadTest(TestClient):
         form_data["guid"] = guid
         url = "{}/riak/upload/{}/{}/2/".format(BASE_URL, TEST_BUCKET_2, second_upload_id)
         response = self._upload_request(headers, form_data, url=url)
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json(), {"error": 7})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {"error": 39})
 
         # empty body, send incorrect upload id and make sure error returned
         url = "{}/riak/upload/{}/{}/2/".format(BASE_URL, TEST_BUCKET_1, "blah")
@@ -638,8 +641,8 @@ class UploadTest(TestClient):
         form_data["guid"] = guid
         url = "{}/riak/upload/{}/{}/2/".format(BASE_URL, TEST_BUCKET_2, second_upload_id)
         response = self._upload_request(headers, form_data, url=url)
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json(), {"error": 7})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {"error": 39})
 
         # test version check
         modified_utc = "1515683247"
@@ -740,7 +743,8 @@ class UploadTest(TestClient):
         self.assertEqual(response_json["orig_name"], "20180111_165127.jpg")
 
         # check its contents
-        contents = self.download_file(TEST_BUCKET_1, "20180111_165127.jpg")
+        status_code, contents = self.download_file(TEST_BUCKET_1, "20180111_165127.jpg")
+        self.assertEqual(status_code, 200)
         self.assertEqual(contents, (b"0"*2000000) + b"1")
 
         # now test if two existing chunks are used when parts with the same md5 sums uploaded
@@ -854,7 +858,8 @@ class UploadTest(TestClient):
         self.assertEqual(response.json()["orig_name"], "20180111_165127.jpg")
 
         # check its contents
-        contents = self.download_file(TEST_BUCKET_1, "20180111_165127.jpg")
+        status_code, contents = self.download_file(TEST_BUCKET_1, "20180111_165127.jpg")
+        self.assertEqual(status_code, 200)
         self.assertEqual(contents, (b"3"*2000000) + b"2")
 
         # check if no existing chunk is used in case when ther'a no matches
@@ -949,7 +954,8 @@ class UploadTest(TestClient):
         response_json = response.json()
 
         # make sure object exists, by downloading it and checking its contents
-        data = self.download_file(TEST_BUCKET_1, "20180111_165127.jpg")
+        status_code, data = self.download_file(TEST_BUCKET_1, "20180111_165127.jpg")
+        self.assertEqual(status_code, 200)
         self.assertEqual(data, (b"0"*2000000) + b"1")
 
         # upload a new version of file
@@ -995,8 +1001,9 @@ class UploadTest(TestClient):
         self.client.upload(TEST_BUCKET_1, fn, prefix=prefix)
         time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
-        self.assertEqual(len(result), 2)
-        self.assertTrue("{}/".format(prefix) in [i["prefix"] for i in result])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['orig_name'], dir_name)
+        self.assertEqual(result[0]['prefix'], '')
 
     def test_upload_download_with_api_key(self):
         """
@@ -1007,10 +1014,8 @@ class UploadTest(TestClient):
         self.upload_file(url, fn)
         with open(fn, "rb") as fd:
             # Get tenant's API key
-            api_key = os.getenv("USER_1_API_KEY")
-
             url = "{}/riak/admin/tenants/".format(BASE_URL)
-            headers={"authorization": "Token {}".format(api_key)}
+            headers={"authorization": "Token {}".format(ADMIN_API_KEY)}
             response = requests.get(url, headers=headers, timeout=5)
             self.assertEqual(response.status_code, 200)
             data = response.json()

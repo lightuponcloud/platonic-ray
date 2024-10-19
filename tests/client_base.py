@@ -39,6 +39,7 @@ TEST_BUCKET_2 = env.str("TEST_BUCKET_2")
 TEST_BUCKET_3 = env.str("TEST_BUCKET_3")
 UPLOADS_BUCKET_NAME = env.str("UPLOADS_BUCKET_NAME")
 ACTION_LOG_FILENAME = env.str("ACTION_LOG_FILENAME")
+ADMIN_API_KEY = env.str("ADMIN_API_KEY")
 REGION = env.str("REGION")
 
 ACCESS_KEY = env.str("ACCESS_KEY")
@@ -288,7 +289,7 @@ class TestClient(unittest.TestCase):
         """
         url = "{}/riak/download/{}/?object_key={}".format(BASE_URL, bucketId, objectKey)
         response = requests.get(url, headers={"authorization": "Token {}".format(self.token)})
-        return response.content
+        return response.status_code, response.content
 
     def head(self, bucketId, objectKey):
         obj = self.resource.Object(bucketId, objectKey)

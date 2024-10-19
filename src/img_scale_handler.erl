@@ -380,9 +380,36 @@ handle_post(Req0, State) ->
 %% ( called after 'allowed_methods()' )
 %%
 is_authorized(Req0, _State) ->
-    case download_handler:has_access(Req0) of
+    PathInfo = cowboy_req:path_info(Req0),
+    ParsedQs = cowboy_req:parse_qs(Req0),
+    BucketId =
+	case lists:nth(1, PathInfo) of
+	    undefined -> undefined;
+	    <<>> -> undefined;
+	    BV -> erlang:binary_to_list(BV)
+	end,
+    Prefix =
+	case length(PathInfo) < 2 of
+	    true -> undefined;
+	    false ->
+		%% prefix should go just after bucket id
+		erlang:binary_to_list(utils:join_binary_with_separator(lists:nthtail(1, PathInfo), <<"/">>))
+	end,
+    ObjectKey0 =
+	case proplists:get_value(<<"object_key">>, ParsedQs) of
+	    undefined -> undefined;
+	    null -> undefined;
+	    <<>> -> undefined;
+	    K -> unicode:characters_to_list(K)
+	end,
+    PresentedSignature =
+	case proplists:get_value(<<"signature">>, ParsedQs) of
+	    undefined -> undefined;
+	    Signature -> unicode:characters_to_list(Signature)
+	end,
+    case download_handler:has_access(Req0, BucketId, Prefix, ObjectKey0, PresentedSignature) of
 	{error, Number} -> js_handler:unauthorized(Req0, Number, stop);
-	{BucketId, Prefix, ObjectKey, ParsedQs, _User} ->
+	{BucketId, Prefix, ObjectKey1, _User} ->
 	    Width =
 		case proplists:get_value(<<"w">>, ParsedQs) of
 		    undefined -> ?DEFAULT_IMAGE_WIDTH;
@@ -402,7 +429,7 @@ is_authorized(Req0, _State) ->
 	    {true, Req0, [
 		{bucket_id, BucketId},
 		{prefix, Prefix},
-		{object_key, ObjectKey},
+		{object_key, ObjectKey1},
 		{width, Width},
 		{height, Height},
 		{crop, CropFlag}

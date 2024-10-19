@@ -18,39 +18,6 @@
 -include("action_log.hrl").
 -include("log.hrl").
 
-%%
-%% Checks if client has access to the system.
-%%
-%% It uses authorization token HTTP header.
-%%
-check_privileges(Req0, BucketId) ->
-    %% Extracts token from request headers and looks it up in "security" bucket
-    case utils:get_token(Req0) of
-	undefined -> {error, 28};
-	Token ->
-	    case login_handler:check_token(Token) of
-		not_found -> {error, 28};
-		expired -> {error, 38};
-		User -> check_user_access(BucketId, User)
-	    end
-    end.
-
-%%
-%% Check if user has access to the bucket.
-%%
-check_user_access(BucketId, User) ->
-    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
-	true ->
-	    UserBelongsToGroup = lists:any(
-		fun(Group) ->
-		    utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id)
-		end, User#user.groups),
-	    case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, User#user.tenant_id) of
-		false -> {error, 37};
-		true -> User
-	    end;
-	false -> {error, 7}
-    end.
 
 %%
 %% Receives stream from httpc and passes it to cowboy
@@ -160,23 +127,24 @@ response(Req0, _Method, _BucketId, _UserId) ->
 
 init(Req0, _Opts) ->
     cowboy_req:cast({set_options, #{idle_timeout => infinity}}, Req0),
+    ParsedQs = cowboy_req:parse_qs(Req0),
     BucketId =
 	case cowboy_req:binding(bucket_id, Req0) of
 	    undefined -> undefined;
 	    BV -> erlang:binary_to_list(BV)
 	end,
-    case check_privileges(Req0, BucketId) of
+    PresentedSignature =
+	case proplists:get_value(<<"signature">>, ParsedQs) of
+	    undefined -> undefined;
+	    Signature -> unicode:characters_to_list(Signature)
+	end,
+    case download_handler:has_access(Req0, BucketId, undefined, undefined, PresentedSignature) of
 	{error, Number} ->
 	    Req1 = cowboy_req:reply(403, #{
 		<<"content-type">> => <<"application/json">>
 	    }, jsx:encode([{error, Number}]), Req0),
 	    {ok, Req1, []};
-	User ->
+	{_BucketId, _Prefix, _ObjectKey, User} ->
 	    Method = cowboy_req:method(Req0),
-	    UserId =
-		case User of
-		    undefined -> undefined;
-		    _ -> User#user.id
-		end,
-	    response(Req0, Method, BucketId, UserId)
+	    response(Req0, Method, BucketId, User#user.id)
     end.

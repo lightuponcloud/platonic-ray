@@ -3,7 +3,7 @@
 %%
 -module(download_handler).
 
--export([init/2, validate_range/2, has_access/1]).
+-export([init/2, validate_range/2, has_access/5]).
 
 -include("general.hrl").
 -include("storage.hrl").
@@ -90,34 +90,7 @@ check_privileges(Req0, BucketId, Prefix, ObjectKey, BucketTenant, PresentedSigna
 %% - tenant exists and enabled
 %% - Client has API token OR cookie OR signature of object ( that is signed with Tenant's API Key )
 %%
-has_access(Req0) ->
-    PathInfo = cowboy_req:path_info(Req0),
-    BucketId =
-	case lists:nth(1, PathInfo) of
-	    undefined -> undefined;
-	    <<>> -> undefined;
-	    BV -> erlang:binary_to_list(BV)
-	end,
-    Prefix =
-	case length(PathInfo) < 2 of
-	    true -> undefined;
-	    false ->
-		%% prefix should go just after bucket id
-		erlang:binary_to_list(utils:join_binary_with_separator(lists:nthtail(1, PathInfo), <<"/">>))
-	end,
-    ParsedQs = cowboy_req:parse_qs(Req0),
-    ObjectKey =
-	case proplists:get_value(<<"object_key">>, ParsedQs) of
-	    undefined -> undefined;
-	    null -> undefined;
-	    <<>> -> undefined;
-	    K -> unicode:characters_to_list(K)
-	end,
-    PresentedSignature =
-	case proplists:get_value(<<"signature">>, ParsedQs) of
-	    undefined -> undefined;
-	    Signature -> unicode:characters_to_list(Signature)
-	end,
+has_access(Req0, BucketId, Prefix, ObjectKey, PresentedSignature) ->
     case utils:is_valid_bucket_id(BucketId, undefined) of
 	false -> {error, 37};
 	true ->
@@ -133,8 +106,8 @@ has_access(Req0) ->
 				{error, Number} -> {error, Number};
 				{config_error, Code} -> {error, Code};
 				false -> {error, 37};
-				true -> {BucketId, Prefix, ObjectKey, ParsedQs, undefined};
-				User -> {BucketId, Prefix, ObjectKey, ParsedQs, User}
+				true -> {BucketId, Prefix, ObjectKey, undefined};
+				User -> {BucketId, Prefix, ObjectKey, User}
 			    end
 		    end
 	    end
@@ -277,10 +250,38 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 	    end
     end.
 
-init(Req0, _Opts) ->
+init(Req0, _Opts) -> 
     T0 = utils:timestamp(), %% measure time of request
     cowboy_req:cast({set_options, #{idle_timeout => infinity}}, Req0),
-    case has_access(Req0) of
+
+    PathInfo = cowboy_req:path_info(Req0),
+    BucketId0 =
+	case lists:nth(1, PathInfo) of
+	    undefined -> undefined;
+	    <<>> -> undefined;
+	    BV -> erlang:binary_to_list(BV)
+	end,
+    Prefix0 =
+	case length(PathInfo) < 2 of
+	    true -> undefined;
+	    false ->
+		%% prefix should go just after bucket id
+		erlang:binary_to_list(utils:join_binary_with_separator(lists:nthtail(1, PathInfo), <<"/">>))
+	end,
+    ParsedQs = cowboy_req:parse_qs(Req0),
+    ObjectKey0 =
+	case proplists:get_value(<<"object_key">>, ParsedQs) of
+	    undefined -> undefined;
+	    null -> undefined;
+	    <<>> -> undefined;
+	    K -> unicode:characters_to_list(K)
+	end,
+    PresentedSignature =
+	case proplists:get_value(<<"signature">>, ParsedQs) of
+	    undefined -> undefined;
+	    Signature -> unicode:characters_to_list(Signature)
+	end,
+    case has_access(Req0, BucketId0, Prefix0, ObjectKey0, PresentedSignature) of
 	{error, Number} ->
 	    T1 = utils:timestamp(),
 	    Req1 = cowboy_req:reply(403, #{
@@ -288,8 +289,8 @@ init(Req0, _Opts) ->
 		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 	    }, jsx:encode([{error, Number}]), Req0),
 	    {ok, Req1, []};
-	{BucketId, Prefix, ObjectKey, _ParsedQs, _User} ->
-	    case get_object_metadata(BucketId, Prefix, ObjectKey) of
+	{BucketId1, Prefix1, ObjectKey1, _User} ->
+	    case get_object_metadata(BucketId1, Prefix1, ObjectKey1) of
 		not_found ->
 		    T1 = utils:timestamp(),
 		    Req1 = cowboy_req:reply(404, #{

@@ -128,13 +128,32 @@ to_json(Req0, State) ->
 %% ( called after 'allowed_methods()' )
 %%
 is_authorized(Req0, _State) ->
-    case download_handler:has_access(Req0) of
+    PathInfo = cowboy_req:path_info(Req0),
+    ParsedQs = cowboy_req:parse_qs(Req0),
+    BucketId =
+	case lists:nth(1, PathInfo) of
+	    undefined -> undefined;
+	    <<>> -> undefined;
+	    BV -> erlang:binary_to_list(BV)
+	end,
+    Prefix =
+	case length(PathInfo) < 2 of
+	    true -> undefined;
+	    false ->
+		%% prefix should go just after bucket id
+		erlang:binary_to_list(utils:join_binary_with_separator(lists:nthtail(1, PathInfo), <<"/">>))
+	end,
+    PresentedSignature =
+	case proplists:get_value(<<"signature">>, ParsedQs) of
+	    undefined -> undefined;
+	    Signature -> unicode:characters_to_list(Signature)
+	end,
+    case download_handler:has_access(Req0, BucketId, Prefix, undefined, PresentedSignature) of
 	{error, Number} -> js_handler:unauthorized(Req0, Number, stop);
-	{BucketId, Prefix, ObjectKey, ParsedQs, User} ->
+	{BucketId, Prefix, _ObjectKey, User} ->
 	    {true, Req0, [
 		{bucket_id, BucketId},
 		{prefix, Prefix},
-		{object_key, ObjectKey},
 		{parsed_qs, ParsedQs},
 		{user, User}
 	    ]}
@@ -759,9 +778,9 @@ handle_post(Req0, State0) ->
 	    case proplists:get_value(user, State0) of
 		undefined -> js_handler:unauthorized(Req0, 28);
 		User ->
-		    case User#user.staff =:= false of
-			true -> js_handler:unauthorized(Req0, 37);
-			false ->
+		    case User#user.staff of
+			false -> js_handler:unauthorized(Req0, 37);
+			true ->
 			    create_pseudo_directory(Req1, [
 				{prefixed_directory_name, PrefixedDirectoryName},
 				{prefix, Prefix},

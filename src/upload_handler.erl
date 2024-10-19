@@ -324,13 +324,14 @@ acc_multipart(Req0, Acc) ->
 		FieldName1 =
 		    case FieldName0 of
 			<<"version">> -> version;
+			<<"prefix">> -> prefix;
 			<<"md5">> -> md5;        %% chunk md5
 			<<"etags[]">> -> etags;  %% md5 checksums of all chunks
-			<<"prefix">> -> prefix;
 			<<"files[]">> -> blob;
 			<<"guid">> -> guid;      %% for tracking history
 			<<"width">> -> width;
 			<<"height">> -> height;
+			<<"signature">> -> signature;
 			_ -> undefined
 		    end,
 		case FieldName1 of
@@ -360,8 +361,18 @@ handle_post(Req0, State) ->
 	<<"POST">> ->
 	    {FieldValues, Req1} = acc_multipart(Req0, []),
 	    FileName0 = validate_filename(proplists:get_value(filename, FieldValues)),
-	    BucketId = proplists:get_value(bucket_id, State),
+	    PresentedSignature = proplists:get_value(signature, FieldValues),
+	    BucketId =
+		case cowboy_req:binding(bucket_id, Req0) of
+		    undefined -> undefined;
+		    BV -> erlang:binary_to_list(BV)
+		end,
 	    Prefix0 = list_handler:validate_prefix(BucketId, proplists:get_value(prefix, FieldValues)),
+	    User =
+		case download_handler:has_access(Req0, BucketId, Prefix0, FileName0, PresentedSignature) of
+		    {error, _} -> {error, 39};
+		    {_BucketId, _Prefix, _ObjectKey, U} -> U
+		end,
 	    GUID = crypto_utils:validate_guid(proplists:get_value(guid, FieldValues)),
 	    UploadTime = erlang:round(utils:timestamp()/1000),
 	    Version =
@@ -390,10 +401,12 @@ handle_post(Req0, State) ->
 		    true -> {Width0, Height0};
 		    false -> {undefined, undefined}
 		end,
-	    case lists:keyfind(error, 1, [FileName0, Prefix0, GUID, Version, DataSizeOk, TotalBytes, Md5, Etags]) of
+	    case lists:keyfind(error, 1, [User, FileName0, Prefix0, GUID, Version, DataSizeOk, TotalBytes, Md5, Etags]) of
 		{error, Number} -> js_handler:bad_request(Req1, Number);
 		false ->
 		    NewState = [
+			{user, User},
+			{bucket_id, BucketId},
 			{etags, Etags},
 			{prefix, Prefix0},
 			{file_name, FileName0},
@@ -1185,11 +1198,8 @@ delete_previous_one(BucketId, GUID, UploadId, Version) ->
 %% Checks if provided token is correct.
 %% ( called after 'allowed_methods()' )
 %%
-is_authorized(Req0, _State) ->
-    case utils:get_token(Req0) of
-	undefined -> js_handler:unauthorized(Req0, 28, stop);
-	Token -> login_handler:get_user_or_error(Req0, Token)
-    end.
+is_authorized(Req0, State) ->
+    {true, Req0, State}.
 
 %%
 %% Checks the following.
@@ -1202,29 +1212,10 @@ is_authorized(Req0, _State) ->
 %%
 %% ( called after 'allowed_methods()' )
 %%
-forbidden(Req0, User) ->
-    BucketId =
-	case cowboy_req:binding(bucket_id, Req0) of
-	    undefined -> undefined;
-	    BV -> erlang:binary_to_list(BV)
-	end,
-    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
-	true ->
-	    UserBelongsToGroup = lists:any(
-		fun(Group) ->
-		    utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id)
-		end, User#user.groups),
-	    case UserBelongsToGroup orelse utils:is_bucket_belongs_to_tenant(BucketId, User#user.tenant_id) of
-		false ->
-		    PUser = admin_users_handler:user_to_proplist(User),
-		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser), stop);
-		true ->
-		    case validate_content_range(Req0) of
-			{error, Reason} -> js_handler:forbidden(Req0, Reason, stop);
-			State1 -> {false, Req0, State1++[{user, User}, {bucket_id, BucketId}]}
-		    end
-	    end;
-	false -> js_handler:forbidden(Req0, 7, stop)
+forbidden(Req0, _State0) ->
+    case validate_content_range(Req0) of
+	{error, Reason} -> js_handler:forbidden(Req0, Reason, stop);
+	State1 -> {false, Req0, State1}
     end.
 
 %%

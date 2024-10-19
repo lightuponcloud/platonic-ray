@@ -38,7 +38,6 @@ class UploadTest(TestClient):
         fn = "246x0w.png"
         object_key = "20180111_165127.jpg"
         url = "{}/riak/thumbnail/{}/?object_key={}".format(BASE_URL, TEST_BUCKET_1, object_key)
-        # t1 = time.time()
         result = self.upload_thumbnail(url, fn, object_key, form_data={"width": 2560, "height":1600})
 
         # check if correct thumbnail returned
@@ -47,8 +46,6 @@ class UploadTest(TestClient):
 
         response_md5 = hashlib.md5(response.content).hexdigest()
         self.assertEqual(response_md5, '274a1939f67a3f036c8d0ab763d67c65')
-
-        # t2 = time.time()
 
     def test_prefixed_thumbnail_success(self):
         dir_name = "test"

@@ -306,11 +306,10 @@ class DeleteTest(TestClient):
 
         # Check action log
         action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key="{}{}".format((prefix or ''), ACTION_LOG_FILENAME))
-        import pdb;pdb.set_trace()
         self.assertEqual(len(action_log), 3) # 1. uploaded 2. deleted 3. restored
 
         item = [i for i in action_log if i['action'] == 'undelete'][0]
-        self.assertEqual(item['details'], 'Restored by "integration1": "{}"'.format(fn))
+        self.assertEqual(item['details'], 'Restored by "integration1": {}'.format(fn))
         self.assertEqual(item['is_dir'], 0)
         self.assertTrue(item['user_id'])
         self.assertTrue(item['user_name'])
@@ -328,7 +327,7 @@ class DeleteTest(TestClient):
         # 1. create a directory
         dir_name1 = generate_random_name()
         hex_dir_name1 = encode_to_hex(dir_name1)
-        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name1)
+        response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name1)
         self.assertEqual(response.status_code, 204)
 
         self.test_delete_undelete_files_in_root(prefix=hex_dir_name1)
