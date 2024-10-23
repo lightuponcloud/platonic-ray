@@ -360,19 +360,18 @@ handle_post(Req0, State) ->
     case cowboy_req:method(Req0) of
 	<<"POST">> ->
 	    {FieldValues, Req1} = acc_multipart(Req0, []),
-	    FileName0 = validate_filename(proplists:get_value(filename, FieldValues)),
-	    PresentedSignature = proplists:get_value(signature, FieldValues),
+	    FileName0 = validate_filename(filename:basename(proplists:get_value(filename, FieldValues))),
+	    PresentedSignature =
+		case proplists:get_value(signature, FieldValues) of
+		    undefined -> undefined;
+		    Signature -> unicode:characters_to_list(Signature)
+		end,
 	    BucketId =
 		case cowboy_req:binding(bucket_id, Req0) of
 		    undefined -> undefined;
 		    BV -> erlang:binary_to_list(BV)
 		end,
 	    Prefix0 = list_handler:validate_prefix(BucketId, proplists:get_value(prefix, FieldValues)),
-	    User =
-		case download_handler:has_access(Req0, BucketId, Prefix0, FileName0, PresentedSignature) of
-		    {error, _} -> {error, 39};
-		    {_BucketId, _Prefix, _ObjectKey, U} -> U
-		end,
 	    GUID = crypto_utils:validate_guid(proplists:get_value(guid, FieldValues)),
 	    UploadTime = erlang:round(utils:timestamp()/1000),
 	    Version =
@@ -401,24 +400,28 @@ handle_post(Req0, State) ->
 		    true -> {Width0, Height0};
 		    false -> {undefined, undefined}
 		end,
-	    case lists:keyfind(error, 1, [User, FileName0, Prefix0, GUID, Version, DataSizeOk, TotalBytes, Md5, Etags]) of
-		{error, Number} -> js_handler:bad_request(Req1, Number);
+	    case lists:keyfind(error, 1, [FileName0, Prefix0, GUID, Version, DataSizeOk, TotalBytes, Md5, Etags]) of
+		{error, Number0} -> js_handler:bad_request(Req1, Number0);
 		false ->
-		    NewState = [
-			{user, User},
-			{bucket_id, BucketId},
-			{etags, Etags},
-			{prefix, Prefix0},
-			{file_name, FileName0},
-			{version, Version},
-			{md5, Md5},
-			{guid, GUID},
-			{upload_time, UploadTime},
-			{width, Width1},
-			{height, Height1}
-		    ] ++ State,
-		    %% If object is locked and current user is not owner of the lock, return lock info
-		    lock_check(Req0, NewState, Blob)
+		    case download_handler:has_access(Req0, BucketId, Prefix0, undefined, PresentedSignature) of
+			{error, Number1} -> js_handler:bad_request(Req1, Number1);
+			{_BucketId, _Prefix, _ObjectKey, U} ->
+			    NewState = [
+				{user, U},
+				{bucket_id, BucketId},
+				{etags, Etags},
+				{prefix, Prefix0},
+				{file_name, FileName0},
+				{version, Version},
+				{md5, Md5},
+				{guid, GUID},
+				{upload_time, UploadTime},
+				{width, Width1},
+				{height, Height1}
+			    ] ++ State,
+			    %% If object is locked and current user is not owner of the lock, return lock info
+			    lock_check(Req0, NewState, Blob)
+		    end
 	    end;
 	_ -> js_handler:bad_request(Req0, 2)
     end.

@@ -203,20 +203,24 @@ md5(IOData) ->
 %% Hash-based message authentication code ( HMAC ) signature algorithm.
 %%
 calculate_url_signature(Method, Path, Qs, SecretAPIKey)
-	when erlang:is_atom(Method) andalso erlang:is_list(Path)
+    when (Method =:= <<"GET">>) orelse
+	 (Method =:= <<"POST">>) orelse
+	 (Method =:= <<"HEAD">>) orelse
+	 (Method =:= <<"DELETE">>) orelse
+	 (Method =:= <<"OPTIONS">>) orelse
+	 (Method =:= <<"TRACE">>) andalso erlang:is_list(Path)
 	    andalso erlang:is_list(Qs) andalso erlang:is_list(SecretAPIKey) ->
     Service = "s3",
     Config = #api_config{},
     Region = Config#api_config.s3_region,
 
     CanonicalQs = canonical_query_string(Qs),
-    CanonicalRequest = [atom_to_list(Method), $\n, erlcloud_http:url_encode_loose(Path), $\n, CanonicalQs],
+    CanonicalRequest = [erlang:binary_to_list(Method), $\n, erlcloud_http:url_encode_loose(Path), $\n, CanonicalQs],
     StringToSign = ["HMAC-SHA256", $\n, Region, $/, "s3", $/, $\n,
 		    utils:hex(crypto:hash(?HASH_FUNCTION, CanonicalRequest))],
     RegionKey = sha256_mac(["LightUp", SecretAPIKey], Region),
     SigningKey = sha256_mac(RegionKey, Service),
     utils:hex(sha256_mac(SigningKey, StringToSign)).
-
 
 %%
 %% Checks if UUID4 is correct.

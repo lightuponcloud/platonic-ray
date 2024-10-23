@@ -47,7 +47,10 @@ get_object_metadata(BucketId, Prefix, ObjectKey) ->
 %% It uses authorization token HTTP header, if provided.
 %% Otherwise it checks session cookie.
 %%
-check_privileges(Req0, BucketId, Prefix, ObjectKey, BucketTenant, PresentedSignature) ->
+check_privileges(Req0, BucketId, Prefix, ObjectKey, BucketTenant, PresentedSignature)
+	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
+	    andalso erlang:is_list(ObjectKey) orelse ObjectKey =:= undefined
+	    andalso erlang:is_list(PresentedSignature) orelse PresentedSignature =:= undefined ->
     %% Extracts token from request headers and looks it up in "security" bucket
     case utils:get_token(Req0) of
 	undefined ->
@@ -55,7 +58,8 @@ check_privileges(Req0, BucketId, Prefix, ObjectKey, BucketTenant, PresentedSigna
 	    TenantAPIKey = BucketTenant#tenant.api_key,
 	    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
 	    BucketPrefixedObjectKey = utils:prefixed_object_key(BucketId, PrefixedObjectKey),
-	    CalculatedSignature = crypto_utils:calculate_url_signature(get, BucketPrefixedObjectKey, "", TenantAPIKey),
+	    Method = cowboy_req:method(Req0),
+	    CalculatedSignature = crypto_utils:calculate_url_signature(Method, BucketPrefixedObjectKey, "", TenantAPIKey),
 	    case PresentedSignature == CalculatedSignature of
 		true -> true;
 		false ->
@@ -90,7 +94,10 @@ check_privileges(Req0, BucketId, Prefix, ObjectKey, BucketTenant, PresentedSigna
 %% - tenant exists and enabled
 %% - Client has API token OR cookie OR signature of object ( that is signed with Tenant's API Key )
 %%
-has_access(Req0, BucketId, Prefix, ObjectKey, PresentedSignature) ->
+has_access(Req0, BucketId, Prefix, ObjectKey, PresentedSignature)
+	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined andalso
+	    erlang:is_list(ObjectKey) orelse ObjectKey =:= undefined andalso
+	    erlang:is_list(PresentedSignature) orelse PresentedSignature =:= undefined ->
     case utils:is_valid_bucket_id(BucketId, undefined) of
 	false -> {error, 37};
 	true ->
@@ -106,7 +113,10 @@ has_access(Req0, BucketId, Prefix, ObjectKey, PresentedSignature) ->
 				{error, Number} -> {error, Number};
 				{config_error, Code} -> {error, Code};
 				false -> {error, 37};
-				true -> {BucketId, Prefix, ObjectKey, undefined};
+				true ->
+				    User = ?ANONYMOUS_USER,
+				    HexTenantId = utils:hex(erlang:list_to_binary(TenantId)),
+				    {BucketId, Prefix, ObjectKey, User#user{tenant_id = TenantId, tenant_name = HexTenantId}};
 				User -> {BucketId, Prefix, ObjectKey, User}
 			    end
 		    end

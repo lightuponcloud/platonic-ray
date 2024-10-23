@@ -125,11 +125,24 @@
 -define(AUTH_NAME, pbkdf2_sha256).
 
 -define(ADMIN_USER, #user{
-    id = lightup,
-    name = administrator,
-    tenant_id = lightup,
-    tenant_name = lightup,
+    id = "lightup",
+    name = "41646d696e6973747261746f72",
+    tenant_id = "lightup",
+    tenant_name = "4c696768745570",
     tenant_enabled = true,
     enabled = true,
     staff = true
+}).
+
+%%
+%% The following user is used when actions are performed using signatures
+%%
+-define(ANONYMOUS_USER, #user{
+    id = "anonymous",
+    name = "416e6f6e796d6f7573",
+    tenant_id = undefined,
+    tenant_name = undefined,
+    tenant_enabled = true,
+    enabled = true,
+    staff = false
 }).
