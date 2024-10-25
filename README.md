@@ -10,7 +10,7 @@ This middleware is used to synchronize AWS S3 compatible storage objects with fi
 
 1. **File Synchronization**
 
-    DubStack is a server side of team collagoration apps. There are Windows, Android and IOS apps.
+    DubStack is a server side of team collaboration apps. There are Windows, Android and IOS apps.
     Windows app synchronizes files in background and allows file **lock**/**unlock**,
     **delete**/**undelete**, **copy**/**move**, differential sync and **automated conflict resolution**.
 
@@ -19,12 +19,12 @@ This middleware is used to synchronize AWS S3 compatible storage objects with fi
     Thumbnails are generated on demand by dedicated gen_server process.
     It applies watermark on thumbnails, if watermark.png found in bucket.
 
-3. File and directory sharing
-    This feature can be used for selling digital content.
+3. **File and directory sharing**
+    API key is used for signing sharing requests. This feature can be used, for example, for selling digital content.
 
 4. **Action log and changelog**
 
-    It records history of upload, copy, move, rename and delete operations.
+    It records history of **upload**, **copy**, **move**, **rename** and **delete** operations.
 
 5. **Multi-tenancy**
 
@@ -42,9 +42,9 @@ This middleware is used to synchronize AWS S3 compatible storage objects with fi
 
 
 ## Why Erlang
-    Erlang applications are very resilient: processes are restarted as soon as they terminate.
-    Excellent inter-node communication.
-    Code is running inside Erlang Virtual Machine (BEAM), isolating segment of code and segment of data for security purpose.
+- Erlang applications are very resilient: processes are restarted as soon as they terminate.
+- Excellent inter-node communication.
+- Code is running inside Erlang Virtual Machine (BEAM), isolating segment of code and segment of data for security purpose.
 
 
 ## Advantages of DubStack
@@ -61,7 +61,7 @@ DubStack supports multiple tenants per installation
 
 ### 3. Low Operative Costs
 
-DubStack is very cheap to run on AWS s3 compatible service. It requires minimum maintenance.
+DubStack is very cheap to run on AWS S3 compatible service. It requires minimum maintenance.
 
 
 
@@ -69,12 +69,12 @@ DubStack is very cheap to run on AWS s3 compatible service. It requires minimum 
 
 ### AWS Installation
 
-[See CDK documentation](cdk/README.md)
+[See CDK "How to" document](cdk/README.md)
 
 
 ### Local Installation
 
-You will need the followingDependencies
+You will need the following dependencies.
 
 * Erlang >= 23, < 25
 

@@ -17,34 +17,6 @@ from base64 import b64encode, b64decode
 from dvvset import DVVSet
 
 
-def generate_random_name():
-    """
-    Returns a random name of weird characters.
-    """
-    alphabet = "{}{}ЄєІіЇїҐґ".format(string.digits, string.ascii_lowercase)
-    return "".join(random.sample(alphabet, 20))
-
-
-def encode_to_hex(dir_name: str = None, dir_names: list = None):
-    """
-    Encodes directory name to hex format, as server expects.
-    """
-    if dir_name:
-        return dir_name.encode().hex() + "/"
-    if dir_names:
-        result = [name.encode().hex() + "/" for name in dir_names]
-        return result
-    return False
-
-
-def decode_from_hex(hex_encoded_str):
-    """
-    Decodes hex directory name
-    """
-    decode_hex = codecs.getdecoder("hex_codec")
-    return decode_hex(hex_encoded_str)[0].decode("utf-8")
-
-
 class LightClient:
     """
     LightUpon.cloud client.
@@ -52,15 +24,26 @@ class LightClient:
     ``url`` -- The base upload API endpoint.
                For example "http://127.0.0.1:8082/"
     """
+    # We split file by chunks, in order to speed up retries
     FILE_UPLOAD_CHUNK_SIZE = 2000000
 
-    def __init__(self, url, username, password):
+    def __init__(self, region, url, username=None, password=None, api_key=None):
+        self.region = region
+        self.token = None    # used in case of username/password auth
+        self.api_key = None  # used to generate signature
+        self.user_id = None
+
         if url.endswith("/"):
             self.url = url
         else:
             self.url = "{}/".format(url)
 
-        self.login(username, password)
+        if username and password:
+            self.login(username, password)
+        else:
+            assert api_key
+            self.api_key = api_key
+            self.user_id = None
 
     def login(self, username, password):
         """
@@ -75,23 +58,24 @@ class LightClient:
         self.token = data["token"]
         self.user_id = data["id"]
 
-    def _increment_version(self, last_seen_version, modified_utc):
+    def _increment_version(self, bucket_id, last_seen_version, modified_utc):
         """
         Increments provided version or creates a new one, if not provided.
         ``last_seen_version`` -- casual version vector value.
                                  It should be encoded as base64(json(value))
         ``modified_utc`` -- it is used to display modified time in web UI.
         """
+        tenant_id = bucket_id.split("-")[1]
         dvvset = DVVSet()
         if not last_seen_version:
-            dot = dvvset.create(dvvset.new(modified_utc), self.user_id)
+            dot = dvvset.create(dvvset.new(modified_utc), (self.user_id or tenant_id))
             version = b64encode(json.dumps(dot).encode())
         else:
             # increment version
             last_seen_version = json.loads(b64decode(last_seen_version))
             context = dvvset.join(last_seen_version)
             new_dot = dvvset.update(dvvset.new_with_history(context, modified_utc),
-                                    last_seen_version, self.user_id)
+                                    last_seen_version, (self.user_id or tenant_id))
             version = dvvset.sync([last_seen_version, new_dot])
             version = b64encode(json.dumps(version).encode())
         return version
@@ -120,9 +104,12 @@ class LightClient:
             offset = 0
         headers = {
             "accept": "application/json",
-            "authorization": "Token {}".format(self.token),
             "content-range": ct_range
         }
+        if self.token:
+            headers.update({
+                "authorization": "Token {}".format(self.token),
+            })
         if offset + chunk_size == file_size:
             # last chunk
             etags = ",".join(["{},{}".format(i + 1, md5_list[i]) for i in range(len(md5_list))])
@@ -134,6 +121,12 @@ class LightClient:
             r_url = "{}riak/upload/{}/".format(self.url, bucket_id)
         else:
             r_url = "{}riak/upload/{}/{}/{}/".format(self.url, bucket_id, upload_id, part_num)
+
+        if self.api_key:
+            to_sign = "{}/{}/".format(bucket_id, prefix)
+            signature = self.calculate_url_signature("POST", to_sign, "")
+            multipart_form_data.update({"signature": signature})
+
         # send request without binary data first
         response = requests.post(r_url, files=multipart_form_data, headers=headers)
 
@@ -151,7 +144,7 @@ class LightClient:
                 return {"guid": guid, "upload_id": upload_id, "end_byte": end_byte,
                         "md5_list": md5_list, "part_num": part_num}
         if response.status_code != 200:
-            return {"error": response.json()}
+            return {"error": response.content, "status_code": response.status_code}
         response_json = response.json()
 
         upload_id = response_json["upload_id"]
@@ -167,7 +160,7 @@ class LightClient:
         })
         response = requests.post(r_url, files=multipart_form_data, headers=headers)
         if response.status_code != 200:
-            return {"error": response.json()}
+            return {"error": response.content, "status": response.status_code}
         response_json = response.json()
         end_byte = response_json["end_byte"]
         if offset + chunk_size == file_size:
@@ -197,7 +190,7 @@ class LightClient:
         file_size = stat.st_size
 
         modified_utc = str(int(stat.st_mtime))
-        version = self._increment_version(last_seen_version, modified_utc)
+        version = self._increment_version(bucket_id, last_seen_version, modified_utc)
 
         md5_list = []
         result = None
@@ -244,7 +237,16 @@ class LightClient:
         else:
             url = "{}riak/list/{}/".format(self.url, bucket_id)
 
-        if show_deleted:
+        if self.api_key:
+            to_sign = "{}/".format(bucket_id)
+            if prefix:
+                to_sign += "{}/".format(prefix)
+            signature = self.calculate_url_signature("GET", to_sign)
+            url += "?signature={}".format(signature)
+
+            if show_deleted:
+                url += "&show-deleted=1"
+        elif show_deleted:
             url += "?show-deleted=1"
 
         headers = {
@@ -280,6 +282,14 @@ class LightClient:
             "accept": "application/json",
             "authorization": "Token {}".format(self.token),
         }
+
+        if self.api_key:
+            to_sign = "{}/".format(bucket_id)
+            if prefix:
+                to_sign += "{}/".format(prefix)
+            signature = self.calculate_url_signature("DELETE", to_sign)
+            url += "?signature={}".format(signature)
+
         return requests.delete(url, data=json.dumps(data), headers=headers)
 
     def undelete(self, bucket_id, object_keys: list, prefix: str = None):
@@ -307,6 +317,14 @@ class LightClient:
             "accept": "application/json",
             "authorization": "Token {}".format(self.token),
         }
+
+        if self.api_key:
+            to_sign = "{}/".format(bucket_id)
+            if prefix:
+                to_sign += "{}/".format(prefix)
+            signature = self.calculate_url_signature("PATCH", to_sign)
+            url += "?signature={}".format(signature)
+
         return requests.patch(url, data=json.dumps(data), headers=headers)
 
     def create_pseudo_directory(self, bucket_id, name: str, prefix: str = ""):
@@ -332,6 +350,14 @@ class LightClient:
             "directory_name": name
         }
         url = "{}riak/list/{}/".format(self.url, bucket_id)
+
+        if self.api_key:
+            to_sign = "{}/".format(bucket_id)
+            if prefix:
+                to_sign += "{}/".format(prefix)
+            signature = self.calculate_url_signature("POST", to_sign)
+            url += "?signature={}".format(signature)
+
         return requests.post(url, json=data, headers=headers)
 
     def patch(self, bucket_id: str, operation: str, object_keys: list, prefix: str = ""):
@@ -356,6 +382,14 @@ class LightClient:
         }
 
         url = "{}riak/list/{}/".format(self.url, bucket_id)
+
+        if self.api_key:
+            to_sign = "{}/".format(bucket_id)
+            if prefix:
+                to_sign += "{}/".format(prefix)
+            signature = self.calculate_url_signature("PATCH", to_sign)
+            url += "?signature={}".format(signature)
+
         return requests.patch(url, json=data, headers=headers)
 
     def move(self, src_bucket_id: str, dst_bucket_id: str, object_keys: dict, src_prefix: str = "",
@@ -390,6 +424,14 @@ class LightClient:
             "dst_prefix": dst_prefix
         }
         url = "{}riak/move/{}/".format(self.url, src_bucket_id)
+
+        if self.api_key:
+            to_sign = "{}/".format(src_bucket_id)
+            if prefix:
+                to_sign += "{}/".format(src_prefix)
+            signature = self.calculate_url_signature("POST", to_sign)
+            url += "?signature={}".format(signature)
+
         return requests.post(url, json=data, headers=headers)
 
     def copy(self, src_bucket_id: str, dst_bucket_id: str, object_keys: dict, src_prefix: str = "",
@@ -426,6 +468,14 @@ class LightClient:
             "dst_prefix": dst_prefix
         }
         url = "{}riak/copy/{}/".format(self.url, src_bucket_id)
+
+        if self.api_key:
+            to_sign = "{}/".format(src_bucket_id)
+            if prefix:
+                to_sign += "{}/".format(src_prefix)
+            signature = self.calculate_url_signature("POST", to_sign)
+            url += "?signature={}".format(signature)
+
         return requests.post(url, json=data, headers=headers)
 
     def rename(self, src_bucket_id, src_object_key: str, dst_object_name: str, prefix: str = ""):
@@ -457,6 +507,14 @@ class LightClient:
             "prefix": prefix
         }
         url = "{}riak/rename/{}/".format(self.url, src_bucket_id)
+
+        if self.api_key:
+            to_sign = "{}/".format(src_bucket_id)
+            if prefix:
+                to_sign += "{}/".format(src_prefix)
+            signature = self.calculate_url_signature("POST", to_sign)
+            url += "?signature={}".format(signature)
+
         return requests.post(url, json=data, headers=headers)
 
     def get_version(self, bucket_id):
@@ -465,6 +523,11 @@ class LightClient:
             "authorization": "Token {}".format(self.token),
         }
         url = "{}riak/version/{}/".format(self.url, bucket_id)
+
+        if self.api_key:
+            signature = self.calculate_url_signature("HEAD", "{}/".format(bucket_id))
+            url += "?signature={}".format(signature)
+
         response = requests.head(url, headers=headers)
         return response
 
@@ -479,15 +542,23 @@ class LightClient:
             url = "{}riak/action-log/{}/{}".format(self.url, bucket_id, prefix)
         else:
             url = "{}riak/action-log/{}/".format(self.url, bucket_id)
+
+        if self.api_key:
+            to_sign = "{}/".format(bucket_id)
+            if prefix:
+                to_sign += "{}/".format(prefix)
+            signature = self.calculate_url_signature("HEAD", to_sign)
+            url += "?signature={}".format(signature)
+
         response = requests.get(url, headers=headers)
         return response
 
-    def calculate_url_signature(self, region, method, path, qs, api_key):
+    def calculate_url_signature(self, method, path, qs):
         canonical_request = "{}\n{}\n{}".format(method, path, qs)
         canonical_request_hash = hashlib.sha256(canonical_request.encode()).hexdigest()
-        string_to_sign = "HMAC-SHA256\n{}/s3/\n{}".format(region, canonical_request_hash)
+        string_to_sign = "HMAC-SHA256\n{}/s3/\n{}".format(self.region, canonical_request_hash)
 
-        region_key = hmac.new("LightUp{}".format(api_key).encode(), region.encode(), hashlib.sha256).digest()
+        region_key = hmac.new("LightUp{}".format(self.api_key).encode(), self.region.encode(), hashlib.sha256).digest()
         signing_key = hmac.new(region_key, b"s3", hashlib.sha256).digest()
 
         return hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()

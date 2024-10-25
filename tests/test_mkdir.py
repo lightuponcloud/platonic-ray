@@ -10,11 +10,8 @@ from client_base import (
     TestClient,
     ACTION_LOG_FILENAME,
     configure_boto3)
-from light_client import (
-    LightClient,
-    generate_random_name,
-    encode_to_hex,
-    decode_from_hex)
+from light_client import LightClient
+from client_base import generate_random_name, encode_to_hex, decode_from_hex
 
 
 class MKdirTest(TestClient):

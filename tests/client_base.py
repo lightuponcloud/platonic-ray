@@ -64,6 +64,34 @@ def configure_boto3():
     return resource
 
 
+def generate_random_name():
+    """
+    Returns a random name of weird characters.
+    """
+    alphabet = "{}{}ЄєІіЇїҐґ".format(string.digits, string.ascii_lowercase)
+    return "".join(random.sample(alphabet, 20))
+
+
+def encode_to_hex(dir_name: str = None, dir_names: list = None):
+    """
+    Encodes directory name to hex format, as server expects.
+    """
+    if dir_name:
+        return dir_name.encode().hex() + "/"
+    if dir_names:
+        result = [name.encode().hex() + "/" for name in dir_names]
+        return result
+    return False
+
+
+def decode_from_hex(hex_encoded_str):
+    """
+    Decodes hex directory name
+    """
+    decode_hex = codecs.getdecoder("hex_codec")
+    return decode_hex(hex_encoded_str)[0].decode("utf-8")
+
+
 class TestClient(unittest.TestCase):
     def setUp(self):
         creds = {"login": USERNAME_1, "password": PASSWORD_1}

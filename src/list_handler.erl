@@ -768,7 +768,7 @@ create_pseudo_directory(Req0, State) when erlang:is_list(State) ->
 handle_post(Req0, State0) ->
     BucketId = proplists:get_value(bucket_id, State0),
     case s3_api:head_bucket(BucketId) of
-    	not_found -> s3_api:create_bucket(BucketId);
+	not_found -> s3_api:create_bucket(BucketId);
 	_ -> ok
     end,
     {ok, Body, Req1} = cowboy_req:read_body(Req0),

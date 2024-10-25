@@ -10,7 +10,9 @@ from client_base import (
     configure_boto3,
     ACTION_LOG_FILENAME,
     TestClient)
-from light_client import LightClient, generate_random_name, encode_to_hex, decode_from_hex
+from light_client import LightClient
+
+from client_base import generate_random_name, encode_to_hex, decode_from_hex
 
 
 class CopyTest(TestClient):

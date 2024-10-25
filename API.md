@@ -89,9 +89,9 @@ curl -v -X GET $URL/riak/logout/ \
     -H "authorization: **Token** $TOKEN"
 ```
 
-## GET /riak/list/[:bucket_id] 
+## GET /riak/list/[:bucket_id]/[:prefix]
 
-Use this API endpoint to get the list of objects. 
+Use this API endpoint to get the list of objects.
 It returns contents of cached index, containing list of objects and pseudo-directories.
 
 ### Parameters
@@ -99,6 +99,8 @@ It returns contents of cached index, containing list of objects and pseudo-direc
 **prefix** : Hex-encoded UTF8 string. For example "blah" becomes ```"626c6168"```, -- name of pseudo-directory.
 
 **show-deleted** : Flag indicating the output should include deleted objects. Value should be "1" or "true".
+
+**signature** : Signature, generated using API Key
 
 **Auth required** : YES
 
@@ -161,9 +163,13 @@ curl -vv -X GET "http://127.0.0.1/riak/list/the-poetry-naukovtsi-res/?prefix=646
 ```
 
 
-## POST /riak/list/[:bucket_id]
+## POST /riak/list/[:bucket_id]/[:prefix]
 
 This API endpoint creates pseudo-directory, that is stored as Hex-encoded value of UTF8 string.
+
+### Parameters
+
+**signature** : Signature, generated using API Key
 
 ### Body
 
@@ -207,11 +213,16 @@ curl -X POST "http://127.0.0.1/riak/list/the-poetry-naukovtsi-res" \
 **directory_name** : UTF8 name of new pseudo-dorectory, that should be created.
 
 
-## PATCH /riak/list/[:bucket_id]
+## PATCH /riak/list/[:bucket_id]/[:prefix]
 
 This API andpoint allows to *lock*, *unlock*, *undelete* objects.
 Undelete operation marks objects as visible again.
 Lock marks them immutable and unlock reverses that operation.
+
+### Parameters
+
+**signature** : Signature, generated using API Key
+
 
 ### Body
 
@@ -276,9 +287,13 @@ curl -X PATCH "http://127.0.0.1/riak/list/the-poetry-naukovtsi-res" \
 ]
 
 
-## DELETE /riak/list/[:bucket_id]
+## DELETE /riak/list/[:bucket_id]/[:prefix]
 
 Marks objects as deleted. In case of pseudo-directoies, it renames them and makrs them as deleted.
+
+### Parameters
+
+**signature** : Signature, generated using API Key
 
 ### Body
 
@@ -333,7 +348,7 @@ curl -X DELETE "http://127.0.0.1/riak/object/the-poetry-naukovtsi-res" \
 ["74657374/64656d6f/", "74657374/something.jpg"]
 ```
 
-## GET /riak/thumbnail/[:bucket_id]
+## GET /riak/thumbnail/[:bucket_id]/[:prefix]
 
 Generate image thumbnail. Scales image, stored in Riak CS to width or heigt, specified in request
 Returns binary image data.
@@ -510,8 +525,6 @@ Copy object or directory.
                           In that case response should contain the list of copied objects. List might be empty or
                           it can be incomplete. So client application should retry copy of those object that are
                           missing in the list.
-
-
 ### Body
 
 ```json
@@ -551,7 +564,6 @@ curl -s -X POST "http://127.0.0.1/riak/copy/the-poetry-naukovtsi-res/" \
     -H "authorization: Token $TOKEN" \
     -d "{ \"src_prefix\": \"64656d6f/\", \"dst_prefix\": \"64656d6f/74657374/\", \"dst_bucket_id\": \"the-poetry-naukovtsi-res\", \"src_object_keys\": {"1350098.jpg": \"1350098.jpg\"} }"
 ```
-
 
 
 ## POST /riak/move/[:src_bucket_id]/
@@ -603,7 +615,7 @@ curl -s -X POST "http://127.0.0.1/riak/move/the-poetry-naukovtsi-res/" \
 ```
 
 
-## POST /riak/rename/[:src_bucket_id]/ 
+## POST /riak/rename/[:src_bucket_id]/[:src_prefix]
 
 Renames object or directory. Changes ``"orig_name"`` meta tag when called on object.
 Moves nested objects to new prefix when used on pseudo-directories.
@@ -628,7 +640,6 @@ Moves nested objects to new prefix when used on pseudo-directories.
                           In that case response should contain the list of renamed objects. List might be empty or
                           it can be incomplete. So client application should retry finish rename manually in that case
                           Example of response body in that case: {"dir_errors": ["64656d6f/], "object_errors": []}
-
 ### Body
 
 ```json
@@ -656,7 +667,7 @@ curl -s -X POST "http://127.0.0.1/riak/rename/the-poetry-naukovtsi-res/" \
     -d "{ \"prefix\": \"64656d6f/\", \"src_object_key\": \"something-random.jpg\", \"dst_object_name\": \"Something Something.jpg\" }"
 ```
 
-## GET /riak/download/[...]
+## GET /riak/download/[:bucket_id]/[:prefix]/[:object_key]
 
 Allows to download file, in case user belongs to group where file is stored.
 
@@ -693,7 +704,7 @@ curl "http://127.0.0.1/riak/download/the-poetry-naukovtsi-res/d0bfd180d0b8d0bad0
 **Code** : `400 Bad Request` When incorrect JSON values provided
 
 
-## GET /riak/action-log/[:bucket_id]/
+## GET /riak/action-log/[:bucket_id]/[:prefix]
 
 Fetch the history of specified pseudo-directory.
 
@@ -718,7 +729,7 @@ Fetch the history of specified pseudo-directory.
 ```
 
 
-## POST /riak/action-log/[:bucket_id]/
+## POST /riak/action-log/[:bucket_id]/[:prefix]
 
 Allow to restore previous version of file.
 
