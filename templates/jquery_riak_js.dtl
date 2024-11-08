@@ -506,8 +506,8 @@ $.stack = function(options){
     },
     get_download_url: function(root_uri, bucket_id, hex_prefix, obj_name){
      var token = RiakAPI.options.token;
-     var url = root_uri+'download/'+bucket_id+'/'+obj_name;
-     if(hex_prefix) url = root_uri+'download/'+bucket_id+'/'+(hex_prefix.charAt(hex_prefix.length-1)=="/"?hex_prefix:hex_prefix+"/")+obj_name;
+     var url = root_uri+'download/'+bucket_id+'/?object_key='+obj_name;
+     if(hex_prefix) url = root_uri+'download/'+bucket_id+'/'+(hex_prefix.charAt(hex_prefix.length-1)=="/"?hex_prefix:hex_prefix+"/")+"?object_key="+obj_name;
      return url;
     },
     get_static_root: function(){
