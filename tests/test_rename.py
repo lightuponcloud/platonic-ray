@@ -1,5 +1,6 @@
 import unittest
 import time
+import os
 
 from client_base import (
     BASE_URL,
@@ -8,8 +9,10 @@ from client_base import (
     PASSWORD_1,
     ACTION_LOG_FILENAME,
     configure_boto3,
+    generate_random_name,
+    encode_to_hex,
     TestClient)
-from light_client import LightClient, generate_random_name, encode_to_hex
+from light_client import LightClient
 
 
 class RenameTest(TestClient):
@@ -66,7 +69,7 @@ class RenameTest(TestClient):
     """
 
     def setUp(self):
-        self.client = LightClient(BASE_URL, USERNAME_1, PASSWORD_1)
+        self.client = LightClient("US", BASE_URL, api_key=os.getenv("USER_1_API_KEY"))
         self.resource = configure_boto3()
         self.purge_test_buckets()
 
@@ -101,23 +104,28 @@ class RenameTest(TestClient):
 
         time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["orig_name"], random_name)
-        self.assertEqual(result[0]["is_dir"], 0)
-        self.assertEqual(result[0]["is_locked"], 0)
-        self.assertEqual(result[0]["bytes"], 2773205)
-        self.assertTrue(("guid" in result[0]))
-        self.assertTrue(("bytes" in result[0]))
-        self.assertTrue(("version" in result[0]))
-        self.assertTrue(("last_modified_utc" in result[0]))
-        self.assertTrue(("author_id" in result[0]))
-        self.assertTrue(("author_name" in result[0]))
-        self.assertTrue(("author_tel" in result[0]))
-        self.assertTrue(("lock_user_id" in result[0]))
-        self.assertTrue(("lock_user_name" in result[0]))
-        self.assertTrue(("lock_user_tel" in result[0]))
-        self.assertTrue(("lock_modified_utc" in result[0]))
-        self.assertTrue(("md5" in result[0]))
+        self.assertEqual(len(result), 2)
+        record = [i for i in result if i["key"] == object_key][0]
+
+        self.assertEqual(record["orig_name"], object_key)
+        self.assertEqual(record["is_dir"], 0)
+        self.assertEqual(record["is_locked"], 0)
+        self.assertEqual(record["bytes"], 2773205)
+        self.assertTrue(("guid" in record))
+        self.assertTrue(("bytes" in record))
+        self.assertTrue(("version" in record))
+        self.assertTrue(("last_modified_utc" in record))
+        self.assertTrue(("author_id" in record))
+        self.assertTrue(("author_name" in record))
+        self.assertTrue(("author_tel" in record))
+        self.assertTrue(("lock_user_id" in record))
+        self.assertTrue(("lock_user_name" in record))
+        self.assertTrue(("lock_user_tel" in record))
+        self.assertTrue(("lock_modified_utc" in record))
+        self.assertTrue(("md5" in record))
+
+        record = [i for i in result if i["orig_name"] == random_name][0]
+        self.assertEqual(result[1]["is_dir"], 0)
 
         # 3. Create directory with different name
         random_dir_name = generate_random_name()
@@ -126,9 +134,9 @@ class RenameTest(TestClient):
 
         time.sleep(3)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
-        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result), 3)
         names = [i["orig_name"] for i in result]
-        self.assertEqual(set(names), set([random_name, random_dir_name]))
+        self.assertEqual(set(names), set([fn, random_name, random_dir_name]))
         self.assertEqual(result[0]["is_dir"], 0)
         self.assertEqual(result[0]["is_locked"], 0)
         self.assertEqual(result[0]["bytes"], 2773205)
@@ -148,7 +156,7 @@ class RenameTest(TestClient):
         encoded_prefix = encode_to_hex(random_prefix)
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertTrue(encoded_prefix in ["{}/".format(i['key']) for i in result])
-        self.assertEqual(len(result), 3)
+        self.assertEqual(len(result), 4)
 
         random_dir_name = generate_random_name()
         encoded_random_prefix = encode_to_hex(random_prefix)
@@ -159,7 +167,7 @@ class RenameTest(TestClient):
         time.sleep(2)  # time necessary for server to update db
         encoded_prefix = encode_to_hex(random_prefix)
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
-        self.assertEqual(len(result), 4)
+        self.assertEqual(len(result), 5)
         self.assertTrue(encode_to_hex(random_dir_name) in ["{}/".format(i['key']) for i in result])
         self.assertTrue(encoded_random_prefix in [i['prefix'] for i in result])
 
@@ -185,16 +193,12 @@ class RenameTest(TestClient):
 
         time.sleep(3)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
-        self.assertEqual(len(result), 5)
-
-        prefixed_action_log = "{}{}".format(encoded_random_prefix, ACTION_LOG_FILENAME)
-        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=prefixed_action_log)
-        self.assertEqual(len(action_log), 2)
-        rename_dir_record = [i for i in action_log if i["action"] == "rename"][0]
-        self.assertEqual(rename_dir_record["orig_name"], random_new_name)
-        self.assertEqual(rename_dir_record["details"], 'Renamed "{}" to "{}"'.format(random_dir_name, random_new_name))
+        self.assertEqual(len(result), 6)
 
         keys = [(i['prefix'], i['key']) for i in result]
+        # import pdb;pdb.set_trace()
+
+        # check if renamed file is DB
         assert (encoded_random_prefix, encode_to_hex(random_new_name)[:-1]) in keys
         new_file_prefix = old_file_prefix.replace(encode_to_hex(random_dir_name), encode_to_hex(random_new_name))
         assert (new_file_prefix, object_key) in keys
@@ -207,6 +211,14 @@ class RenameTest(TestClient):
         self.assertTrue(dir_index is not None)
         self.assertTrue(result[dir_index]["prefix"] == encoded_random_prefix)
         self.assertTrue("{}/".format(result[dir_index]['key']), encode_to_hex(random_new_name))
+
+        # check action log
+        prefixed_action_log = "{}{}".format(encoded_random_prefix, ACTION_LOG_FILENAME)
+        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=prefixed_action_log)
+        self.assertEqual(len(action_log), 2)
+        rename_dir_record = [i for i in action_log if i["action"] == "rename"][0]
+        self.assertEqual(rename_dir_record["orig_name"], random_new_name)
+        self.assertEqual(rename_dir_record["details"], 'Renamed "{}" to "{}"'.format(random_dir_name, random_new_name))
 
         # rename root pseudo-dir
         another_random_new_name = generate_random_name()

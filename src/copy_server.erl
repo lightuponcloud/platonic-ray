@@ -187,7 +187,7 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 		    %% Object copied, delete only if copy confirmed
 		    CopiedOne = element(3, I),
 		    case proplists:is_defined(skipped, CopiedOne) of
-			true -> ok; %% don't delete
+			true -> undefined; %% don't delete
 			false ->
 			    SrcPrefix1 =
 				case proplists:get_value(src_prefix, CopiedOne) of
@@ -201,14 +201,16 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 			    %% Delete source object only if not locked by another user
 			    case (IsSrcLocked =:= true andalso LockUserId =:= User#user.id) orelse IsSrcLocked =:= false of
 				true ->
-				    case s3_api:delete_object(SrcBucketId, PrefixedObjectKey) of
+				    SQL = case s3_api:delete_object(SrcBucketId, PrefixedObjectKey) of
 					{error, Reason} ->
 					    lager:error("[move_handler] Can't delete ~p/~p: ~p",
-							[SrcBucketId, PrefixedObjectKey, Reason]);
-					{ok, _} -> sqlite_server:delete_object(SrcBucketId, SrcPrefix1, unicode:characters_to_list(OldKey0))
+							[SrcBucketId, PrefixedObjectKey, Reason]),
+					    undefined;
+					{ok, _} -> sql_lib:delete_object(SrcPrefix1, unicode:characters_to_list(OldKey0))
 				    end,
-				    s3_api:delete_object(SrcBucketId, PrefixedObjectKey ++ ?LOCK_SUFFIX);
-				false -> ok
+				    s3_api:delete_object(SrcBucketId, PrefixedObjectKey ++ ?LOCK_SUFFIX),
+				    SQL;
+				false -> undefined
 			    end
 		    end;
 		_ ->
@@ -665,51 +667,68 @@ prepare_action_log(CopiedStuff) ->
     {CopiedDirectories, CopiedObjects}.
 
 
-delete_pseudo_directory(BucketId, Prefix0, CopiedObjects, UserId) ->
-    HasSkipped = lists:filtermap(
-	fun(I) ->
-	    case proplists:is_defined(skipped, I) of
-		true -> {true, true};
-		false ->
-		    SrcPrefix =
-			case proplists:get_value(src_prefix, I) of
-			    undefined -> undefined;
-			    V -> erlang:binary_to_list(V)
-			end,
-		    OldKey = erlang:binary_to_list(proplists:get_value(old_key, I)),
-		    PrefixedObjectKey = utils:prefixed_object_key(SrcPrefix, OldKey),
-		    case proplists:get_value(src_locked, I) of
-			true ->
-			    LockUserId = proplists:get_value(src_lock_user_id, I),
-			    case LockUserId =/= UserId of
-				false -> ok; %% don't delete source object, as someone's editing it
-				true ->
-				    case s3_api:delete_object(BucketId, PrefixedObjectKey) of
-					{error, Reason} ->
-					    lager:error("[move_handler] Can't delete object ~p/~p: ~p",
-							[BucketId, PrefixedObjectKey, Reason]);
-					{ok, _} -> sql_server:delete_object(BucketId, SrcPrefix, OldKey)
-				    end,
-				    s3_api:delete_object(BucketId, PrefixedObjectKey ++ ?LOCK_SUFFIX)
-			    end;
-			false ->
-			    case s3_api:delete_object(BucketId, PrefixedObjectKey) of
-				{error, Reason} ->
-				    lager:error("[move_handler] Can't delete object ~p/~p: ~p",
-						[BucketId, PrefixedObjectKey, Reason]);
-				{ok, _} -> sqlite_server:delete_object(BucketId, SrcPrefix, OldKey)
-			    end
-		    end,
-		    false
+delete_objects([], {Results, HasSkipped, BucketId, UserId}) -> {lists:reverse(Results), HasSkipped, BucketId, UserId};
+delete_objects([Object|Rest], {Results, HasSkipped, BucketId, UserId}) ->
+    case proplists:is_defined(skipped, Object) of
+        true ->
+            % If object is skipped, continue with updated HasSkipped flag
+            delete_objects(Rest, {Results, true, BucketId, UserId});
+        false ->
+            % If not skipped, call delete_object and collect result
+            case delete_object(Object, BucketId, UserId) of
+		undefined -> delete_objects(Rest, {Results, HasSkipped, BucketId, UserId});
+		SQL -> delete_objects(Rest, {[SQL|Results], HasSkipped, BucketId, UserId})
 	    end
-	end, CopiedObjects),
+    end.
+
+delete_object(Object, BucketId, UserId) ->
+    SrcPrefix =
+	case proplists:get_value(src_prefix, Object) of
+	    undefined -> undefined;
+	    V -> erlang:binary_to_list(V)
+	end,
+    OldKey = erlang:binary_to_list(proplists:get_value(old_key, Object)),
+    PrefixedObjectKey = utils:prefixed_object_key(SrcPrefix, OldKey),
+    case proplists:get_value(src_locked, Object) of
+	true ->
+	    LockUserId = proplists:get_value(src_lock_user_id, Object),
+	    case LockUserId =/= UserId of
+		false -> undefined; %% Don't delete source object, as someone's editing it
+		true ->
+		    SQL1 =
+			case s3_api:delete_object(BucketId, PrefixedObjectKey) of
+			    {error, Reason} ->
+				lager:error("[move_handler] Can't delete object ~p/~p: ~p",
+					    [BucketId, PrefixedObjectKey, Reason]),
+				undefined;
+			    {ok, _} -> sql_lib:delete_object(SrcPrefix, OldKey)
+			end,
+		    s3_api:delete_object(BucketId, PrefixedObjectKey ++ ?LOCK_SUFFIX),
+		    SQL1
+		end;
+	false ->
+	    case s3_api:delete_object(BucketId, PrefixedObjectKey) of
+		{error, Reason} ->
+		    lager:error("[move_handler] Can't delete object ~p/~p: ~p",
+				[BucketId, PrefixedObjectKey, Reason]),
+		    undefined;
+		{ok, _} -> sqlite_lib:delete_object(SrcPrefix, OldKey)
+	    end
+    end.
+
+
+delete_pseudo_directory(BucketId, Prefix0, CopiedObjects, UserId) ->
+    %% Initialize accumulator with {Results, HasSkipped}
+    {SQLs, HasSkipped} = delete_objects(CopiedObjects, {[], false, BucketId, UserId}),
+    SQL0 = lists:merge(SQLs),
+
     Prefix1 =
 	case Prefix0 of
 	    undefined -> undefined;
 	    P -> utils:to_list(P)
 	end,
     case HasSkipped of
-	[] ->
+	false ->
 	    PrefixedIndexKey = utils:prefixed_object_key(Prefix1, ?INDEX_FILENAME),
 	    case s3_api:delete_object(BucketId, PrefixedIndexKey) of
 		{error, Reason} ->
@@ -721,7 +740,9 @@ delete_pseudo_directory(BucketId, Prefix0, CopiedObjects, UserId) ->
 	    s3_api:delete_object(BucketId, PrefixedActionLogKey),
 	    %% Mark deleted in SQLite db
 	    DirName = utils:unhex(erlang:list_to_binary(filename:basename(Prefix1))),
-	    sqlite_server:delete_pseudo_directory(BucketId, utils:dirname(Prefix1),
-						  DirName, UserId);
-	_ -> ok %% Do not delete index yet
+	    SQL1 = sql_lib:delete_pseudo_directory(utils:dirname(Prefix1), DirName),
+	    sqlite_server:exec_sql(BucketId, SQL0, SQL1);
+	true ->
+	    %% Do not delete index yet, but delete objects from DB
+	    sqlite_server:exec_sql(BucketId, SQL0, [])
     end.

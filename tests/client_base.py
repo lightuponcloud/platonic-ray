@@ -10,7 +10,9 @@ import tempfile
 import sqlite3
 from base64 import b64encode
 import hashlib
-import hmac
+import string
+import random
+import codecs
 
 from environs import Env
 

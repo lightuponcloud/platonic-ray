@@ -623,7 +623,7 @@ prefix_lowercase(Prefix0) when erlang:is_list(Prefix0) ->
    Prefix1 = string:to_lower(lists:flatten(Prefix0)),
    case utils:ends_with(Prefix0, <<"/">>) of
        true -> Prefix1;
-       false -> Prefix1++"/"
+       false -> Prefix1
    end.
 
 %%
@@ -778,16 +778,12 @@ handle_post(Req0, State0) ->
 	    case proplists:get_value(user, State0) of
 		undefined -> js_handler:unauthorized(Req0, 28);
 		User ->
-		    case User#user.staff of
-			false -> js_handler:unauthorized(Req0, 37);
-			true ->
-			    create_pseudo_directory(Req1, [
-				{prefixed_directory_name, PrefixedDirectoryName},
-				{prefix, Prefix},
-				{directory_name, DirectoryName},
-				{user, User},
-				{bucket_id, BucketId}])
-		    end
+		    create_pseudo_directory(Req1, [
+			{prefixed_directory_name, PrefixedDirectoryName},
+			{prefix, Prefix},
+			{directory_name, DirectoryName},
+			{user, User},
+			{bucket_id, BucketId}])
 	    end
     end.
 

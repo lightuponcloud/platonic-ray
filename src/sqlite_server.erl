@@ -15,7 +15,7 @@
 -export([start_link/0, create_pseudo_directory/4, delete_pseudo_directory/4,
 	 lock_object/4, add_object/3, delete_object/3, rename_object/5,
 	 rename_pseudo_directory/4, task_create_pseudo_directory/4,
-	 add_action_log_record/3]).
+	 task_exec_sql/2, add_action_log_record/3, exec_sql/3]).
 
 -export([integrity_check/2]).
 
@@ -95,6 +95,12 @@ delete_object(BucketId, Prefix, Key)
 %%-spec(add_action_log_record(BucketId :: string(), Prefix :: string(), Record :: #action_log_record{}) -> ok).
 add_action_log_record(BucketId, Prefix, Record) ->
     gen_server:cast(?MODULE, {add_task, BucketId, Prefix, sql_lib, add_action_log_record, [Record]}).
+
+%%
+%% Allows combining two SQLs into one call.
+%%
+exec_sql(BucketId, SQL0, SQL1) ->
+    gen_server:cast(?MODULE, {add_task, BucketId, ?MODULE, task_exec_sql, [SQL0, SQL1]}).
 
 
 %%--------------------------------------------------------------------
@@ -217,6 +223,8 @@ task_create_pseudo_directory(Prefix, Name, User, DbName) ->
 	    sql_lib:create_pseudo_directory(Prefix, Name, User)
     end.
 
+task_exec_sql(SQL0, SQL1) -> {SQL0, SQL1}.
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -307,16 +315,16 @@ update_db(BucketId, BucketQueue0) ->
 				[] -> [];
 				{SQL0, SQL1} ->
 				    case sqlite3:sql_exec(DbName, SQL0) of
-					ok ->
-					    case sqlite3:sql_exec(DbName, SQL1) of
-						ok -> [];
-						{error, Reason1} ->
-						    lager:error("[sqlite_server] SQL: ~p Error: ~p", [SQL1, Reason1]),
-						    {Module, Func, Args}  %% adding it back to queue
-					    end;
 					{error, _, Reason0} ->
 					    lager:error("[sqlite_server] SQL: ~p Error: ~p", [SQL0, Reason0]),
-					    {Module, Func, Args}  %% adding it back to queue
+					    {Module, Func, Args};  %% adding it back to queue
+					_ ->
+					    case sqlite3:sql_exec(DbName, SQL1) of
+						{error, Reason1} ->
+						    lager:error("[sqlite_server] SQL: ~p Error: ~p", [SQL1, Reason1]),
+						    {Module, Func, Args};  %% adding it back to queue
+						_ -> []
+					    end
 				    end;
 				SQL ->
 				    case sqlite3:sql_exec(DbName, SQL) of

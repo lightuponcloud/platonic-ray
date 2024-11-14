@@ -218,6 +218,7 @@ calculate_url_signature(Method, Path, Qs, SecretAPIKey)
     CanonicalRequest = [erlang:binary_to_list(Method), $\n, erlcloud_http:url_encode_loose(Path), $\n, CanonicalQs],
     StringToSign = ["HMAC-SHA256", $\n, Region, $/, "s3", $/, $\n,
 		    utils:hex(crypto:hash(?HASH_FUNCTION, CanonicalRequest))],
+
     RegionKey = sha256_mac(["LightUp", SecretAPIKey], Region),
     SigningKey = sha256_mac(RegionKey, Service),
     utils:hex(sha256_mac(SigningKey, StringToSign)).

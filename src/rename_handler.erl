@@ -296,10 +296,43 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
     end.
 
 %%
+%% Delete a source object object
+%%
+%% Returns SQL for updating SQLite DB
+%%
+delete_source_object(BucketId, SrcPrefix, SrcObjectKey, DstObjectKey) ->
+    PrefixedSrcObjectKey = utils:prefixed_object_key(SrcPrefix, SrcObjectKey),
+    SQL =
+	case s3_api:delete_object(BucketId, PrefixedSrcObjectKey) of
+	    {error, Reason0} ->
+		lager:error("[rename_handler] Can't delete object ~p/~p: ~p",
+			    [BucketId, PrefixedSrcObjectKey, Reason0]),
+		{error, Reason0};
+	    {ok, _} -> sql_lib:delete_object(SrcPrefix, DstObjectKey)
+	end,
+    %% Rename lock object key, if exsits, as the name changed
+    PrefixedSrcLockKey1 = PrefixedSrcObjectKey ++ ?LOCK_SUFFIX,
+    PrefixedDstLockKey = utils:prefixed_object_key(SrcPrefix, DstObjectKey ++ ?LOCK_SUFFIX),
+    case s3_api:copy_object(BucketId, PrefixedSrcLockKey1, BucketId, PrefixedDstLockKey) of
+	{error, Reason1} ->
+	    lager:error("[rename_handler] Can't copy lock object ~p/~p: ~p",
+			[BucketId, PrefixedSrcLockKey1, Reason1]),
+	    ok;
+	_ ->
+	    case s3_api:delete_object(BucketId, PrefixedSrcLockKey1) of
+		{error, Reason2} ->
+		    lager:error("[rename_handler] Can't delete lock object ~p/~p: ~p",
+				[BucketId, PrefixedSrcLockKey1, Reason2]),
+		    ok;  %% no harm if lock remains, it will be outdated anyway, if its name matches another object
+		{ok, _} -> ok
+	    end
+    end,
+    SQL.
+
+%%
 %% Copies object using new name, deletes old object.
 %%
 rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexContent, ActionLogRecord0) ->
-    PrefixedSrcObjectKey = utils:prefixed_object_key(Prefix0, SrcObjectKey0),
 
     %% We can't just update index with new name, as further file upload or rename operations
     %% would complain "object exist". Provided they have the same object name.
@@ -326,32 +359,11 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 					[BucketId, Prefix0, ObjectKey0, Reason3]),
 			    {error, 5};
 			ok ->
-			    case ObjectKey0 =:= SrcObjectKey0 of
-				true -> ok;  %% Don't delete object
-				false ->
-				    %% Delete a source object object
-				    case s3_api:delete_object(BucketId, PrefixedSrcObjectKey) of
-					{error, Reason1} ->
-					    lager:error("[rename_handler] Can't delete object ~p/~p: ~p",
-							[BucketId, PrefixedSrcObjectKey, Reason1]);
-					{ok, _} ->
-					    sqlite_server:delete_object(BucketId, Prefix0, SrcObjectKey0),
-					    ok
-				    end,
-				    %% Rename lock object key, if exsits, as the name changed
-				    PrefixedSrcLockKey1 = PrefixedSrcObjectKey ++ ?LOCK_SUFFIX,
-				    PrefixedDstLockKey = utils:prefixed_object_key(Prefix0, ObjectKey0 ++ ?LOCK_SUFFIX),
-				    case s3_api:copy_object(BucketId, PrefixedSrcLockKey1, BucketId, PrefixedDstLockKey) of
-					{error, _} -> ok;
-					_ ->
-					    case s3_api:delete_object(BucketId, PrefixedSrcLockKey1) of
-						{error, Reason2} ->
-						    lager:error("[rename_handler] Can't delete object ~p/~p: ~p",
-								[BucketId, PrefixedSrcLockKey1, Reason2]);
-						{ok, _} -> ok
-					    end
-				    end
-			    end,
+			    SQL =
+				case delete_source_object(BucketId, Prefix0, SrcObjectKey0, ObjectKey0) of
+				    {error, _} -> undefined;
+				    S -> S
+				end,
 			    %% Find original object name for action log record
 			    ObjectRecord = lists:nth(1,
 				[I || I <- proplists:get_value(list, IndexContent),
@@ -379,7 +391,7 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 				    sqlite_server:add_action_log_record(BucketId, Prefix0, ActionLogRecord2),
 				    Metadata1 = list_handler:parse_object_record(Metadata0, [
 					{orig_name, unicode:characters_to_binary(OrigName2)}]),
-				    {ObjectKey0, Metadata1}
+				    {ObjectKey0, Metadata1, SQL}
 			    end
 		    end
 	    end;
@@ -449,7 +461,7 @@ rename(Req0, BucketId, State, IndexContent) ->
 		{error, Number} -> js_handler:bad_request(Req0, Number);
 		lock -> js_handler:too_many(Req0);
 		not_found -> js_handler:not_found(Req0);
-		{NewObjKey, NewObj} ->
+		{NewObjKey, NewObj, SQLDelete} ->
 		    OrigName = proplists:get_value("orig-filename", NewObj),
 		    UploadTime = utils:to_integer(proplists:get_value("upload-time", NewObj)),
 		    IsLocked =
@@ -475,7 +487,8 @@ rename(Req0, BucketId, State, IndexContent) ->
 			lock_user_tel = proplists:get_value(lock_user_tel, NewObj),
 			lock_modified_utc = proplists:get_value(lock_modified_utc, NewObj)
 		    },
-		    sqlite_server:add_object(BucketId, Prefix0, Obj),
+		    SQLAdd = sql_lib:add_object(Prefix0, Obj),
+		    sqlite_server:exec_sql(BucketId, SQLDelete, SQLAdd),
 		    Req1 = cowboy_req:set_resp_body(jsx:encode([{orig_name, OrigName}]), Req0),
 		    {true, Req1, []}
 	    end
