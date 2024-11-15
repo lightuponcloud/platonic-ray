@@ -79,7 +79,7 @@ class RenameTest(TestClient):
         res = self.client.upload(TEST_BUCKET_1, fn)
         object_key = res['object_key']
 
-        time.sleep(3)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["key"], fn)
@@ -95,7 +95,7 @@ class RenameTest(TestClient):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()['orig_name'], random_name)
 
-        time.sleep(3)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
         self.assertEqual(len(action_log), 2)
         rename_record = [i for i in action_log if i["action"] == "rename"][0]
@@ -132,7 +132,7 @@ class RenameTest(TestClient):
         res = self.client.create_pseudo_directory(TEST_BUCKET_1, random_dir_name)
         self.assertEqual(res.status_code, 204)
 
-        time.sleep(3)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 3)
         names = [i["orig_name"] for i in result]
@@ -196,16 +196,14 @@ class RenameTest(TestClient):
         self.assertEqual(len(result), 6)
 
         keys = [(i['prefix'], i['key']) for i in result]
-        # import pdb;pdb.set_trace()
 
         # check if renamed file is DB
-        assert (encoded_random_prefix, encode_to_hex(random_new_name)[:-1]) in keys
-        new_file_prefix = old_file_prefix.replace(encode_to_hex(random_dir_name), encode_to_hex(random_new_name))
-        assert (new_file_prefix, object_key) in keys
+        assert (encoded_random_prefix, encode_to_hex(random_dir_name)[:-1]) in keys
+        assert ("{}{}".format(encoded_random_prefix, encode_to_hex(random_new_name)[:-1]), object_key) in keys
 
         dir_index = None
         for idx, dct in enumerate(result):
-            if dct["orig_name"] == random_new_name:
+            if dct["orig_name"] == random_dir_name:
                 dir_index = idx
                 break
         self.assertTrue(dir_index is not None)
@@ -228,7 +226,7 @@ class RenameTest(TestClient):
 
         time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
-        self.assertEqual(len(result), 5)
+        self.assertEqual(len(result), 6)
 
         action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
         self.assertEqual(len(action_log), 5)
@@ -237,8 +235,7 @@ class RenameTest(TestClient):
 
         keys = [(i['prefix'], i['key']) for i in result]
         assert ('', encode_to_hex(another_random_new_name)[:-1]) in keys
-        assert (encode_to_hex(another_random_new_name), encode_to_hex(random_new_name)[:-1]) in keys
-        assert ("{}{}".format(encode_to_hex(another_random_new_name), encode_to_hex(random_new_name)), object_key) in keys
+        assert ("{}{}".format(encode_to_hex(another_random_new_name), encode_to_hex(random_new_name))[:-1], object_key) in keys
 
 
 if __name__ == '__main__':
