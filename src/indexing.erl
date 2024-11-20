@@ -6,7 +6,7 @@
 -export([update/2, update/3, get_index/2, get_object_record/2,
 	 directory_or_object_exists/4, pseudo_directory_exists/2, to_object/1,
 	 get_object_record_by_orig_name/2, get_object_index/2, add_dvv/6,
-	 increment_version/3, remove_previous_version/4]).
+	 increment_version/3, remove_previous_version/4, fetch_full_list/2]).
 
 -include("storage.hrl").
 -include("entities.hrl").

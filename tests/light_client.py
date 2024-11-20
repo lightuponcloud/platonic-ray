@@ -120,12 +120,7 @@ class LightClient:
         if not self.token and not self.api_key:
             raise AssertionError("Authorization information is missing")
 
-        _, signature = self._get_signed_url(
-            "POST",
-            r_url,
-            bucket_id,
-            prefix
-        )
+        signature = self._get_signed_url("POST", bucket_id, prefix)
         if signature:
             multipart_form_data.update({"signature": signature})
 
@@ -240,22 +235,23 @@ class LightClient:
         Code : 403 Forbidden When user has no access to bucket
         Code : 404 Not Found When prefix not found
         """
-        headers = {"accept": "application/json"}
+        if not self.token and not self.api_key:
+            raise AssertionError("Authorization information is missing")
 
-        url, signature = self._get_signed_url(
-            "GET",
-            "{}riak/list/{}/".format(self.url, bucket_id),
-            bucket_id,
-            prefix
-        )
+        headers = {"accept": "application/json"}
+        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        if prefix:
+            if prefix.endswith("/"):
+                prefix = prefix[:-1]
+            url = "{}{}".format(url, prefix)
+
         params = {}
+        signature = self._get_signed_url("GET", bucket_id, prefix)
         if signature:
             params.update({"signature": signature})
         if show_deleted:
             params.update({"show-deleted": show_deleted})
 
-        if not self.token and not self.api_key:
-            raise AssertionError("Authorization information is missing")
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
 
@@ -281,20 +277,22 @@ class LightClient:
         Success Response
         Code : 200 OK
         """
+        if not self.token and not self.api_key:
+            raise AssertionError("Authorization information is missing")
+
         data = {"object_keys": object_keys, "prefix": prefix}
         headers = {"accept": "application/json"}
 
-        url, signature = self._get_signed_url(
-            "DELETE",
-            "{}riak/list/{}/".format(self.url, bucket_id),
-            bucket_id,
-            prefix
-        )
+        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        if prefix:
+            if prefix.endswith("/"):
+                prefix = prefix[:-1]
+            url = "{}{}".format(url, prefix)
+
+        signature = self._get_signed_url("DELETE", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
 
-        if not self.token and not self.api_key:
-            raise AssertionError("Authorization information is missing")
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
         return requests.delete(url, data=json.dumps(data), headers=headers)
@@ -318,20 +316,22 @@ class LightClient:
         Success Response
         Code : 200 OK
         """
-        data = {"object_keys": object_keys, "prefix": prefix}
+        if not self.token and not self.api_key:
+            raise AssertionError("Authorization information is missing")
+
+        data = {"object_keys": object_keys, "prefix": prefix, "op": "undelete"}
         headers = {"accept": "application/json"}
 
-        url, signature = self._get_signed_url(
-            "PATCH",
-            "{}riak/list/{}/".format(self.url, bucket_id),
-            bucket_id,
-            prefix
-        )
+        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        if prefix:
+            if prefix.endswith("/"):
+                prefix = prefix[:-1]
+            url = "{}{}".format(url, prefix)
+
+        signature = self._get_signed_url("PATCH", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
 
-        if not self.token and not self.api_key:
-            raise AssertionError("Authorization information is missing")
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
         return requests.patch(url, data=json.dumps(data), headers=headers)
@@ -350,22 +350,21 @@ class LightClient:
         Success Response
         Code : 204 No Content
         """
+        if not self.token and not self.api_key:
+            raise AssertionError("Authorization information is missing")
+
         headers = {"content-type": "application/json"}
-        data = {
-            "prefix": prefix,
-            "directory_name": name
-        }
-        url, signature = self._get_signed_url(
-            "POST",
-            "{}riak/list/{}/".format(self.url, bucket_id),
-            bucket_id,
-            prefix
-        )
+        data = {"prefix": prefix, "directory_name": name}
+        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        if prefix:
+            if prefix.endswith("/"):
+                prefix = prefix[:-1]
+            url = "{}{}".format(url, prefix)
+
+        signature = self._get_signed_url("POST", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
 
-        if not self.token and not self.api_key:
-            raise AssertionError("Authorization information is missing")
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
         return requests.post(url, json=data, headers=headers)
@@ -380,6 +379,8 @@ class LightClient:
         Success Response
         Code : 200
         """
+        if not self.token and not self.api_key:
+            raise AssertionError("Authorization information is missing")
 
         headers = {"content-type": "application/json"}
         data = {
@@ -387,17 +388,16 @@ class LightClient:
             "prefix": prefix,
             "objects": object_keys
         }
-        url, signature = self._get_signed_url(
-            "PATCH",
-            "{}riak/list/{}/".format(self.url, bucket_id),
-            bucket_id,
-            prefix
-        )
+        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        if prefix:
+            if prefix.endswith("/"):
+                prefix = prefix[:-1]
+            url = "{}{}".format(url, prefix)
+
+        signature = self._get_signed_url("PATCH", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
 
-        if not self.token and not self.api_key:
-            raise AssertionError("Authorization information is missing")
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
         return requests.patch(url, json=data, headers=headers)
@@ -420,8 +420,9 @@ class LightClient:
            "dst_prefix":"string",
            "src_prefix":"string"
         }
-
         """
+        if not self.token and not self.api_key:
+            raise AssertionError("Authorization information is missing")
 
         headers = {"content-type": "application/json"}
         data = {
@@ -430,16 +431,13 @@ class LightClient:
             "src_prefix": src_prefix,
             "dst_prefix": dst_prefix
         }
-        url, signature = self._get_signed_url(
-            "POST",
-            "{}riak/move/{}/".format(self.url, src_bucket_id),
-            src_bucket_id,
-            src_prefix
-        )
+        url = "{}riak/move/{}/".format(self.url, src_bucket_id)
+        signature = self._get_signed_url("POST", src_bucket_id, src_prefix)
         if signature:
-            url = "{}?signature={}".format(url, signature)
-        if not self.token and not self.api_key:
-            raise AssertionError("Authorization information is missing")
+            data.update({
+                "src_signature": signature,
+                "dst_signature": self._get_signed_url("POST", dst_bucket_id, dst_prefix)
+            })
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
         return requests.post(url, json=data, headers=headers)
@@ -466,6 +464,8 @@ class LightClient:
         old_key: "something.random", new_key: "something.random", dst_prefix: "74657374/",
         guid: "6caef57f-fc6d-457d-b2b0-210a1ed2f753", renamed: false, src_prefix: null }, ..]
         """
+        if not self.token and not self.api_key:
+            raise AssertionError("Authorization information is missing")
 
         headers = {"content-type": "application/json"}
         data = {
@@ -474,16 +474,13 @@ class LightClient:
             "src_prefix": src_prefix,
             "dst_prefix": dst_prefix
         }
-        url, signature = self._get_signed_url(
-            "POST",
-            "{}riak/copy/{}/".format(self.url, src_bucket_id),
-            src_bucket_id,
-            src_prefix
-        )
+        url = "{}riak/copy/{}/".format(self.url, src_bucket_id)
+        signature = self._get_signed_url("POST", src_bucket_id, src_prefix)
         if signature:
-            url = "{}?signature={}".format(url, signature)
-        if not self.token and not self.api_key:
-            raise AssertionError("Authorization information is missing")
+            data.update({
+                "src_signature": signature,
+                "dst_signature": self._get_signed_url("POST", dst_bucket_id, dst_prefix)
+            })
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
         return requests.post(url, json=data, headers=headers)
@@ -506,6 +503,8 @@ class LightClient:
            "prefix":"string"
         }
         """
+        if not self.token and not self.api_key:
+            raise AssertionError("Authorization information is missing")
 
         headers = {"content-type": "application/json"}
         data = {
@@ -513,66 +512,71 @@ class LightClient:
             "dst_object_name": dst_object_name,
             "prefix": prefix
         }
-        url, signature = self._get_signed_url(
-            "POST",
-            "{}riak/rename/{}/".format(self.url, bucket_id),
-            bucket_id,
-            prefix
-        )
+        url = "{}riak/rename/{}/".format(self.url, bucket_id)
+        signature = self._get_signed_url("POST", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
-        if not self.token and not self.api_key:
-            raise AssertionError("Authorization information is missing")
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
         return requests.post(url, json=data, headers=headers)
 
-    def get_version(self, bucket_id):
-        headers = {"content-type": "application/json"}
-        url, signature = self._get_signed_url(
-            "HEAD",
-            "{}riak/version/{}/".format(self.url, bucket_id),
-            bucket_id,
-            ""
-        )
-        if signature:
-            url = "{}?signature={}".format(url, signature)
+    def download_zip(self, bucket_id, prefix):
+        """
+        This method uses the following API endpoint
+        /riak/download-zip/[:bucket_id]/[:prefix] 
+        to download archive with all files in directory.
+        """
         if not self.token and not self.api_key:
             raise AssertionError("Authorization information is missing")
+
+        headers = {}
+        url = "{}riak/download-zip/{}/".format(self.url, bucket_id)
+        if prefix:
+            if prefix.endswith("/"):
+                prefix = prefix[:-1]
+            url = "{}{}".format(url, prefix)
+
+        signature = self._get_signed_url("GET", bucket_id, prefix)
+        if signature:
+            url = "{}?signature={}".format(url, signature)
+        if self.token:
+            headers.update({"authorization": "Token {}".format(self.token)})
+        return requests.get(url, headers=headers)
+
+    def get_version(self, bucket_id):
+        if not self.token and not self.api_key:
+            raise AssertionError("Authorization information is missing")
+
+        headers = {"content-type": "application/json"}
+        url = "{}riak/version/{}/".format(self.url, bucket_id)
+        signature = self._get_signed_url("HEAD", bucket_id, "")
+        if signature:
+            url = "{}?signature={}".format(url, signature)
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
         return requests.head(url, headers=headers)
 
     def get_action_log(self, bucket_id, prefix):
-        headers = {"content-type": "application/json"}
-
-        url, signature = self._get_signed_url(
-            "GET",
-            "{}riak/action-log/{}/".format(self.url, bucket_id),
-            bucket_id,
-            prefix
-        )
-        if signature:
-            url = "{}?signature={}".format(url, signature)
         if not self.token and not self.api_key:
             raise AssertionError("Authorization information is missing")
+
+        headers = {"content-type": "application/json"}
+        url = "{}riak/action-log/{}/".format(self.url, bucket_id)
+        signature = self._get_signed_url("GET", bucket_id, prefix)
+        if signature:
+            url = "{}?signature={}".format(url, signature)
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
         return requests.get(url, headers=headers)
 
-    def _get_signed_url(self, method, base_url, bucket_id, prefix):
-        url = copy(base_url)
+    def _get_signed_url(self, method, bucket_id, prefix):
         signature = None
-        if prefix:
-            if prefix.endswith("/"):
-                prefix = prefix[:-1]
-            url = "{}{}".format(url, prefix)
         if self.api_key:
             to_sign = bucket_id
             if prefix:
                 to_sign = "{}/{}".format(to_sign, prefix)
             signature = self.calculate_url_signature(method, to_sign, "")
-        return url, signature
+        return signature
 
     def calculate_url_signature(self, method, path, qs):
         canonical_request = "{}\n{}\n{}".format(method, path, qs)

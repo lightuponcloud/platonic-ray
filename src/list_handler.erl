@@ -620,11 +620,7 @@ prefix_lowercase(undefined) -> undefined;
 prefix_lowercase(Prefix0) when erlang:is_binary(Prefix0) ->
     prefix_lowercase(erlang:binary_to_list(Prefix0));
 prefix_lowercase(Prefix0) when erlang:is_list(Prefix0) ->
-   Prefix1 = string:to_lower(lists:flatten(Prefix0)),
-   case utils:ends_with(Prefix0, <<"/">>) of
-       true -> Prefix1;
-       false -> Prefix1
-   end.
+   string:to_lower(lists:flatten(Prefix0)).
 
 %%
 %% Validates prefix from POST request.

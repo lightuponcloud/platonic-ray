@@ -1035,7 +1035,7 @@ hex_or_undefined(Value) -> utils:hex(Value).
 update_index(Req0, OrigName0, RespCode, State0) ->
     User = proplists:get_value(user, State0),
     BucketId = proplists:get_value(bucket_id, State0),
-    Prefix = proplists:get_value(prefix, State0),
+    Prefix0 = proplists:get_value(prefix, State0),
     Version = proplists:get_value(version, State0),
     UploadId = proplists:get_value(upload_id, State0),
     UploadTime = proplists:get_value(upload_time, State0),
@@ -1109,13 +1109,19 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 	lock -> js_handler:too_many(Req0);
 	_ ->
 	    Options = [{meta, Meta++WidthHeight}],
-	    case s3_api:put_object(BucketId, Prefix, ObjectKey0, <<>>, Options) of
+	    Prefix1 =
+		case utils:ends_with(Prefix0, <<"/">>) of
+		    true -> Prefix0;
+		    false -> Prefix0 ++ "/"
+		end,
+io:fwrite("Prefix1: ~p~n", [Prefix1]),
+	    case s3_api:put_object(BucketId, Prefix1, ObjectKey0, <<>>, Options) of
 		ok ->
 		    %% Update pseudo-directory index for faster listing.
-		    case indexing:update(BucketId, Prefix, [{modified_keys, [ObjectKey0]}]) of
+		    case indexing:update(BucketId, Prefix1, [{modified_keys, [ObjectKey0]}]) of
 			lock ->
 			    lager:warning("[list_handler] Can't update index during upload, as lock exist: ~p/~p",
-				       [BucketId, Prefix]),
+				       [BucketId, Prefix1]),
 			    js_handler:too_many(Req0);
 			_ ->
 			    %% Update Solr index if file type is supported
@@ -1142,7 +1148,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 				lock_user_tel = LockedUserTel1,
 				lock_modified_utc = LockedUserTime
 			    },
-			    sqlite_server:add_object(BucketId, Prefix, Obj),
+			    sqlite_server:add_object(BucketId, Prefix1, Obj),
 
 			    %% Start video transcoding
 			    ObjExt = filename:extension(light_ets:to_lower(ObjectKey0)),
@@ -1157,7 +1163,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 		    end;
 		{error, Reason1} ->
 		    lager:error("[upload_handler] Can't put object ~p/~p/~p: ~p",
-				[BucketId, Prefix, ObjectKey0, Reason1]),
+				[BucketId, Prefix1, ObjectKey0, Reason1]),
 		    js_handler:incorrect_configuration(Req0, 5)
 	    end
     end.

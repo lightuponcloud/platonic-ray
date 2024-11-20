@@ -1,14 +1,15 @@
 %%
-%% Allows to download objects from Riak CS, after authentication.
+%% Allows downloading objects from Riak CS, after authentication.
 %%
 -module(download_handler).
 
--export([init/2, validate_range/2, has_access/5]).
+-export([init/2, validate_range/2, has_access/5, get_object_metadata/3]).
 
 -include("general.hrl").
 -include("storage.hrl").
 -include("entities.hrl").
 -include("log.hrl").
+
 
 %%
 %% Check if visitor has the right to download object.
@@ -144,6 +145,7 @@ validate_range(StartByte, undefined, TotalBytes) -> {StartByte, TotalBytes};
 validate_range(StartByte, EndByte, _TotalBytes) when StartByte > EndByte -> {error, 23};
 validate_range(StartByte, EndByte, _TotalBytes) -> {StartByte, EndByte}.
 
+
 %%
 %% Receives stream from httpc and passes it to cowboy
 %%
@@ -151,7 +153,7 @@ receive_streamed_body(Req0, RequestId0, Pid0, BucketId, NextObjectKeys0) ->
     httpc:stream_next(Pid0),
     receive
 	{http, {RequestId0, stream, BinBodyPart}} ->
-	    cowboy_req:stream_body(BinBodyPart, nofin, Req0),
+	    ok = cowboy_req:stream_body(BinBodyPart, nofin, Req0),
 	    receive_streamed_body(Req0, RequestId0, Pid0, BucketId, NextObjectKeys0);
 	{http, {RequestId0, stream_end, _Headers0}} ->
 	    case NextObjectKeys0 of
@@ -260,7 +262,7 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 	    end
     end.
 
-init(Req0, _Opts) -> 
+init(Req0, _Opts) ->
     T0 = utils:timestamp(), %% measure time of request
     cowboy_req:cast({set_options, #{idle_timeout => infinity}}, Req0),
 

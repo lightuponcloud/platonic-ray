@@ -42,6 +42,7 @@ TEST_BUCKET_3 = env.str("TEST_BUCKET_3")
 UPLOADS_BUCKET_NAME = env.str("UPLOADS_BUCKET_NAME")
 ACTION_LOG_FILENAME = env.str("ACTION_LOG_FILENAME")
 ADMIN_API_KEY = env.str("ADMIN_API_KEY")
+USER_1_API_KEY = env.str("USER_1_API_KEY")
 REGION = env.str("REGION")
 
 ACCESS_KEY = env.str("ACCESS_KEY")
@@ -318,6 +319,14 @@ class TestClient(unittest.TestCase):
         This method uses /riak/download/ API endpoint to download file
         """
         url = "{}/riak/download/{}/?object_key={}".format(BASE_URL, bucketId, objectKey)
+        response = requests.get(url, headers={"authorization": "Token {}".format(self.token)})
+        return response.status_code, response.content
+
+    def download_zip_file(self, bucketId, prefix):
+        """
+        This method uses /riak/download-zip/ API endpoint to download archive with all files in directory.
+        """
+        url = "{}/riak/download-zip/{}".format(BASE_URL, bucketId, prefix)
         response = requests.get(url, headers={"authorization": "Token {}".format(self.token)})
         return response.status_code, response.content
 

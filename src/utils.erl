@@ -357,7 +357,8 @@ is_valid_bucket_id(BucketId, TenantId) when erlang:is_list(BucketId) ->
 			     orelse BucketSuffix =:= ?RESTRICTED_BUCKET_SUFFIX
 			    ) andalso BucketTenantId =:= TenantId
 			    andalso lists:prefix([?BACKEND_PREFIX], Bits) =:= true
-		    end
+		    end;
+		_ -> false
 	    end
     end.
 

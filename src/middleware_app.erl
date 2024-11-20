@@ -15,6 +15,7 @@ start(_Type, _Args) ->
 	{'_', [
 	    {"/riak/list/[...]", list_handler, []},
 	    {"/riak/download/[...]", download_handler, []},
+	    {"/riak/download-zip/[...]", zip_stream_handler, []},
 	    {"/riak/thumbnail/[...]", img_scale_handler, []},
 	    {"/riak/video/[:bucket_id]/", video_handler, []},
 	    {"/riak/version/[:bucket_id]/", version_handler, []},
