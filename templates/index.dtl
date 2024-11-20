@@ -115,6 +115,8 @@
 <span class="separator"></span>
 <span class="pushbutton"><button id="id-createdir-button" class="form-short-small-button1" type="button">{% trans 'Create Directory' %}</button></span>
 <span class="separator"></span>
+<span class="pushbutton"><a href="/riak/download-zip/{{ bucket_id }}/{% if hex_prefix %}{{ hex_prefix }}/{% endif %}?signature={{ signature }}" class="form-short-small-button1 mob-hidden">{% trans 'Download' %}</a></span>
+<span class="separator"></span>
 <span class="pushbutton"><button id="id-upload-button" class="form-short-small-button1 mob-hidden">{% trans 'Upload' %}</button><span class="hidden-btn"><span>{% trans 'Upload' %}</span><input type="file" multiple="" name="files[]"></span></span>
 {% endblock %}</h3>
 <div class="management-table clearfix">

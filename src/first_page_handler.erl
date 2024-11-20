@@ -183,18 +183,40 @@ first_page(Req0, Settings, State) ->
 		    undefined -> "Files";
 		    _ -> utils:unhex_path(Prefix0)
 		end,
-	    {ok, Body} = index_dtl:render([
-		{title, Title},
-		{hex_prefix, Prefix0},
-		{bucket_id, BucketId1},
-		{brand_name, Settings#general_settings.brand_name},
-		{static_root, Settings#general_settings.static_root},
-		{root_path, Settings#general_settings.root_path},
-		{bucket_suffix, ""},
-		{private_suffix, ?PRIVATE_BUCKET_SUFFIX}
-	    ] ++ State, [{translation_fun, fun utils:translate/2}, {locale, Locale}]),
-	    Req1 = cowboy_req:reply(200, #{
-		<<"content-type">> => <<"text/html">>
-	    }, unicode:characters_to_binary(Body), Req0),
-	    {ok, Req1, []}
+
+	    Bits = string:tokens(BucketId1, "-"),
+	    TenantId = string:to_lower(lists:nth(2, Bits)),
+	    case admin_tenants_handler:get_tenant(TenantId) of
+		not_found ->
+		    {ok, Body} = not_found_dtl:render([
+			{brand_name, Settings#general_settings.brand_name}
+		    ]),
+		    Req1 = cowboy_req:reply(404, #{
+			<<"content-type">> => <<"text/html">>
+		    }, unicode:characters_to_binary(Body), Req0),
+		    {ok, Req1, []};
+		Tenant ->
+		    TenantAPIKey = Tenant#tenant.api_key,
+		    Path =
+			case Prefix0 of
+			    undefined -> BucketId1;
+			    _ -> lists:flatten([BucketId1, "/", Prefix0])
+			end,
+		    Signature = crypto_utils:calculate_url_signature(<<"GET">>, Path, "", TenantAPIKey),
+		    {ok, Body} = index_dtl:render([
+			{title, Title},
+			{hex_prefix, Prefix0},
+			{bucket_id, BucketId1},
+			{brand_name, Settings#general_settings.brand_name},
+			{signature, Signature},
+			{static_root, Settings#general_settings.static_root},
+			{root_path, Settings#general_settings.root_path},
+			{bucket_suffix, ""},
+			{private_suffix, ?PRIVATE_BUCKET_SUFFIX}
+		    ] ++ State, [{translation_fun, fun utils:translate/2}, {locale, Locale}]),
+		    Req1 = cowboy_req:reply(200, #{
+			<<"content-type">> => <<"text/html">>
+		    }, unicode:characters_to_binary(Body), Req0),
+		    {ok, Req1, []}
+	    end
     end.

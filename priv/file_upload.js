@@ -1217,6 +1217,10 @@ $(document).ready(function(){
  return false;
 });
 
+$('span.pushbutton').on('click', '#id-download-button', function(){
+ 
+});
+
 $('span.pushbutton').on('click', '#id-action-log', function(){
  var currentElement=$(this);
  var hex_prefix=$("body").attr("data-hex-prefix");

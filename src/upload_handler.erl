@@ -1114,7 +1114,6 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 		    true -> Prefix0;
 		    false -> Prefix0 ++ "/"
 		end,
-io:fwrite("Prefix1: ~p~n", [Prefix1]),
 	    case s3_api:put_object(BucketId, Prefix1, ObjectKey0, <<>>, Options) of
 		ok ->
 		    %% Update pseudo-directory index for faster listing.
