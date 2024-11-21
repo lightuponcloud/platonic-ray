@@ -3,21 +3,7 @@
 -export([init/2]).
 -export([terminate/3]).
 
-%% ZIP format constants
--define(LOCAL_FILE_HEADER_SIGNATURE, 16#04034b50).
--define(CENTRAL_DIR_SIGNATURE, 16#02014b50).
--define(END_OF_CENTRAL_DIR_SIGNATURE, 16#06054b50).
--define(ZIP64_END_OF_CENTRAL_DIR_SIGNATURE, 16#06064b50).
--define(ZIP64_END_OF_CENTRAL_DIR_LOCATOR_SIGNATURE, 16#07064b50).
--define(DATA_DESCRIPTOR_SIGNATURE, 16#08074b50).
--define(VERSION_ZIP64, 45).
--define(COMPRESSION_STORE, 0).
-
-%% General purpose bit flag
--define(USE_DATA_DESCRIPTOR, 16#0008).  %% Bit 3 for data descriptor
-
--define(CHUNK_SIZE, 8388608).
-
+-include("zip.hrl").
 -include("storage.hrl").
 
 
@@ -47,10 +33,9 @@ init(Req0, _Opts) ->
 	end,
     case download_handler:has_access(Req0, BucketId0, Prefix0, undefined, PresentedSignature) of
 	{error, Number} ->
-	    T1 = utils:timestamp(),
 	    Req1 = cowboy_req:reply(403, #{
 		<<"content-type">> => <<"application/json">>,
-		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+                <<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
 	    }, jsx:encode([{error, Number}]), Req0),
 	    {ok, Req1, []};
 	{BucketId1, Prefix1, _, _User} ->
@@ -77,6 +62,11 @@ init(Req0, _Opts) ->
 		    State2 = stream_files(Req2, BucketId1, proplists:get_value(list, List), State1),
 		    FinalState = write_central_directory(Req2, State2),
 		    cleanup_resources(TempFile, TempFd),
+
+		    %% Add log record with time it took to download ZIP
+		    T1 = utils:timestamp(),
+		    lager:info("[zip_stream_handler] download finished in ~p", [
+			io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])]),
 		    {stop, Req2, FinalState};
 		{error, Reason} ->
 		    lager:error("[zip_stream_handler] Failed to create temporary file: ~p", [Reason]),
@@ -229,6 +219,7 @@ stream_dirs(Req0, [Name0|Rest], State0) ->
 	    true -> Name0;
 	    false -> <<Name0/binary, "/">>
 	end,
+    {DosDate, DosTime} = encode_datetime(calendar:local_time()),
 
     %% Directory's local header (ZIP64)
     LocalHeader = <<
@@ -236,8 +227,8 @@ stream_dirs(Req0, [Name0|Rest], State0) ->
         ?VERSION_ZIP64:16/little,
         0:16/little,
         ?COMPRESSION_STORE:16/little,
-        0:16/little,                            %%  Time
-        0:16/little,                            %%  Date
+        DosTime:16/little,                      %%  Time
+        DosDate:16/little,                      %%  Date
         0:32/little,                            %%  CRC32
         16#FFFFFFFF:32/little,                  %%  Compressed size
         16#FFFFFFFF:32/little,                  %%  Uncompressed size
@@ -258,8 +249,8 @@ stream_dirs(Req0, [Name0|Rest], State0) ->
         ?VERSION_ZIP64:16/little,               %%  Version needed
         0:16/little,                            %%  No flags
         ?COMPRESSION_STORE:16/little,
-        0:16/little,                            %%  Time
-        0:16/little,                            %%  Date
+        DosTime:16/little,                      %%  Time
+        DosDate:16/little,                      %%  Date
         0:32/little,                            %%  CRC32
         16#FFFFFFFF:32/little,                  %%  Compressed size
         16#FFFFFFFF:32/little,                  %%  Uncompressed size
@@ -291,6 +282,7 @@ stream_files(_Req, _BucketId, [], State) -> State;
 stream_files(Req0, BucketId, [Object|Rest], State0) ->
     Prefix = utils:dirname(element(1, Object)),
     ObjectKey = filename:basename(element(1, Object)),
+    DateTime = element(2, Object),
     DirPath = unicode:characters_to_binary(lists:flatten(utils:unhex_path(Prefix))),
 
     case download_handler:get_object_metadata(BucketId, Prefix, ObjectKey) of
@@ -302,14 +294,16 @@ stream_files(Req0, BucketId, [Object|Rest], State0) ->
 	    CdSize = proplists:get_value(cd_size, State0),
 
 	    Name = <<DirPath/binary, "/", OrigName/binary>>,
+	    {DosDate, DosTime} = encode_datetime(DateTime),
+
 	    %% Local header with ZIP64 and data descriptor flags
 	    LocalHeader = <<
 		?LOCAL_FILE_HEADER_SIGNATURE:32/little,
 		?VERSION_ZIP64:16/little,
 		?USE_DATA_DESCRIPTOR:16/little,         %%  Using data descriptor
 		?COMPRESSION_STORE:16/little,
-		0:16/little,                            %%  Time
-		0:16/little,                            %%  Date
+		DosTime:16/little,                      %%  Time
+		DosDate:16/little,                      %%  Date
 		0:32/little,                            %%  CRC32 (will be in descriptor)
 		16#FFFFFFFF:32/little,                  %%  Compressed size
 		16#FFFFFFFF:32/little,                  %%  Uncompressed size
@@ -337,8 +331,8 @@ stream_files(Req0, BucketId, [Object|Rest], State0) ->
 		?VERSION_ZIP64:16/little,
 		?USE_DATA_DESCRIPTOR:16/little,
 		?COMPRESSION_STORE:16/little,
-		0:16/little,                            %%  Time
-		0:16/little,                            %%  Date
+		DosTime:16/little,                      %%  Time
+		DosDate:16/little,                      %%  Date
 		Crc32:32/little,
 		16#FFFFFFFF:32/little,                  %%  Compressed size
 		16#FFFFFFFF:32/little,                  %%  Uncompressed size
@@ -368,6 +362,27 @@ stream_files(Req0, BucketId, [Object|Rest], State0) ->
 		{current_offset, NewOffset}),
 	    stream_files(Req0, BucketId, Rest, State1)
     end.
+
+
+%% Date/time encoding for ZIP format
+encode_datetime({{Year, Month, Day}, {Hour, Minute, Second}}) ->
+    %%  MS-DOS Date Format:
+    %%  Bits 0-4: Day (1-31)
+    %%  Bits 5-8: Month (1-12)
+    %%  Bits 9-15: Year offset from 1980
+    DosDate = (((Year - 1980) band 16#7F) bsl 9) bor
+              ((Month band 16#0F) bsl 5) bor
+              (Day band 16#1F),
+
+    %%  MS-DOS Time Format:
+    %%  Bits 0-4: Second divided by 2 (0-29)
+    %%  Bits 5-10: Minute (0-59)
+    %%  Bits 11-15: Hour (0-23)
+    DosTime = ((Hour band 16#1F) bsl 11) bor
+              ((Minute band 16#3F) bsl 5) bor
+              ((Second div 2) band 16#1F),
+
+    {DosDate, DosTime}.
 
 
 %% Stream temp file content in chunks
@@ -436,3 +451,4 @@ terminate(_Reason, _Req, State) ->
     TempFd = proplists:get_value(temp_fd, State),
     cleanup_resources(TempFile, TempFd),
     ok.
+

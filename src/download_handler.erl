@@ -180,7 +180,7 @@ receive_streamed_body(Req0, RequestId0, Pid0, BucketId, NextObjectKeys0) ->
 %%
 %% Lists objects in 'real' prefix ( "~object/" ), sorts them and streams them to client.
 %%
-stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte, EndByte) ->
+stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte, EndByte, T0) ->
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
     PartNumStart = (StartByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1,
     PartNumEnd =
@@ -190,7 +190,6 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 		(EB div ?FILE_UPLOAD_CHUNK_SIZE) + 1;
 	    _ -> (EndByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1
 	end,
-    T0 = utils:timestamp(), %% measure time of request
     case s3_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix ++ "/"}]) of
 	not_found ->
 	    Req1 = cowboy_req:reply(404, #{
@@ -222,10 +221,12 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 		    [N2,_] = string:tokens(T2, "_"),
 		    utils:to_integer(N1) < utils:to_integer(N2)
 		end, List0),
+	    T1 = utils:timestamp(),
 	    case List1 of
 		 [] ->
 		    Req2 = cowboy_req:reply(404, #{
-			<<"content-type">> => <<"text/html">>
+			<<"content-type">> => <<"text/html">>,
+			<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 		    }, <<"404: Not found">>, Req0),
 		    {ok, Req2, []};
 		 [PrefixedObjectKey | NextKeys] ->
@@ -235,13 +236,12 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 			    1 -> erlang:integer_to_binary(StartByte);
 			    _ -> erlang:integer_to_binary(StartByte rem ?FILE_UPLOAD_CHUNK_SIZE)
 			end,
-		    T1 = utils:timestamp(),
 		    Headers0 = #{
 			<<"content-type">> => ContentType,
 			<<"content-disposition">> => ContentDisposition,
 			<<"content-length">> => Bytes,
 			<<"range">> => << "bytes=", PartStartByte/binary, "-" >>,
-			<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+			<<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
 		    },
 		    Req3 = cowboy_req:stream_reply(200, Headers0, Req0),
 		    case s3_api:get_object(BucketId, PrefixedObjectKey, stream) of
@@ -257,6 +257,10 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 				    receive_streamed_body(Req3, RequestId, Pid, BucketId, NextKeys);
 				{http, Msg} -> ?ERROR("[download_handler] error starting stream: ~p", [Msg])
 			    end,
+			    %% Add log record with time it took to download ZIP
+			    T1 = utils:timestamp(),
+			    lager:info("[download_handler] download finished in ~p", [
+				io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])]),
 			    {ok, Req3, []}
 		    end
 	    end
@@ -295,29 +299,27 @@ init(Req0, _Opts) ->
 	end,
     case has_access(Req0, BucketId0, Prefix0, ObjectKey0, PresentedSignature) of
 	{error, Number} ->
-	    T1 = utils:timestamp(),
 	    Req1 = cowboy_req:reply(403, #{
 		<<"content-type">> => <<"application/json">>,
-		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+                <<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
 	    }, jsx:encode([{error, Number}]), Req0),
 	    {ok, Req1, []};
 	{BucketId1, Prefix1, ObjectKey1, _User} ->
 	    case get_object_metadata(BucketId1, Prefix1, ObjectKey1) of
 		not_found ->
-		    T1 = utils:timestamp(),
 		    Req1 = cowboy_req:reply(404, #{
 			<<"content-type">> => <<"application/json">>,
-			<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+			<<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
 		    }, Req0),
 		    {ok, Req1, []};
 		{OldBucketId, RealPrefix, ContentType, OrigName, Bytes} ->
 		    case validate_range(cowboy_req:header(<<"range">>, Req0), Bytes) of
 			undefined ->
 			    EndByte = utils:to_integer(Bytes),
-			    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, 0, EndByte);
+			    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, 0, EndByte, T0);
 			{error, Number} -> js_handler:bad_request(Req0, Number);
 			{StartByte, EndByte} ->
-			    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte, EndByte)
+			    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte, EndByte, T0)
 		    end
 	    end
     end.

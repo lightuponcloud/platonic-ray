@@ -1110,9 +1110,13 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 	_ ->
 	    Options = [{meta, Meta++WidthHeight}],
 	    Prefix1 =
-		case utils:ends_with(Prefix0, <<"/">>) of
-		    true -> Prefix0;
-		    false -> Prefix0 ++ "/"
+		case Prefix0 of
+		    undefined -> undefined;
+		    _ ->
+			case utils:ends_with(Prefix0, <<"/">>) of
+			    true -> Prefix0;
+			    false -> Prefix0 ++ "/"
+			end
 		end,
 	    case s3_api:put_object(BucketId, Prefix1, ObjectKey0, <<>>, Options) of
 		ok ->
