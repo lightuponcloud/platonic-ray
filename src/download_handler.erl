@@ -258,7 +258,6 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 				{http, Msg} -> ?ERROR("[download_handler] error starting stream: ~p", [Msg])
 			    end,
 			    %% Add log record with time it took to download ZIP
-			    T1 = utils:timestamp(),
 			    lager:info("[download_handler] download finished in ~p", [
 				io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])]),
 			    {ok, Req3, []}

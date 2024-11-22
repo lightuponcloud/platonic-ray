@@ -56,11 +56,8 @@ init(Req0, _Opts) ->
 		    Req2 = cowboy_req:stream_reply(200, Headers, Req0),
 
 		    List = fetch_full_list_recursively(BucketId1, Prefix1),
-		    Dirs = proplists:get_value(dirs, List),
-
-		    State1 = stream_dirs(Req2, Dirs, State0),
-		    State2 = stream_files(Req2, BucketId1, proplists:get_value(list, List), State1),
-		    FinalState = write_central_directory(Req2, State2),
+		    State1 = stream_files(Req2, BucketId1, proplists:get_value(list, List), State0),
+		    FinalState = write_central_directory(Req2, State1),
 		    cleanup_resources(TempFile, TempFd),
 
 		    %% Add log record with time it took to download ZIP
@@ -207,76 +204,6 @@ fetch_full_list_recursively(BucketId, [Prefix|Rest], Acc0) ->
 	    fetch_full_list_recursively(BucketId, Rest, Acc0)
     end.
 
-stream_dirs(_Req, [], State) -> State;
-stream_dirs(Req0, [Name0|Rest], State0) ->
-    Offset = proplists:get_value(current_offset, State0),
-    TempFd = proplists:get_value(temp_fd, State0),
-    TotalEntries = proplists:get_value(total_entries, State0),
-    CdSize = proplists:get_value(cd_size, State0),
-
-    Name1 =
-	case utils:ends_with(Name0, <<"/">>) of
-	    true -> Name0;
-	    false -> <<Name0/binary, "/">>
-	end,
-    {DosDate, DosTime} = encode_datetime(calendar:local_time()),
-
-    %% Directory's local header (ZIP64)
-    LocalHeader = <<
-        ?LOCAL_FILE_HEADER_SIGNATURE:32/little,
-        ?VERSION_ZIP64:16/little,
-        0:16/little,
-        ?COMPRESSION_STORE:16/little,
-        DosTime:16/little,                      %%  Time
-        DosDate:16/little,                      %%  Date
-        0:32/little,                            %%  CRC32
-        16#FFFFFFFF:32/little,                  %%  Compressed size
-        16#FFFFFFFF:32/little,                  %%  Uncompressed size
-        (byte_size(Name1)):16/little,
-        20:16/little,                           %%  Extra field length
-        Name1/binary,
-        16#0001:16/little,                      %%  ZIP64 extra field header ID
-        16:16/little,                           %%  Extra field size
-        0:64/little,                            %%  Uncompressed size (0 for dir)
-        0:64/little                             %%  Compressed size (0 for dir)
-    >>,
-    ok = cowboy_req:stream_body(LocalHeader, nofin, Req0),
-
-    % Central directory entry (ZIP64)
-    CentralEntry = <<
-        ?CENTRAL_DIR_SIGNATURE:32/little,
-        ?VERSION_ZIP64:16/little,               %%  Version made by
-        ?VERSION_ZIP64:16/little,               %%  Version needed
-        0:16/little,                            %%  No flags
-        ?COMPRESSION_STORE:16/little,
-        DosTime:16/little,                      %%  Time
-        DosDate:16/little,                      %%  Date
-        0:32/little,                            %%  CRC32
-        16#FFFFFFFF:32/little,                  %%  Compressed size
-        16#FFFFFFFF:32/little,                  %%  Uncompressed size
-        (byte_size(Name1)):16/little,            %%  Name length
-        28:16/little,                           %%  Extra field length
-        0:16/little,                            %%  Comment length
-        0:16/little,                            %%  Disk number start
-        0:16/little,                            %%  Internal attrs
-        16#41ED0010:32/little,                  %%  External attrs (Unix directory)
-        16#FFFFFFFF:32/little,                  %%  Offset to local header
-        Name1/binary,
-        16#0001:16/little,                      %%  ZIP64 extra field header ID
-        24:16/little,                           %%  Extra field size
-        0:64/little,                            %%  Uncompressed size
-        0:64/little,                            %%  Compressed size
-        Offset:64/little                        %%  Local header offset
-    >>,
-    ok = file:write(TempFd, CentralEntry),
-
-    State1 = lists:keystore(current_offset, 1, 
-        lists:keystore(total_entries, 1,
-            lists:keystore(cd_size, 1, State0,
-                {cd_size, CdSize + byte_size(CentralEntry)}),
-            {total_entries, TotalEntries + 1}),
-        {current_offset, Offset + byte_size(LocalHeader)}),
-    stream_dirs(Req0, Rest, State1).
 
 stream_files(_Req, _BucketId, [], State) -> State;
 stream_files(Req0, BucketId, [Object|Rest], State0) ->
@@ -293,14 +220,13 @@ stream_files(Req0, BucketId, [Object|Rest], State0) ->
 	    TotalEntries = proplists:get_value(total_entries, State0),
 	    CdSize = proplists:get_value(cd_size, State0),
 
-	    Name = <<DirPath/binary, "/", OrigName/binary>>,
+	    Name = unicode:characters_to_binary(<<DirPath/binary, "/", OrigName/binary>>, utf8),
 	    {DosDate, DosTime} = encode_datetime(DateTime),
-
 	    %% Local header with ZIP64 and data descriptor flags
 	    LocalHeader = <<
 		?LOCAL_FILE_HEADER_SIGNATURE:32/little,
 		?VERSION_ZIP64:16/little,
-		?USE_DATA_DESCRIPTOR:16/little,         %%  Using data descriptor
+		(?USE_UTF8 bor ?USE_DATA_DESCRIPTOR):16/little,         %%  Using data descriptor
 		?COMPRESSION_STORE:16/little,
 		DosTime:16/little,                      %%  Time
 		DosDate:16/little,                      %%  Date
@@ -329,7 +255,7 @@ stream_files(Req0, BucketId, [Object|Rest], State0) ->
 		?CENTRAL_DIR_SIGNATURE:32/little,
 		?VERSION_ZIP64:16/little,
 		?VERSION_ZIP64:16/little,
-		?USE_DATA_DESCRIPTOR:16/little,
+		(?USE_UTF8 bor ?USE_DATA_DESCRIPTOR):16/little,
 		?COMPRESSION_STORE:16/little,
 		DosTime:16/little,                      %%  Time
 		DosDate:16/little,                      %%  Date

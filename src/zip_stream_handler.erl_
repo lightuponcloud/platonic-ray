@@ -1,0 +1,566 @@
+-module(zip_stream_handler).
+
+-export([init/2]).
+-export([terminate/3]).
+
+-include("zip.hrl").
+-include("storage.hrl").
+
+
+init(Req0, _Opts) ->
+    T0 = utils:timestamp(), %% measure time of request
+    cowboy_req:cast({set_options, #{idle_timeout => infinity}}, Req0),
+
+    PathInfo = cowboy_req:path_info(Req0),
+    BucketId0 =
+	case lists:nth(1, PathInfo) of
+	    undefined -> undefined;
+	    <<>> -> undefined;
+	    BV -> erlang:binary_to_list(BV)
+	end,
+    Prefix0 =
+	case length(PathInfo) < 2 of
+	    true -> undefined;
+	    false ->
+		%% prefix should go just after bucket id
+		erlang:binary_to_list(utils:join_binary_with_separator(lists:nthtail(1, PathInfo), <<"/">>))
+	end,
+    ParsedQs = cowboy_req:parse_qs(Req0),
+    PresentedSignature =
+	case proplists:get_value(<<"signature">>, ParsedQs) of
+	    undefined -> undefined;
+	    Signature -> unicode:characters_to_list(Signature)
+	end,
+    case download_handler:has_access(Req0, BucketId0, Prefix0, undefined, PresentedSignature) of
+	{error, Number} ->
+	    Req1 = cowboy_req:reply(403, #{
+		<<"content-type">> => <<"application/json">>,
+                <<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
+	    }, jsx:encode([{error, Number}]), Req0),
+	    {ok, Req1, []};
+	{BucketId1, Prefix1, _, _User} ->
+	    TempFile = utils:get_temp_path(middleware),
+	    case file:open(TempFile, [write, read, raw, binary]) of
+		{ok, TempFd} ->
+		    Headers = #{
+			<<"content-type">> => <<"application/zip">>,
+			<<"content-disposition">> => <<"attachment; filename=\"archive.zip\"">>
+		    },
+		    State0 = [
+			{current_offset, 0},
+			{temp_file, TempFile},
+			{temp_fd, TempFd},
+			{cd_size, 0},
+			{total_entries, 0}
+		    ],
+		    Req2 = cowboy_req:stream_reply(200, Headers, Req0),
+
+		    List = fetch_full_list_recursively(BucketId1, Prefix1),
+		    Dirs = proplists:get_value(dirs, List),
+
+		    State1 = stream_dirs(Req2, Dirs, State0),
+		    State2 = stream_files(Req2, BucketId1, proplists:get_value(list, List), State1),
+		    FinalState = write_central_directory(Req2, State2),
+		    cleanup_resources(TempFile, TempFd),
+
+		    %% Add log record with time it took to download ZIP
+		    T1 = utils:timestamp(),
+		    lager:info("[zip_stream_handler] download finished in ~p", [
+			io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])]),
+		    {stop, Req2, FinalState};
+		{error, Reason} ->
+		    lager:error("[zip_stream_handler] Failed to create temporary file: ~p", [Reason]),
+		    Req1 = cowboy_req:reply(500, #{}, <<"Internal Server Error">>, Req0),
+		    {ok, Req1, []}
+	    end
+    end.
+
+%%
+%% Receives stream from httpc and passes it to cowboy
+%%
+receive_streamed_body(Req0, RequestId0, Pid0, BucketId, NextObjectKeys0, ZlibFd, OldCrc32, CompressedSize) ->
+    httpc:stream_next(Pid0),
+    receive
+	{http, {RequestId0, stream, BinBodyPart}} ->
+	    Crc32 =
+		case OldCrc32 of
+		    undefined -> erlang:crc32(BinBodyPart);
+		    _ -> erlang:crc32(OldCrc32, BinBodyPart)
+		end,
+	    CompressedChunk = zlib:deflate(ZlibFd, BinBodyPart),
+	    ok = cowboy_req:stream_body(CompressedChunk, nofin, Req0),
+	    ChunkCompressedSize = CompressedSize + iolist_size(CompressedChunk),
+	    receive_streamed_body(Req0, RequestId0, Pid0, BucketId, NextObjectKeys0, ZlibFd, Crc32, ChunkCompressedSize);
+	{http, {RequestId0, stream_end, _Headers0}} ->
+	    case NextObjectKeys0 of
+		[] ->
+		    zlib:deflate(ZlibFd, <<>>, finish),
+		    zlib:deflateEnd(ZlibFd),
+		    zlib:close(ZlibFd),
+		    ok = cowboy_req:stream_body(<<>>, nofin, Req0),  %% nofin, as we are sending zip headers afterwards
+		    {OldCrc32, CompressedSize};
+		[CurrentObjectKey|NextObjectKeys1] ->
+		    %% Stream next chunk
+		    case s3_api:get_object(BucketId, CurrentObjectKey, stream) of
+			not_found ->
+			    zlib:deflate(ZlibFd, <<>>, finish),
+			    ok = cowboy_req:stream_body(<<>>, fin, Req0),
+			    throw(lists:flatten(io_lib:format("Failed to fetch part: ~p/~p", [BucketId, CurrentObjectKey])));
+			{ok, RequestId1} ->
+			    receive
+				{http, {RequestId1, stream_start, _Headers1, Pid1}} ->
+				    receive_streamed_body(Req0, RequestId1, Pid1, BucketId, NextObjectKeys1, ZlibFd,
+					OldCrc32, CompressedSize);
+				{http, Msg} -> throw(lists:flatten(io_lib:format("Failed to fetch part: ~p", [Msg])))
+			    end
+		    end
+	    end;
+	{http, Msg} ->
+	    zlib:deflate(ZlibFd, <<>>, finish),
+	    ok = cowboy_req:stream_body(<<>>, fin, Req0),
+	    throw(lists:flatten(io_lib:format("Error receiving stream body: ~p", [Msg])))
+    end.
+
+
+%%
+%% Lists objects in 'real' prefix ( "~object/" ), sorts them and streams them to client.
+%%
+stream_chunks(Req0, BucketId, RealPrefix, Bytes, ZlibFd) ->
+    MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
+    PartNumStart = 1,
+    PartNumEnd = (Bytes div ?FILE_UPLOAD_CHUNK_SIZE) + 1,
+    %% list chunks of object
+    case s3_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix ++ "/"}]) of
+	not_found -> throw(lists:flatten(io_lib:format("Part not found: ~p", [RealPrefix])));
+	RiakResponse0 ->
+	    Contents = proplists:get_value(contents, RiakResponse0),
+	    List0 = lists:filtermap(
+		fun(K) ->
+		    ObjectKey = proplists:get_value(key, K),
+		    case utils:ends_with(ObjectKey, erlang:list_to_binary(?THUMBNAIL_KEY)) of
+			true -> false;
+			false ->
+			    Tokens = lists:last(string:tokens(ObjectKey, "/")),
+			    [N,_] = string:tokens(Tokens, "_"),
+			    case utils:to_integer(N) of
+				I when I >= PartNumStart, I =< PartNumEnd -> {true, ObjectKey};
+				_ -> false
+			    end
+		    end
+		end, Contents),
+	    List1 = lists:sort(
+		fun(K1, K2) ->
+		    T1 = lists:last(string:tokens(K1, "/")),
+		    [N1,_] = string:tokens(T1, "_"),
+		    T2 = lists:last(string:tokens(K2, "/")),
+		    [N2,_] = string:tokens(T2, "_"),
+		    utils:to_integer(N1) < utils:to_integer(N2)
+		end, List0),
+	    case List1 of
+		[] -> throw("No file chunks found");
+		[PrefixedObjectKey | NextKeys] ->
+		    case s3_api:get_object(BucketId, PrefixedObjectKey, stream) of
+			not_found ->
+			    throw(lists:flatten(io_lib:format("Chunk not found: ~p/~p", [BucketId, PrefixedObjectKey])));
+			{ok, RequestId} ->
+			    receive
+				{http, {RequestId, stream_start, _Headers, Pid}} ->
+				    receive_streamed_body(Req0, RequestId, Pid, BucketId, NextKeys, ZlibFd, undefined, 0);
+				{http, Msg} ->
+				    throw(lists:flatten(io_lib:format("Error starting stream: ~p", [Msg])))
+			    end
+		    end
+	    end
+    end.
+
+
+fetch_full_list_recursively(BucketId, Prefix0) ->
+    Prefix1 =
+	case utils:ends_with(Prefix0, <<"/">>) of
+	    true -> Prefix0;
+	    false -> Prefix0 ++ "/"
+	end,
+    DirPath0 = utils:unhex_path(Prefix1),
+    DirPath1 = unicode:characters_to_binary(lists:flatten(DirPath0)),
+    IsDeleted = lists:any(fun(S) -> string:str(S, "-deleted-") =/= 0 end, DirPath0),
+    case IsDeleted of
+	false ->
+	    List = indexing:fetch_full_list(BucketId, Prefix1),
+
+	    Prefixes = proplists:get_value(dirs, List, []),
+	    Objects = proplists:get_value(list, List, []),
+	    Acc = [{dirs, [DirPath1]}, {list, Objects}],
+	    fetch_full_list_recursively(BucketId, Prefixes, Acc);
+	true -> [{dirs, []}, {list, []}]
+    end.
+
+fetch_full_list_recursively(_BucketId, [], Acc) -> Acc;
+fetch_full_list_recursively(BucketId, [Prefix|Rest], Acc0) ->
+    %% Check if directory is marked as deleted
+    DirPath0 = utils:unhex_path(Prefix),
+    DirPath1 = unicode:characters_to_binary(lists:flatten(DirPath0)),
+    IsDeleted = lists:any(fun(S) -> string:str(S, "-deleted-") =/= 0 end, DirPath0),
+    case IsDeleted of
+	false ->
+	    List = indexing:fetch_full_list(BucketId, Prefix),
+
+	    Prefixes = proplists:get_value(dirs, List, []),
+	    Objects = proplists:get_value(list, List, []),
+
+	    Acc1 = [{dirs, [DirPath1] ++ proplists:get_value(dirs, Acc0, [])},
+		   {list, Objects ++ proplists:get_value(list, Acc0, [])}],
+
+	    fetch_full_list_recursively(BucketId, Prefixes ++ Rest, Acc1);
+	true ->
+	    fetch_full_list_recursively(BucketId, Rest, Acc0)
+    end.
+
+stream_dirs(_Req, [], State) -> State;
+stream_dirs(Req0, [Name0|Rest], State0) ->
+    Offset = proplists:get_value(current_offset, State0),
+    TempFd = proplists:get_value(temp_fd, State0),
+    TotalEntries = proplists:get_value(total_entries, State0),
+    CdSize = proplists:get_value(cd_size, State0),
+
+    Name1 =
+	case utils:ends_with(Name0, <<"/">>) of
+	    true -> Name0;
+	    false -> <<Name0/binary, "/">>
+	end,
+    {DosDate, DosTime} = encode_datetime(calendar:local_time()),
+
+    Cp437Name = unicode:characters_to_binary(Name1, utf8),
+
+    % Local header for directory
+    LocalHeader = <<
+        ?LOCAL_FILE_HEADER_SIGNATURE:32/little,
+        20:16/little,                         % Version 2.0 for consistency
+        ?USE_UTF8:16/little,                  % UTF-8 flag only
+        0:16/little,                          % No compression
+        DosTime:16/little,
+        DosDate:16/little,
+        0:32/little,                          % CRC-32
+        0:32/little,                          % Compressed size
+        0:32/little,                          % Uncompressed size
+        (byte_size(Cp437Name)):16/little,     % Filename length
+        0:16/little,                          % No extra fields
+        Cp437Name/binary                      % Directory name
+    >>,
+    ok = cowboy_req:stream_body(LocalHeader, nofin, Req0),
+
+    % Central directory entry
+    CentralEntry = <<
+        ?CENTRAL_DIR_SIGNATURE:32/little,
+        20:16/little,                         % Version made by
+        20:16/little,                         % Version needed to extract
+        ?USE_UTF8:16/little,                  % UTF-8 flag only
+        0:16/little,                          % No compression
+        DosTime:16/little,
+        DosDate:16/little,
+        0:32/little,                          % CRC-32
+        0:32/little,                          % Compressed size
+        0:32/little,                          % Uncompressed size
+        (byte_size(Cp437Name)):16/little,     % Filename length
+        0:16/little,                          % No extra fields
+        0:16/little,                          % No comment
+        0:16/little,                          % Disk number start
+        0:16/little,                          % Internal attributes
+        16#41ED0010:32/little,               % External attributes (directory)
+        Offset:32/little,                     % Relative offset
+        Cp437Name/binary                      % Directory name
+    >>,
+    ok = file:write(TempFd, CentralEntry),
+
+    LocalHeaderSize = byte_size(LocalHeader),
+    State1 = lists:keystore(current_offset, 1, 
+        lists:keystore(total_entries, 1,
+            lists:keystore(cd_size, 1, State0,
+                {cd_size, CdSize + byte_size(CentralEntry)}),
+            {total_entries, TotalEntries + 1}),
+        {current_offset, Offset + LocalHeaderSize}),
+    stream_dirs(Req0, Rest, State1).
+
+
+stream_files(_Req, _BucketId, [], State) -> State;
+stream_files(Req0, BucketId, [Object|Rest], State0) ->
+    Prefix = utils:dirname(element(1, Object)),
+    ObjectKey = filename:basename(element(1, Object)),
+io:fwrite("ObjectKey: ~p~n", [ObjectKey]),
+    DateTime = element(2, Object),
+    DirPath = unicode:characters_to_binary(lists:flatten(utils:unhex_path(Prefix))),
+
+    case download_handler:get_object_metadata(BucketId, Prefix, ObjectKey) of
+	not_found ->
+	    %% Ignore file
+	    stream_files(Req0, BucketId, Rest, State0);
+	{OldBucketId, RealPrefix, _ContentType, OrigName, Bytes} ->
+	    Offset = proplists:get_value(current_offset, State0),
+	    TempFd = proplists:get_value(temp_fd, State0),
+	    TotalEntries = proplists:get_value(total_entries, State0),
+	    CdSize = proplists:get_value(cd_size, State0),
+
+	    Ext = light_ets:to_lower(unicode:characters_to_list(filename:extension(OrigName))),
+	    CompressionConfig = get_compression_config(erlang:list_to_binary(Ext)),
+	    Level = proplists:get_value(level, CompressionConfig),
+	    Strategy = proplists:get_value(strategy, CompressionConfig),
+	    UseCompression = Level > 0,
+
+	    ZlibFd = zlib:open(),
+	    ok = zlib:deflateInit(ZlibFd, Level),
+	    case Strategy of
+		none -> ok;
+		_ -> ok = zlib:deflateParams(ZlibFd, Level, Strategy)
+	    end,
+	    Name = <<DirPath/binary, "/", OrigName/binary>>,
+	    Cp437Name = unicode:characters_to_binary(Name, utf8),
+	    {DosDate, DosTime} = encode_datetime(DateTime),
+	    FileSize = utils:to_integer(Bytes),
+
+            % Determine if we need ZIP64
+            NeedZip64 = FileSize > 16#FFFFFFFF orelse Offset > 16#FFFFFFFF,
+
+            % Create ZIP64 extra field for local header
+            Zip64ExtraField = case NeedZip64 of
+                true ->
+                    <<
+                        ?ZIP64_EXTRA_ID:16/little,     % 0x0001
+                        8:16/little,                    % Size of this extra field
+                        FileSize:64/little              % Original size
+                    >>;
+                false ->
+                    <<>>
+            end,
+
+    % When writing file entry:
+    LocalHeader = <<
+        ?LOCAL_FILE_HEADER_SIGNATURE:32/little,
+        20:16/little,                         % Version 2.0 
+        (case UseCompression of
+            true -> ?USE_UTF8 bor ?USE_DATA_DESCRIPTOR;
+            false -> ?USE_UTF8
+         end):16/little,
+        (case UseCompression of
+            true -> ?COMPRESSION_DEFLATE;
+            false -> ?COMPRESSION_STORE
+         end):16/little,
+        DosTime:16/little,
+        DosDate:16/little,
+        0:32/little,
+        0:32/little,
+        (case UseCompression of
+            true -> 0;
+            false -> FileSize
+         end):32/little,
+        (byte_size(Cp437Name)):16/little,
+        (byte_size(Zip64ExtraField)):16/little,
+        Cp437Name/binary,
+        Zip64ExtraField/binary
+    >>,
+    ok = cowboy_req:stream_body(LocalHeader, nofin, Req0),
+
+	    %% Stream and compress file content
+	    {Crc32, CompressedSize} = stream_chunks(Req0, OldBucketId, RealPrefix, FileSize, ZlibFd),
+
+    % Write data descriptor only if compression was used
+    DataDescriptor = case UseCompression of
+        true ->
+            DD = <<
+                ?DATA_DESCRIPTOR_SIGNATURE:32/little,
+                Crc32:32/little,
+                CompressedSize:64/little,
+                FileSize:64/little
+            >>,
+            ok = cowboy_req:stream_body(DD, nofin, Req0),
+            DD;
+        false -> <<>>
+    end,
+
+            % Create ZIP64 extra field for central directory
+            CdZip64Extra = case NeedZip64 of
+                true ->
+                    <<
+                        ?ZIP64_EXTRA_ID:16/little,     % 0x0001
+                        28:16/little,                   % Size of this extra field
+                        FileSize:64/little,             % Original size
+                        CompressedSize:64/little,       % Compressed size
+                        Offset:64/little,               % Local header offset
+                        0:32/little                     % Disk number start
+                    >>;
+                false ->
+                    <<>>
+            end,
+
+    % Update central directory entry
+    CentralEntry = <<
+        ?CENTRAL_DIR_SIGNATURE:32/little,
+        20:16/little,                         % Version made by
+        20:16/little,                         % Version needed
+        (case UseCompression of
+            true -> ?USE_UTF8 bor ?USE_DATA_DESCRIPTOR;
+            false -> ?USE_UTF8
+         end):16/little,
+        (case UseCompression of
+            true -> ?COMPRESSION_DEFLATE;
+            false -> ?COMPRESSION_STORE
+         end):16/little,
+        DosTime:16/little,
+        DosDate:16/little,
+        Crc32:32/little,
+        (case CompressedSize > 16#FFFFFFFF of
+            true -> 16#FFFFFFFF;
+            false -> CompressedSize
+         end):32/little,
+        (case FileSize > 16#FFFFFFFF of
+            true -> 16#FFFFFFFF;
+            false -> FileSize
+         end):32/little,
+        (byte_size(Cp437Name)):16/little,
+        (byte_size(CdZip64Extra)):16/little,
+        0:16/little,                          % Comment length
+        0:16/little,                          % Disk number start
+        0:16/little,                          % Internal attrs
+        16#81B60000:32/little,               % External attrs
+        Offset:32/little,                     % Local header offset
+        Cp437Name/binary,
+        CdZip64Extra/binary
+    >>,
+    ok = file:write(TempFd, CentralEntry),
+
+    % Calculate new offset correctly
+    NewOffset = Offset + byte_size(LocalHeader) + CompressedSize + byte_size(DataDescriptor),
+
+    State1 = lists:keystore(current_offset, 1, 
+        lists:keystore(total_entries, 1,
+            lists:keystore(cd_size, 1, State0,
+                {cd_size, CdSize + byte_size(CentralEntry)}),
+            {total_entries, TotalEntries + 1}),
+        {current_offset, NewOffset}),
+
+	    stream_files(Req0, BucketId, Rest, State1)
+    end.
+
+
+%% Date/time encoding for ZIP format
+encode_datetime({{Year, Month, Day}, {Hour, Minute, Second}}) ->
+    %%  MS-DOS Date Format:
+    %%  Bits 0-4: Day (1-31)
+    %%  Bits 5-8: Month (1-12)
+    %%  Bits 9-15: Year offset from 1980
+    DosDate = (((Year - 1980) band 16#7F) bsl 9) bor
+              ((Month band 16#0F) bsl 5) bor
+              (Day band 16#1F),
+
+    %%  MS-DOS Time Format:
+    %%  Bits 0-4: Second divided by 2 (0-29)
+    %%  Bits 5-10: Minute (0-59)
+    %%  Bits 11-15: Hour (0-23)
+    DosTime = ((Hour band 16#1F) bsl 11) bor
+              ((Minute band 16#3F) bsl 5) bor
+              ((Second div 2) band 16#1F),
+
+    {DosDate, DosTime}.
+
+
+%% Stream temp file content in chunks
+stream_file_content(Req0, File) ->
+    case file:read(File, ?CHUNK_SIZE) of
+        {ok, Chunk} ->
+            ok = cowboy_req:stream_body(Chunk, nofin, Req0),
+            stream_file_content(Req0, File);
+        eof -> ok
+    end.
+
+write_central_directory(Req0, State) ->
+    Offset = proplists:get_value(current_offset, State),
+    TempFd = proplists:get_value(temp_fd, State),
+    CdSize = proplists:get_value(cd_size, State),
+    TotalEntries = proplists:get_value(total_entries, State),
+
+    % Stream central directory entries from temp file (only once)
+    {ok, 0} = file:position(TempFd, 0),
+    stream_file_content(Req0, TempFd),
+
+    % Write ZIP64 end of central directory record if needed
+    NeedZip64 = (Offset > 16#FFFFFFFF) orelse 
+                (CdSize > 16#FFFFFFFF) orelse 
+                (TotalEntries > 16#FFFF),
+
+    case NeedZip64 of
+        true ->
+            % ZIP64 end of central directory record
+            Zip64EndRecord = <<
+                ?ZIP64_END_OF_CENTRAL_DIR_SIGNATURE:32/little,
+                44:64/little,                     % Size of ZIP64 end record
+                20:16/little,                     % Version made by
+                20:16/little,                     % Version needed
+                0:32/little,                      % Number of this disk
+                0:32/little,                      % Disk with central directory
+                TotalEntries:64/little,           % Number of entries on this disk
+                TotalEntries:64/little,           % Total number of entries
+                CdSize:64/little,                 % Size of central directory
+                Offset:64/little                  % Offset of central directory
+            >>,
+            ok = cowboy_req:stream_body(Zip64EndRecord, nofin, Req0),
+
+            % ZIP64 end of central directory locator
+            Zip64Locator = <<
+                ?ZIP64_END_OF_CENTRAL_DIR_LOCATOR_SIGNATURE:32/little,
+                0:32/little,                      % Disk with ZIP64 end record
+                (Offset + CdSize):64/little,      % Offset of ZIP64 end record
+                1:32/little                       % Total number of disks
+            >>,
+            ok = cowboy_req:stream_body(Zip64Locator, nofin, Req0);
+        false -> ok
+    end,
+
+    % Standard end of central directory record
+    EndRecord = <<
+        ?END_OF_CENTRAL_DIR_SIGNATURE:32/little,
+        0:16/little,                          % Number of this disk
+        0:16/little,                          % Disk where central directory starts
+        (case NeedZip64 of
+            true -> 16#FFFF;
+            false -> TotalEntries
+         end):16/little,
+        (case NeedZip64 of
+            true -> 16#FFFF;
+            false -> TotalEntries
+         end):16/little,
+        (case NeedZip64 of
+            true -> 16#FFFFFFFF;
+            false -> CdSize
+         end):32/little,
+        (case NeedZip64 of
+            true -> 16#FFFFFFFF;
+            false -> Offset
+         end):32/little,
+        0:16/little                           % Comment length
+    >>,
+    ok = cowboy_req:stream_body(EndRecord, fin, Req0),
+    State.
+
+
+%% Get compression configuration based on file extension
+get_compression_config(Ext) when erlang:is_binary(Ext) ->
+    case lists:search(
+        fun({Extensions, _Config}) -> 
+            lists:member(Ext, Extensions)
+        end, 
+        ?COMPRESSION_CONFIG
+    ) of
+        {value, {_, Config}} -> Config;
+        false -> 
+            {[<<".default">>], DefaultConfig} = lists:last(?COMPRESSION_CONFIG),
+            DefaultConfig
+    end.
+
+
+cleanup_resources(TempFile, TempFd) ->
+    file:close(TempFd),
+    file:delete(TempFile).
+
+terminate(_Reason, _Req, State) ->
+    TempFile = proplists:get_value(temp_file, State),
+    TempFd = proplists:get_value(temp_fd, State),
+    cleanup_resources(TempFile, TempFd),
+    ok.
