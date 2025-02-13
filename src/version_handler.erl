@@ -94,6 +94,7 @@ response(Req0, <<"HEAD">>, BucketId, UserId) ->
 	    DbMeta = list_handler:parse_object_record(Meta, []),
 	    Version = proplists:get_value("version", DbMeta),
 	    Req1 = cowboy_req:reply(200, #{
+		<<"md5">> => proplists:get_value("md5", DbMeta),
 		<<"DVV">> => utils:to_binary(Version),
 		<<"content-type">> => <<"application/json">>
 	    }, <<>>, Req0),

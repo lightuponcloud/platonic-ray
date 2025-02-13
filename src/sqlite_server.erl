@@ -358,6 +358,7 @@ update_db(BucketId, BucketQueue0) ->
 	    AtomicId = erlang:binary_to_list(crypto_utils:uuid4()),
 	    Msg = jsx:encode([{version, Version1}, {bucket_id, erlang:list_to_binary(BucketId)},
 			      {timestamp, Timestamp}]),
+io:fwrite("Sending to ws: ~p ~p~n", [BucketId, Msg]),
 	    events_server_sup:send_message(BucketId, AtomicId, Msg),
 
 	    lists:flatten(BucketQueue1)

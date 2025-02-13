@@ -377,4 +377,3 @@ terminate(_Reason, _Req, State) ->
     TempFd = proplists:get_value(temp_fd, State),
     cleanup_resources(TempFile, TempFd),
     ok.
-
