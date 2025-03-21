@@ -66,6 +66,9 @@ stream_db(Req0, BucketId0, Bytes, StartByte0) ->
     end.
 
 
+%%
+%% Return empty new DB
+%%
 first_version(Req0, UserId) ->
     Timestamp = erlang:round(utils:timestamp()/1000),
     Version0 = indexing:increment_version(undefined, Timestamp, UserId),

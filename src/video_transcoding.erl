@@ -1,5 +1,5 @@
 %%
-%% Contains gen_server, that transcodes videos for previewing them in browser.
+%% Video preview generator.
 %%
 -module(video_transcoding).
 -behaviour(gen_server).
@@ -13,7 +13,7 @@
 -include("storage.hrl").
 
 %%
-%% queue -- List of queued video transcoding requests
+%% Queue -- List of queued video transcoding requests
 %%
 -record(state, {os_pid :: undefined | pos_integer(),
 		num :: pos_integer(),
@@ -156,18 +156,18 @@ process_video(BucketId, ObjectKey) ->
 	    {error, Reason};
 	{RealPrefix, TempFn} ->
 	    %% Create temporary directory for HLS output
-	    TempDir0 = os:cmd("/bin/mktemp -d"),
-	    TempDir1 = re:replace(TempDir0, "[\r\n]", "", [global, {return, list}]),
-	    FfmpegCmd = io_lib:format("cd ~s;/usr/bin/ffmpeg -i ~s -r 24 -vcodec libx264 -s 640x480 -c copy -f hls -hls_time 2 -hls_list_size 0 -hls_segment_filename %07d.ts ~s",
-		[TempDir1, TempFn, ?HLS_PLAYLIST_OBJECT_KEY]),
+	    TempDir = string:trim(os:cmd("/bin/mktemp -d")),
+
+	    FfmpegCmd = io_lib:format("cd ~s;/usr/bin/ffmpeg -i ~s -an -c:v libvpx-vp9 -crf 30 -b:v 0 -vf \"scale=1280:-1\" -deadline good -cpu-used 2 -auto-alt-ref 1 -lag-in-frames 25 -f hls -hls_segment_type fmp4 -hls_time 4 -hls_playlist_type vod -hls_flags single_file+independent_segments+split_by_time+temp_file ~s",
+		[TempDir, TempFn, ?HLS_720p_OBJECT_KEY]),
 	    os:cmd(lists:flatten(FfmpegCmd)),
 
 	    %% Upload HLS
-	    case file:list_dir_all(TempDir1) of
+	    case file:list_dir_all(TempDir) of
 		{ok, List} ->
 		    lists:foreach(
 			fun(I) ->
-			    Path = filename:join([TempDir1, I]),
+			    Path = filename:join([TempDir, I]),
 			    case file:read_file(Path) of
 				{error, enoent} ->
 				    ?ERROR("[video_transcoding] file disappeared: ~p video: ~p/~p",
@@ -185,11 +185,11 @@ process_video(BucketId, ObjectKey) ->
 			    end
 			end, List),
 		    file:delete(TempFn),
-		    file:del_dir(TempDir1),
+		    file:del_dir(TempDir),
 		    ok;
 		{error, enoent} ->
 		    ?ERROR("[video_transcoding] can't transcode video ~p/~p: no playlist in ~p",
-			   [BucketId, ObjectKey, TempDir1]),
+			   [BucketId, ObjectKey, TempDir]),
 		    file:delete(TempFn),
 		    {error, enoent}
 	    end
@@ -208,18 +208,17 @@ download_file(BucketId, ObjectKey) ->
 	Metadata ->
 	    %% Create a temporary file, write data there
 	    Ext = filename:extension(ObjectKey),
-	    TempFn0 = os:cmd(io_lib:format("/bin/mktemp --suffix=~p", [Ext])),
-	    TempFn1 = re:replace(TempFn0, "[\r\n]", "", [global, {return, list}]),
+	    TempFn = string:trim(os:cmd(io_lib:format("/bin/mktemp --suffix=~p", [Ext]))),
 
 	    {RealBucketId, _, _, RealPrefix} = utils:real_prefix(BucketId, Metadata),
-	    case save_file(RealBucketId, RealPrefix, TempFn1) of
+	    case save_file(RealBucketId, RealPrefix, TempFn) of
 		{error, Reason} -> {error, Reason};
 		ok ->
-		    case filelib:is_regular(TempFn1) of
-			true -> {utils:dirname(RealPrefix), TempFn1};
+		    case filelib:is_regular(TempFn) of
+			true -> {utils:dirname(RealPrefix), TempFn};
 			false ->
 			    lager:error("[video_transcoding] failed to transcode video ~p, no file ~p",
-					[ObjectKey, TempFn1]),
+					[ObjectKey, TempFn]),
 			    {error, file_not_found}
 		    end
 	    end

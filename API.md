@@ -667,7 +667,7 @@ curl -s -X POST "http://127.0.0.1/riak/rename/the-poetry-naukovtsi-res/" \
     -d "{ \"prefix\": \"64656d6f/\", \"src_object_key\": \"something-random.jpg\", \"dst_object_name\": \"Something Something.jpg\" }"
 ```
 
-## GET /riak/download/[:bucket_id]/[:prefix]/[:object_key]
+## GET /riak/download/[:bucket_id]/[:prefix]/?object_key=[:object_key]
 
 Allows to download file, in case user belongs to group where file is stored.
 
@@ -676,13 +676,13 @@ Allows to download file, in case user belongs to group where file is stored.
 
 #### Request Example
 ```sh
-curl "http://127.0.0.1/riak/download/the-poetry-naukovtsi-res/d0bfd180d0b8d0bad0bbd0b0d0b4/something.random" \
+curl "http://127.0.0.1/riak/download/the-poetry-naukovtsi-res/d0bfd180d0b8d0bad0bbd0b0d0b4/?object_key=something.random" \
     -H "authorization: Token $TOKEN" --output something.random
 ```
 
 Resuming download
 ```sh
-curl "http://127.0.0.1/riak/download/the-poetry-naukovtsi-res/d0bfd180d0b8d0bad0bbd0b0d0b4/something.random" \
+curl "http://127.0.0.1/riak/download/the-poetry-naukovtsi-res/d0bfd180d0b8d0bad0bbd0b0d0b4/?object_key=something.random" \
     -H "authorization: Token $TOKEN" \
     -H "range: bytes=2000000-3999999" \
     --output something.random
@@ -702,6 +702,37 @@ curl "http://127.0.0.1/riak/download/the-poetry-naukovtsi-res/d0bfd180d0b8d0bad0
 **Code** : `404 Not Found` When prefix not found
 
 **Code** : `400 Bad Request` When incorrect JSON values provided
+
+
+## HEAD /riak/download/[:bucket_id]/[:prefix]/?object_key=[:object_key]
+
+Allows to retrieve metadata. Returns headers.
+
+**Auth required** : YES
+
+
+#### Request Example
+```sh
+curl -X HEAD "http://127.0.0.1/riak/download/the-poetry-naukovtsi-res/d0bfd180d0b8d0bad0bbd0b0d0b4/?object_key=something.random" \
+    -H "authorization: Token $TOKEN"
+```
+
+Resuming download
+```sh
+curl -X HEAD "http://127.0.0.1/riak/download/the-poetry-naukovtsi-res/d0bfd180d0b8d0bad0bbd0b0d0b4/?object_key=something.random" \
+    -H "authorization: Token $TOKEN"
+```
+
+
+### Success Response
+
+**Code** : `200 OK`
+
+### Other Response Codes
+
+**Code** : `403 Forbidden` When user has no access to bucket
+
+**Code** : `404 Not Found` When prefix not found
 
 
 ## GET /riak/action-log/[:bucket_id]/[:prefix]

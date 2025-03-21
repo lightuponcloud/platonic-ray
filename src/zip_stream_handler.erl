@@ -214,7 +214,7 @@ stream_files(Req0, BucketId, [Object|Rest], State0) ->
 
     case download_handler:get_object_metadata(BucketId, Prefix, ObjectKey) of
 	not_found -> State0;  %% Ignore
-	{OldBucketId, RealPrefix, _ContentType, OrigName, Bytes} ->
+	{OldBucketId, RealPrefix, _ContentType, OrigName, Bytes, _Version} ->
 	    Offset = proplists:get_value(current_offset, State0),
 	    TempFd = proplists:get_value(temp_fd, State0),
 	    TotalEntries = proplists:get_value(total_entries, State0),

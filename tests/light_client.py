@@ -8,12 +8,12 @@ import hashlib
 import hmac
 import json
 from copy import copy
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 import requests
 from base64 import b64encode, b64decode
 
-from dvvset import DVVSet
+from .dvvset import DVVSet
 
 
 class LightClient:
@@ -556,6 +556,27 @@ class LightClient:
             headers.update({"authorization": "Token {}".format(self.token)})
         return requests.head(url, headers=headers)
 
+    def info(self, bucket_id, object_key, prefix=None):
+        if not self.token and not self.api_key:
+            raise AssertionError("Authorization information is missing")
+
+        headers = {"content-type": "application/json"}
+        url = "{}riak/download/{}/".format(self.url, bucket_id)
+
+        if prefix:
+            if prefix.endswith("/"):
+                prefix = prefix[:-1]
+            url = "{}{}".format(url, prefix)
+
+        url = "{}?object_key={}".format(url, object_key)
+        signature = self._get_signed_url("HEAD", bucket_id, prefix, object_key=object_key)
+        if signature:
+            url = "{}&signature={}".format(url, signature)
+
+        if self.token:
+            headers.update({"authorization": "Token {}".format(self.token)})
+        return requests.head(url, headers=headers)
+
     def get_action_log(self, bucket_id, prefix):
         if not self.token and not self.api_key:
             raise AssertionError("Authorization information is missing")
@@ -569,17 +590,19 @@ class LightClient:
             headers.update({"authorization": "Token {}".format(self.token)})
         return requests.get(url, headers=headers)
 
-    def _get_signed_url(self, method, bucket_id, prefix):
+    def _get_signed_url(self, method, bucket_id, prefix, object_key=None):
         signature = None
         if self.api_key:
             to_sign = bucket_id
             if prefix:
                 to_sign = "{}/{}".format(to_sign, prefix)
+            if object_key:
+                to_sign = "{}/{}".format(to_sign, object_key)
             signature = self.calculate_url_signature(method, to_sign, "")
         return signature
 
     def calculate_url_signature(self, method, path, qs):
-        canonical_request = "{}\n{}\n{}".format(method, path, qs)
+        canonical_request = "{}\n{}\n{}".format(method, quote(path), qs)
         # print("canonical_request: {}".format(canonical_request))
 
         canonical_request_hash = hashlib.sha256(canonical_request.encode()).hexdigest()

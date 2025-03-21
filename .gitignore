@@ -31,3 +31,4 @@ tests/.pytest_cache
 .venv
 .env
 tests/.venv
+tests/output

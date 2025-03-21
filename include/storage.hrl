@@ -240,7 +240,7 @@
 %%
 %% Name of object to read when playlist is requested
 %%
--define(HLS_PLAYLIST_OBJECT_KEY, "playlist.m3u8").
+-define(HLS_720p_OBJECT_KEY, "720p.m3u8").
 %%
 %% SQLite db object key. This db stores file tree.
 %%

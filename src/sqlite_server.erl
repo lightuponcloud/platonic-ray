@@ -258,7 +258,6 @@ handle_info(update_db, #state{sync_sql_queue = SyncSqlQueue0, log_sql_queue = Lo
 		    end,
 		{BucketId, BucketQueue1}
 	    end, SyncSqlQueue0),
-
     LogSqlQueue1 =
 	lists:filtermap(
 	    fun(I) ->
@@ -340,6 +339,7 @@ update_db(BucketId, BucketQueue0) ->
 			    []  %% removing from queue
 		    end
 		end, BucketQueue0),
+	    sqlite3:sql_exec(DbName, "VACUUM;"),
 	    %% Read SQLitedb as file and write it to Riak CS
 	    sqlite3:close(DbPid),
 	    Timestamp = erlang:round(utils:timestamp()/1000),
@@ -358,7 +358,6 @@ update_db(BucketId, BucketQueue0) ->
 	    AtomicId = erlang:binary_to_list(crypto_utils:uuid4()),
 	    Msg = jsx:encode([{version, Version1}, {bucket_id, erlang:list_to_binary(BucketId)},
 			      {timestamp, Timestamp}]),
-io:fwrite("Sending to ws: ~p ~p~n", [BucketId, Msg]),
 	    events_server_sup:send_message(BucketId, AtomicId, Msg),
 
 	    lists:flatten(BucketQueue1)
@@ -398,6 +397,7 @@ update_db(BucketId, Prefix, BucketQueue0) ->
 			    []  %% removing from queue
 		    end
 		end, BucketQueue0),
+	    sqlite3:sql_exec(DbName, "VACUUM;"),
 	    %% Read SQLitedb as file and write it to Riak CS
 	    sqlite3:close(DbPid),
 	    {ok, Blob} = file:read_file(TempFn),

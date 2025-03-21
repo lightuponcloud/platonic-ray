@@ -5,13 +5,35 @@
 -define(ZIP64_END_OF_CENTRAL_DIR_SIGNATURE, 16#06064b50).
 -define(ZIP64_END_OF_CENTRAL_DIR_LOCATOR_SIGNATURE, 16#07064b50).
 -define(DATA_DESCRIPTOR_SIGNATURE, 16#08074b50).
--define(VERSION_ZIP64, 45).
 -define(COMPRESSION_STORE, 0).
+-define(COMPRESSION_DEFLATE, 8).    % DEFLATE compression (RFC 1951)
 
-%% General purpose bit flag
--define(USE_DATA_DESCRIPTOR, 16#0008).  %% Bit 3 for data descriptor
+% DEFLATE compression levels for zlib
+-define(NO_COMPRESSION, 0).         % zlib: no compression
+-define(BEST_SPEED, 1).            % zlib: fastest compression
+-define(BEST_COMPRESSION, 9).       % zlib: best compression
+-define(DEFAULT_COMPRESSION, 6).    % zlib: default level
 
--define(CHUNK_SIZE, 1048576). % 1MB chunks
+% DEFLATE compression strategies
+-define(FILTERED, 1).      % Filtered for data produced by a filter/predictor
+-define(HUFFMAN_ONLY, 2).  % Force Huffman encoding only (no string match)
+-define(RLE, 3).          % Limit match distances to one (run-length encoding)
+-define(FIXED, 4).        % Prevent dynamic Huffman codes
+
+%% Add UTF-8 related constants
+-define(UTF8_FLAG, 16#0800).  % General purpose bit 11 for UTF-8
+-define(UNICODE_PATH_EXTRA_ID, 16#7075).  % Info-ZIP Unicode Path Extra Field
+
+-define(ZIP64_EXTRA_ID, 16#0001).  % ZIP64 Extra Field ID
+-define(VERSION_ZIP64, 45).  %% Version 4.5 for ZIP64
+
+% Constants for the flags
+-define(USE_DATA_DESCRIPTOR, 16#0008).    % Bit 3
+-define(USE_UTF8, 16#0800).              % Bit 11
+
+-define(CHUNK_SIZE, 1048576). %% 1MB chunks
+
+-define(MADE_BY_UNIX, 16#0300).  %% Version made by (UNIX, v3.0)
 
 -define(COMPRESSION_CONFIG, [
     %% Already compressed formats - store only

@@ -1,5 +1,5 @@
 %%
-%% Service HLS videos for previews.
+%% HLS video server ( for previews )
 %%
 -module(video_handler).
 -behavior(cowboy_handler).
@@ -46,7 +46,7 @@ prefix_chunks([], _Prefix, Acc) -> Acc.
 %% Returns HLS playlist
 %%
 get_playlist(BucketId, RealPrefix, Prefix, ObjectKey0) ->
-    PrefixedPlaylist = utils:prefixed_object_key(utils:dirname(RealPrefix), ?HLS_PLAYLIST_OBJECT_KEY),
+    PrefixedPlaylist = utils:prefixed_object_key(utils:dirname(RealPrefix), ?HLS_720p_OBJECT_KEY),
     BinaryData =
 	case s3_api:get_object(BucketId, PrefixedPlaylist) of
 	    {error, _} -> <<>>;

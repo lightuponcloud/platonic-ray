@@ -35,9 +35,10 @@ get_object_metadata(BucketId, Prefix, ObjectKey) ->
 			    {OldBucketId, _, _, RealPrefix} = utils:real_prefix(BucketId, Metadata),
 			    ContentType = proplists:get_value(content_type, Metadata),
 			    Bytes = proplists:get_value("x-amz-meta-bytes", Metadata),
+			    Version = proplists:get_value("x-amz-meta-version", Metadata),
 			    OrigName0 = erlang:list_to_binary(proplists:get_value("x-amz-meta-orig-filename", Metadata)),
 			    OrigName1 = utils:unhex(OrigName0),
-			    {OldBucketId, RealPrefix, ContentType, OrigName1, erlang:list_to_binary(Bytes)}
+			    {OldBucketId, RealPrefix, ContentType, OrigName1, erlang:list_to_binary(Bytes), Version}
 		    end
 	    end
     end.
@@ -265,6 +266,44 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 	    end
     end.
 
+response(Req0, <<"HEAD">>, BucketId, Prefix, ObjectKey, T0) ->
+    case get_object_metadata(BucketId, Prefix, ObjectKey) of
+	not_found ->
+	    Req1 = cowboy_req:reply(404, #{
+		<<"content-type">> => <<"application/json">>,
+		<<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
+	    }, Req0),
+	    {ok, Req1, []};
+	{_OldBucketId, _RealPrefix, ContentType, OrigName, Bytes, Version} ->
+	    Req1 = cowboy_req:reply(200, #{
+		<<"name">> => OrigName,
+		<<"DVV">> => utils:to_binary(Version),
+		<<"content-type">> => ContentType,
+		<<"size">> => Bytes
+	    }, <<>>, Req0),
+	    {ok, Req1, []}
+    end;
+
+response(Req0, <<"GET">>, BucketId, Prefix, ObjectKey, T0) ->
+    case get_object_metadata(BucketId, Prefix, ObjectKey) of
+	not_found ->
+	    Req1 = cowboy_req:reply(404, #{
+		<<"content-type">> => <<"application/json">>,
+		<<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
+	    }, Req0),
+	    {ok, Req1, []};
+	{OldBucketId, RealPrefix, ContentType, OrigName, Bytes, _Version} ->
+	    case validate_range(cowboy_req:header(<<"range">>, Req0), Bytes) of
+		undefined ->
+		    EndByte = utils:to_integer(Bytes),
+		    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, 0, EndByte, T0);
+		{error, Number} -> js_handler:bad_request(Req0, Number);
+		{StartByte, EndByte} ->
+		    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte, EndByte, T0)
+	    end
+    end.
+
+
 init(Req0, _Opts) ->
     T0 = utils:timestamp(), %% measure time of request
     cowboy_req:cast({set_options, #{idle_timeout => infinity}}, Req0),
@@ -296,6 +335,7 @@ init(Req0, _Opts) ->
 	    undefined -> undefined;
 	    Signature -> unicode:characters_to_list(Signature)
 	end,
+    Method = cowboy_req:method(Req0),
     case has_access(Req0, BucketId0, Prefix0, ObjectKey0, PresentedSignature) of
 	{error, Number} ->
 	    Req1 = cowboy_req:reply(403, #{
@@ -303,22 +343,5 @@ init(Req0, _Opts) ->
                 <<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
 	    }, jsx:encode([{error, Number}]), Req0),
 	    {ok, Req1, []};
-	{BucketId1, Prefix1, ObjectKey1, _User} ->
-	    case get_object_metadata(BucketId1, Prefix1, ObjectKey1) of
-		not_found ->
-		    Req1 = cowboy_req:reply(404, #{
-			<<"content-type">> => <<"application/json">>,
-			<<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
-		    }, Req0),
-		    {ok, Req1, []};
-		{OldBucketId, RealPrefix, ContentType, OrigName, Bytes} ->
-		    case validate_range(cowboy_req:header(<<"range">>, Req0), Bytes) of
-			undefined ->
-			    EndByte = utils:to_integer(Bytes),
-			    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, 0, EndByte, T0);
-			{error, Number} -> js_handler:bad_request(Req0, Number);
-			{StartByte, EndByte} ->
-			    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte, EndByte, T0)
-		    end
-	    end
+	{BucketId1, Prefix1, ObjectKey1, _User} -> response(Req0, Method, BucketId1, Prefix1, ObjectKey1, T0)
     end.

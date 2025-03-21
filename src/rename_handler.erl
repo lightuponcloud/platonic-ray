@@ -308,21 +308,18 @@ delete_source_object(BucketId, SrcPrefix, SrcObjectKey, DstObjectKey) ->
 		lager:error("[rename_handler] Can't delete object ~p/~p: ~p",
 			    [BucketId, PrefixedSrcObjectKey, Reason0]),
 		{error, Reason0};
-	    {ok, _} -> sql_lib:delete_object(SrcPrefix, DstObjectKey)
+	    {ok, _} -> sql_lib:delete_object(SrcPrefix, SrcObjectKey)
 	end,
     %% Rename lock object key, if exsits, as the name changed
     PrefixedSrcLockKey1 = PrefixedSrcObjectKey ++ ?LOCK_SUFFIX,
     PrefixedDstLockKey = utils:prefixed_object_key(SrcPrefix, DstObjectKey ++ ?LOCK_SUFFIX),
     case s3_api:copy_object(BucketId, PrefixedSrcLockKey1, BucketId, PrefixedDstLockKey) of
-	{error, Reason1} ->
-	    lager:error("[rename_handler] Can't copy lock object ~p/~p: ~p",
-			[BucketId, PrefixedSrcLockKey1, Reason1]),
-	    ok;
+	{error, _Reason} -> ok;  %% Source object lock do not exist
 	_ ->
 	    case s3_api:delete_object(BucketId, PrefixedSrcLockKey1) of
-		{error, Reason2} ->
+		{error, Reason} ->
 		    lager:error("[rename_handler] Can't delete lock object ~p/~p: ~p",
-				[BucketId, PrefixedSrcLockKey1, Reason2]),
+				[BucketId, PrefixedSrcLockKey1, Reason]),
 		    ok;  %% no harm if lock remains, it will be outdated anyway, if its name matches another object
 		{ok, _} -> ok
 	    end
