@@ -58,7 +58,19 @@ to_scale(Req0, State) ->
 	    ObjExt = filename:extension(light_ets:to_lower(ObjectKey)),
 	    IsVideo = lists:member(ObjExt, ?VIDEO_EXTENSIONS),
 	    case IsVideo of
-		true -> scale_response(Req0, BucketId, Metadata0, Width, Height, CropFlag, true, T0);
+		true ->
+		    %% Return video thumbnail. Cached video thumbnails are stored as
+		    %% ~object/file-GUID/thumbnail
+		    {RealBucketId, _RealGUID, RealUploadId, RealPrefix0} = utils:real_prefix(BucketId, Metadata0),
+		    CachedKey = RealUploadId ++ "_" ++ erlang:integer_to_list(Width) ++ "x" ++ erlang:integer_to_list(Height),
+		    PrefixedThumbnail = utils:prefixed_object_key(RealPrefix0, ?THUMBNAIL_KEY),
+		    BinaryData =
+			case s3_api:get_object(BucketId, PrefixedThumbnail) of
+			    {error, _} -> <<>>;
+			    not_found -> <<>>;
+			    ThumbnailBinary -> proplists:get_value(content, ThumbnailBinary)
+			end,
+		    serve_img(Req0, RealBucketId, RealPrefix0, CachedKey, Width, Height, CropFlag, false, BinaryData, T0);
 		false ->
 		    TotalBytes =
 			case proplists:get_value("x-amz-meta-bytes", Metadata0) of
@@ -70,7 +82,12 @@ to_scale(Req0, State) ->
 			    %% In case image object size is bigger than the limit, return empty response.
 			    {<<>>, Req0, []};
 			false ->
-			    scale_response(Req0, BucketId, Metadata0, Width, Height, CropFlag, IsVideo, T0)
+			    IsWatermark =
+				case ObjectKey of
+				    ?WATERMARK_OBJECT_KEY -> true;
+				    _ -> false
+				end,
+			    scale_response(Req0, BucketId, Metadata0, Width, Height, CropFlag, IsWatermark, T0)
 		    end
 	    end
     end.
@@ -163,7 +180,7 @@ get_binary_data(BucketId, Prefix, StartByte, EndByte) ->
 	    end
     end.
 
-serve_img(Req0, _BucketId, _Prefix, _CachedKey, _Width, _Height, _CropFlag, <<>>, T0) ->
+serve_img(Req0, _BucketId, _Prefix, _CachedKey, _Width, _Height, _CropFlag, _IsWatermark, <<>>, T0) ->
     T1 = utils:timestamp(),
     Req1 = cowboy_req:stream_reply(200, #{
 	<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
@@ -171,32 +188,86 @@ serve_img(Req0, _BucketId, _Prefix, _CachedKey, _Width, _Height, _CropFlag, <<>>
     cowboy_req:stream_body(<<>>, fin, Req1),
     {stop, Req1, []};
 
-serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, BinaryData, T0) ->
-    Watermark =
-	case s3_api:head_object(BucketId, ?WATERMARK_OBJECT_KEY) of
-	    {error, Reason1} ->
-		lager:error("[img_scale_handler] head_object failed ~p/~p: ~p",
-			    [BucketId, ?WATERMARK_OBJECT_KEY, Reason1]),
-		[];
-	    not_found -> [];
-	    WatermarkResponse ->
-		WatermarkGUID = proplists:get_value("x-amz-meta-guid", WatermarkResponse),
-		WatermarkUploadId = proplists:get_value("x-amz-meta-upload-id", WatermarkResponse),
-		case s3_api:get_object(BucketId, WatermarkGUID, WatermarkUploadId) of
-		    not_found -> [];
-		    {error, _} -> [];
-		    WatermarkBinaryData -> [{watermark, WatermarkBinaryData}]
-		end
-	end,
+serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, true, BinaryData, T0) ->
     Reply0 = img:scale([
 	{from, BinaryData},
 	{to, jpeg},
 	{crop, CropFlag},
 	{scale_width, Width},
 	{scale_height, Height}
-    ] ++ Watermark),
+    ]),
     case Reply0 of
-	{error, Reason2} -> js_handler:bad_request(Req0, Reason2);
+	{error, Reason0} -> js_handler:bad_request(Req0, Reason0);
+	_ ->
+	    Response = s3_api:put_object(BucketId, utils:dirname(Prefix), CachedKey, Reply0),
+	    case Response of
+		{error, Reason1} ->
+		    lager:error("[img_scale_handler] Can't put object ~p/~p/~p: ~p",
+				[BucketId, utils:dirname(Prefix), CachedKey, Reason1]);
+		_ -> ok
+	    end,
+	    T1 = utils:timestamp(),
+	    Req1 = cowboy_req:stream_reply(200, #{
+		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+	    }, Req0),
+	    cowboy_req:stream_body(Reply0, fin, Req1),
+	    {stop, Req1, []}
+    end;
+
+serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, false, BinaryData, T0) ->
+    {WWidth0, WHeight0, Watermark0} =
+	case s3_api:head_object(BucketId, ?WATERMARK_OBJECT_KEY) of
+	    {error, Reason1} ->
+		lager:error("[img_scale_handler] head_object failed ~p/~p: ~p",
+			    [BucketId, ?WATERMARK_OBJECT_KEY, Reason1]),
+		{undefined, undefined, undefined};
+	    not_found -> {undefined, undefined, undefined};
+	    WatermarkResponse ->
+		WatermarkGUID = proplists:get_value("x-amz-meta-guid", WatermarkResponse),
+		WatermarkUploadId = proplists:get_value("x-amz-meta-upload-id", WatermarkResponse),
+		WatermarkWidth = proplists:get_value("x-amz-meta-width", WatermarkResponse),
+		WatermarkHeight = proplists:get_value("x-amz-meta-height", WatermarkResponse),
+		case s3_api:get_object(BucketId, WatermarkGUID, WatermarkUploadId) of
+		    not_found -> {undefined, undefined, undefined};
+		    {error, _} -> {undefined, undefined, undefined};
+		    WatermarkBinaryData -> {WatermarkWidth, WatermarkHeight, WatermarkBinaryData}
+		end
+	end,
+    Options = [
+	{from, BinaryData},
+	{to, jpeg},
+	{crop, CropFlag},
+	{scale_width, Width},
+	{scale_height, Height}
+    ],
+    Reply0 =
+	case WWidth0 of
+	    undefined -> img:scale(Options);
+	    _ ->
+		Watermark1 =
+		    case (Width < WWidth0 orelse Height < WHeight0) andalso Width >= 600 of
+			true ->
+			    %% Scale watermark to size of image / 2, but only if thumbnail size > 600 px
+			    Reply1 = img:scale([
+				{from, Watermark0},
+				{to, jpeg},
+				{crop, false},
+				{scale_width, Width/2},
+				{scale_height, Height/2}
+			    ]),
+			    case Reply1 of
+				{error, _} -> undefined;
+				_ -> Reply1
+			    end;
+			false -> undefined
+		    end,
+		case Watermark1 of
+		    undefined -> img:scale(Options);
+		    _ -> img:scale(Options ++ [{watermark, Watermark1}])
+		end
+	end,
+    case Reply0 of
+	{error, Reason3} -> js_handler:bad_request(Req0, Reason3);
 	_ ->
 	    Response = s3_api:put_object(BucketId, utils:dirname(Prefix), CachedKey, Reply0),
 	    case Response of
@@ -214,28 +285,10 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, BinaryData
     end.
 
 %%
-%% Returns thumbnail as binary.
-%%
-%% Cached video thumbnails are stored as
-%% ~object/file-GUID/thumbnail
-%%
-scale_response(Req0, BucketId, Metadata, Width, Height, CropFlag, true, T0) ->
-    {RealBucketId, _RealGUID, RealUploadId, RealPrefix0} = utils:real_prefix(BucketId, Metadata),
-    CachedKey = RealUploadId ++ "_" ++ erlang:integer_to_list(Width) ++ "x" ++ erlang:integer_to_list(Height),
-    PrefixedThumbnail = utils:prefixed_object_key(RealPrefix0, ?THUMBNAIL_KEY),
-    BinaryData =
-	case s3_api:get_object(BucketId, PrefixedThumbnail) of
-	    {error, _} -> <<>>;
-	    not_found -> <<>>;
-	    ThumbnailBinary -> proplists:get_value(content, ThumbnailBinary)
-	end,
-    serve_img(Req0, RealBucketId, RealPrefix0, CachedKey, Width, Height, CropFlag, BinaryData, T0);
-
-%%
 %% Cached images are stored as
 %% ~object/file-GUID/upload-GUID_WxH.ext, where W and H are width and height
 %%
-scale_response(Req0, BucketId, Metadata, Width, Height, CropFlag, false, T0) ->
+scale_response(Req0, BucketId, Metadata, Width, Height, CropFlag, IsWatermark, T0) ->
     {RealBucketId, RealGUID, RealUploadId, RealPrefix0} = utils:real_prefix(BucketId, Metadata),
     PrefixedGUID1 = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, RealGUID),
     CachedKey = RealUploadId ++ "_" ++ erlang:integer_to_list(Width) ++ "x" ++ erlang:integer_to_list(Height),
@@ -244,17 +297,17 @@ scale_response(Req0, BucketId, Metadata, Width, Height, CropFlag, false, T0) ->
     %% First check if cached image exists already.
     case s3_api:get_object(RealBucketId, PrefixedCachedKey) of
 	{error, Reason} ->
-            %% Miss
+	    %% Miss
 	    lager:error("[img_scale_handler] get_object failed ~p/~p: ~p",
 			[RealBucketId, PrefixedCachedKey, Reason]),
 	    BinaryData0 = get_binary_data(RealBucketId, RealPrefix0, 0, ?MAXIMUM_IMAGE_SIZE_BYTES),
-	    serve_img(Req0, RealBucketId, RealPrefix0, CachedKey, Width, Height, CropFlag, BinaryData0, T0);
+	    serve_img(Req0, RealBucketId, RealPrefix0, CachedKey, Width, Height, CropFlag, IsWatermark, BinaryData0, T0);
 	not_found ->
-            %% Miss
+	    %% Miss
 	    BinaryData1 = get_binary_data(RealBucketId, RealPrefix0, 0, ?MAXIMUM_IMAGE_SIZE_BYTES),
-	    serve_img(Req0, RealBucketId, RealPrefix0, CachedKey, Width, Height, CropFlag, BinaryData1, T0);
+	    serve_img(Req0, RealBucketId, RealPrefix0, CachedKey, Width, Height, CropFlag, IsWatermark, BinaryData1, T0);
 	RiakResponse ->
-            %% Return cached image
+	    %% Return cached image
 	    BinaryData = proplists:get_value(content, RiakResponse),
 	    T1 = utils:timestamp(),
 	    Req1 = cowboy_req:stream_reply(200, #{

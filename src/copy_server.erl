@@ -201,15 +201,15 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 			    %% Delete source object only if not locked by another user
 			    case (IsSrcLocked =:= true andalso LockUserId =:= User#user.id) orelse IsSrcLocked =:= false of
 				true ->
-				    SQL = case s3_api:delete_object(SrcBucketId, PrefixedObjectKey) of
+				    case s3_api:delete_object(SrcBucketId, PrefixedObjectKey) of
 					{error, Reason} ->
 					    lager:error("[move_handler] Can't delete ~p/~p: ~p",
 							[SrcBucketId, PrefixedObjectKey, Reason]),
 					    undefined;
-					{ok, _} -> sql_lib:delete_object(SrcPrefix1, unicode:characters_to_list(OldKey0))
+					{ok, _} -> sqlite_server:delete_object(SrcBucketId, SrcPrefix1, unicode:characters_to_list(OldKey0))
 				    end,
 				    s3_api:delete_object(SrcBucketId, PrefixedObjectKey ++ ?LOCK_SUFFIX),
-				    SQL;
+				    undefined;
 				false -> undefined
 			    end
 		    end;
