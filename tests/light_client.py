@@ -1,7 +1,7 @@
 """
 LightUpon.cloud client for making HTTP requests.
 Server source code is available by the following URL.
-https://github.com/lightuponcloud/dubstack
+https://github.com/lightuponcloud/platonicray
 """
 import os
 import hashlib

@@ -6,7 +6,7 @@ I used Riak CS as a main storage backend, as it is very predictable on resource 
 It has recovery tools, scales automatically, it can store files > 5 TB and has multi-datacenter bidirectional replication.
 It was built using the latest academic research in the area of distributed systems.
 
-The list of companies who use Riak CS, -- object storage software, used with DubStack:
+The list of companies who use Riak CS, -- object storage software, used with PlatonicRay:
 "Yahoo! Japan", Booking.com, UK National Health System, TI Tokyo, Bloomberg, Klarna, 
 Bet365, EE.co.uk, Bleacher Report, Derivco, etc.
 

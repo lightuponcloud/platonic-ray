@@ -1,75 +1,76 @@
-# DubStack
-
 [![SWUbanner](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/banner2-direct.svg)](https://github.com/vshymanskyy/StandWithUkraine/blob/main/docs/README.md)
 
-This middleware is used to synchronize AWS S3 compatible storage objects with filesystem. Also it provides web UI for browsing files.
+# Platonic Ray
 
-![Screenshot](doc/dubstack.png)
+Drawing from Plato’s Allegory of the Cave, "Platonic Ray" shines a light on what cloud storage really means.
 
-## What it can do
+This high-performance file synchronization server empowers architects, photographers, journalists, and 
+small businesses with complete transparency and control over their data -- unlike murky typical providers who hide their 
+systems and siphon your info.
+
+Core Features
 
 1. **File Synchronization**
+    Intelligent file locking, versioned deletion, effortless movement operations, and smart conflict resolution that works for you, not against you.
+    Seamless background file synchronization across Windows, Android, and iOS devices.
 
-    DubStack is a server side of team collaboration apps. There are Windows, Android and IOS apps.
-    Windows app synchronizes files in background and allows file **lock**/**unlock**,
-    **delete**/**undelete**, **copy**/**move**, differential sync and **automated conflict resolution**.
+2. **Thumbnails & watermarks**
 
-2. **Thumbnails, watermarks**
+    Need a quick preview? Thumbnails generate on demand via a dedicated process—fast and efficient. 
+    Toss a watermark.png in your bucket, and it’s automatically stamped on every thumbnail. 
+    Perfect for photographers and designers who need to protect their intellectual property while maintaining efficient workflows.
 
-    Thumbnails are generated on demand by dedicated gen_server process.
-    It applies watermark on thumbnails, if watermark.png found in bucket.
-
-3. **File and directory sharing**
-    API key is used for signing sharing requests. This feature can be used, for example, for selling digital content.
+3. **File & directory sharing**
+    Share files or folders securely with an API key signing every request. It’s not just about collaboration—think bigger: sell digital content like stock photos, blueprints, or video clips directly from your platform. Your data, your rules, your revenue.
 
 4. **Action log and changelog**
 
-    It records history of **upload**, **copy**, **move**, **rename** and **delete** operations.
+    Never lose track of what’s happening. Every upload, copy, move, rename, or delete gets logged, giving you a crystal-clear history. Whether you’re auditing changes or settling a “who did what” debate, this keeps your workflow transparent and accountable.
 
 5. **Multi-tenancy**
-
-    Objects are stored in "buckets" with names like "the-tenant-group-res"
-    Only users from tenant's group can access that bucket.
+    Keep things tidy with isolated “buckets” (e.g., the-tenant-group-res). Only your team or group gets access—no crossover, no leaks. It’s a game-changer for healthcare practices juggling patient files or studios managing client projects securely.
 
 6. **IOS and Windows apps**
 
-    You can manage objects, users, their groups and tenants using Web UI browser.
-    You can manage objects using IOS App.
+    Manage files, users, groups, and tenants from anywhere—via a slick Web UI or the iOS app. Whether you’re in the office or on-site, you’ve got full control at your fingertips. Simple, intuitive, and built for real-world use.
 
 7. **API**
-    Easy to embed into your application for file sharing.
+    Embed file sharing into your own apps with our easy-to-use API (see API reference (API.md)). Customize it for your workflow—think private file-sharing portals, automated backups, or integrating with your existing tools.
+
     [See API reference](API.md)
+
+![Screenshot](doc/platoray.png)
+
+## Why It’s a Big Deal
+
+**Private File Sharing**: Host your own disaster-proof storage on-premises and scale as needed—highly available, no middleman.
+
+**Team Collaboration**: Share massive files, lock what you’re working on, track every change, and search everything with full-text support. LAN sync keeps it blazing fast locally.
+
+**Media Workflows**: Upload HD videos or live streams in a snap, replicate data to multiple clusters (CDN, analytics, transcoding)—all at once.
+
+**Multi-Datacenter Power**: Spread your data across locations for compliance (GDPR, CCPA), lower latency, and better performance.
+
 
 
 ## Why Erlang
-- Erlang applications are very resilient: processes are restarted as soon as they terminate.
-- Excellent inter-node communication.
-- Code is running inside Erlang Virtual Machine (BEAM), isolating segment of code and segment of data for security purpose.
 
+Platonic Ray is built on Erlang, and that’s no accident—it’s the backbone that keeps this platform fast, 
+tough, and true to its promise of clarity. Here’s why it matters to you:
 
-## Advantages of DubStack
+**Rock-Solid Resilience**: Erlang apps don’t just crash and burn. If something goes wrong, processes restart instantly, keeping your file sync humming along. For architects juggling deadlines or journalists racing to publish, that means no downtime, no excuses—just reliability you can count on.
 
-### 1. Simple Architecture
+**Seamless Node-to-Node Chatter**: Erlang’s inter-node communication is top-notch, making multi-datacenter replication and LAN sync feel effortless. Whether you’re distributing HD video across clusters or keeping a team in sync across locations, your data moves fast and stays in step—up to that 10 Gbit/s promise.
 
-![DubStack Application](cdk/aws_architecture.png)
-
-
-### 2. Multi-tenancy
-
-DubStack supports multiple tenants per installation
-
-
-### 3. Low Operative Costs
-
-DubStack is very cheap to run on AWS S3 compatible service. It requires minimum maintenance.
+**Secure by Design**: Code runs in the Erlang Virtual Machine (BEAM), locking down each segment of code and data in its own safe little bubble. It’s like the walls of Plato’s cave turning into a fortress—your info stays isolated and protected, far from the prying hands of murky cloud providers.
 
 
 
-## Installation
+### It's ready for deployment on AWS using CDK
 
-### AWS Installation
+![Platonic Ray Application](cdk/aws_architecture.png)
 
-[See CDK "How to" document](cdk/README.md)
+[See CDK "How to install on AWS" document](cdk/README.md)
 
 
 ### Local Installation
@@ -89,7 +90,7 @@ You will need the following dependencies.
 
 [See Riak CS Installation Manual](/doc/riak_cs_setup.md) for installation and configuration instructions.
 
-#### 2. Build DubStack
+#### 2. Build Platonic Ray
 
 Clone this repository and execute the following commands.
 ```sh
@@ -119,7 +120,7 @@ to ``include/riak.hrl``, to the ``secret_access_key`` option.
 
 In order to add first user, authentication should be temporary disabled.
 
-Then start DubStack by executing ``make run``.
+Then start PlatonicRay by executing ``make run``.
 
 
 Now you should change ``general_settings`` in ``include/general.hrl`` and set
