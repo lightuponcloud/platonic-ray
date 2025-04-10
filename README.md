@@ -11,6 +11,7 @@ systems and siphon your info.
 Core Features
 
 1. **File Synchronization**
+
     Intelligent file locking, versioned deletion, effortless movement operations, and smart conflict resolution that works for you, not against you.
     Seamless background file synchronization across Windows, Android, and iOS devices.
 
@@ -21,6 +22,7 @@ Core Features
     Perfect for photographers and designers who need to protect their intellectual property while maintaining efficient workflows.
 
 3. **File & directory sharing**
+
     Share files or folders securely with an API key signing every request. It’s not just about collaboration—think bigger: sell digital content like stock photos, blueprints, or video clips directly from your platform. Your data, your rules, your revenue.
 
 4. **Action log and changelog**
@@ -28,6 +30,7 @@ Core Features
     Never lose track of what’s happening. Every upload, copy, move, rename, or delete gets logged, giving you a crystal-clear history. Whether you’re auditing changes or settling a “who did what” debate, this keeps your workflow transparent and accountable.
 
 5. **Multi-tenancy**
+
     Keep things tidy with isolated “buckets” (e.g., the-tenant-group-res). Only your team or group gets access—no crossover, no leaks. It’s a game-changer for healthcare practices juggling patient files or studios managing client projects securely.
 
 6. **IOS and Windows apps**
@@ -35,6 +38,7 @@ Core Features
     Manage files, users, groups, and tenants from anywhere—via a slick Web UI or the iOS app. Whether you’re in the office or on-site, you’ve got full control at your fingertips. Simple, intuitive, and built for real-world use.
 
 7. **API**
+
     Embed file sharing into your own apps with our easy-to-use API (see API reference (API.md)). Customize it for your workflow—think private file-sharing portals, automated backups, or integrating with your existing tools.
 
     [See API reference](API.md)
@@ -68,9 +72,11 @@ tough, and true to its promise of clarity. Here’s why it matters to you:
 
 ### It's ready for deployment on AWS using CDK
 
+[See CDK "How to install on AWS" document](cdk/README.md)
+
+**Architecture is simple**:
 ![Platonic Ray Application](cdk/aws_architecture.png)
 
-[See CDK "How to install on AWS" document](cdk/README.md)
 
 
 ### Local Installation
