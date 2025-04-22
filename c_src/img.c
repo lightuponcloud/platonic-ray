@@ -1,3 +1,9 @@
+/*
+* This is image processing program, that
+* - creates thumbnails
+* - applies watermarks
+*
+*/
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -197,7 +203,41 @@ int process_image(transform_se *se, ei_x_buff *result){
       width = MagickGetImageWidth(magick_wand);
       height = MagickGetImageHeight(magick_wand);
 
-      MagickSetImageFormat(magick_wand, "JPEG");
+      if(strcmp(se->to, "webp") == 0) {
+        status = MagickSetImageFormat(magick_wand, "WEBP");
+        if (status == MagickFalse) {
+          encode_stat = encode_error(se, result, "webp_format_imagemagick_error");
+          (void)DestroyMagickWand(magick_wand);
+          free(se->from);
+          free(se->tag);
+          return encode_stat;
+        }
+	status = MagickSetImageCompressionQuality(magick_wand, 85);
+	if (status == MagickFalse) {
+	    encode_stat = encode_error(se, result, "imagemagick_webp_compress_error");
+	    (void)DestroyMagickWand(magick_wand);
+	    free(se->from);
+	    free(se->tag);
+	    return encode_stat;
+	}
+      } else if(strcmp(se->to, "jpeg") == 0) {
+        status = MagickSetImageFormat(magick_wand, "JPEG");
+        if (status == MagickFalse) {
+          encode_stat = encode_error(se, result, "jpeg_format_imagemagick_error");
+          (void)DestroyMagickWand(magick_wand);
+          free(se->from);
+          free(se->tag);
+          return encode_stat;
+        }
+        status = MagickSetImageCompressionQuality(magick_wand, 95); // Higher quality for JPEG
+        if (status == MagickFalse) {
+          encode_stat = encode_error(se, result, "imagemagick_jpeg_compress_error");
+          (void)DestroyMagickWand(magick_wand);
+          free(se->from);
+          free(se->tag);
+          return encode_stat;
+        }
+      }
       double src_ratio = (double)width / (double)height;
       double cal_ratio = (double)se->scale_width / (double)se->scale_height;
 
@@ -358,9 +398,9 @@ int parse_transform(unsigned char * buf, int offset, int arity, transform_se *se
 	    encode_stat = encode_error(se, &result, "atom_decode_error");
 	    break;
 	}
-	if(strlen(last_atom)>4){
-	    encode_stat = encode_error(se, &result, "unk_dst_format");
-	    break;
+	if(strlen(last_atom) > 4 && strcmp(last_atom, "webp") != 0 && strcmp(last_atom, "jpeg") != 0) {
+	  encode_stat = encode_error(se, &result, "unk_dst_format");
+	  break;
 	}
     } else if(strncmp("watermark", last_atom, strlen(last_atom)) == 0){
 	(void)ei_get_type((char *) buf, &offset, &type, (int *) &(se->watermark_size));

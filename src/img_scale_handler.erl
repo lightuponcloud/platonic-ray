@@ -191,7 +191,7 @@ serve_img(Req0, _BucketId, _Prefix, _CachedKey, _Width, _Height, _CropFlag, _IsW
 serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, true, BinaryData, T0) ->
     Reply0 = img:scale([
 	{from, BinaryData},
-	{to, jpeg},
+	{to, webp},
 	{crop, CropFlag},
 	{scale_width, Width},
 	{scale_height, Height}

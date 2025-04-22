@@ -11,10 +11,15 @@
 -include("storage.hrl").
 -include("entities.hrl").
 
+-define(UNIX_EPOCH_OFFSET, 62167219200). % Seconds from 0000-01-01 to 1970-01-01
+
 %%
 %% Returns information from metadata and headers.
 %% It is stored in index in a form, convenient for JSON serialization.
 %%
+
+-spec prepare_object_record(proplists:proplist(), proplists:proplist()) -> proplists:proplist().
+
 prepare_object_record(Record0, DeletedObjects) ->
     Metadata = proplists:get_value(metadata, Record0),
     ObjectKey0 = proplists:get_value(key, Record0),
@@ -25,7 +30,11 @@ prepare_object_record(Record0, DeletedObjects) ->
     Version = proplists:get_value("x-amz-meta-version", Metadata),
 
     UploadTimestamp0 = proplists:get_value(upload_timestamp, Record0, ""),
-    UploadTimestamp1 = calendar:datetime_to_gregorian_seconds(UploadTimestamp0) - 62167219200,
+    UploadTimestamp1 = case UploadTimestamp0 of
+	"" -> 0;
+	DT when is_tuple(DT) -> calendar:datetime_to_gregorian_seconds(DT) - ?UNIX_EPOCH_OFFSET;
+	_ -> 0
+    end,
     Bytes =
 	case proplists:get_value("x-amz-meta-bytes", Metadata) of
 	    undefined -> 0;  %% It might be undefined in case of corrupted metadata
@@ -46,6 +55,7 @@ prepare_object_record(Record0, DeletedObjects) ->
 		    undefined -> false;
 		    DeletedFlag1 -> DeletedFlag1
 		end;
+	    false -> false;
 	    true -> true;
 	    _ -> true
 	end,
@@ -159,7 +169,7 @@ to_object(IndexMeta) ->
     #object{
 	key = erlang:binary_to_list(proplists:get_value(object_key, IndexMeta)),
 	orig_name = proplists:get_value(orig_name, IndexMeta),
-	version = jsx:decode(base64:decode(Version)),
+	version = try jsx:decode(base64:decode(Version)) catch _:_ -> undefined end,
 	upload_time = proplists:get_value(upload_time, IndexMeta),
 	bytes = proplists:get_value(bytes, IndexMeta),
 	guid = erlang:binary_to_list(proplists:get_value(guid, IndexMeta)),
@@ -187,7 +197,8 @@ to_object(IndexMeta) ->
 %% Returns aggregated list of objects with metadata,
 %% as well as list of deleted and renamed objects.
 %%
--spec get_diff_list(BucketId, Prefix0, List0, DeletedObjects0, ModifiedKeys, IsUncommitted) -> proplist() when
+-spec 
+get_diff_list(BucketId, Prefix0, List0, DeletedObjects0, ModifiedKeys, IsUncommitted) -> proplist() when
 	BucketId :: string(),
 	Prefix0 :: string(),
 	List0 :: list(),
@@ -339,9 +350,12 @@ get_object_record(IndexContent, ObjectKey) when erlang:is_binary(ObjectKey) ->
 	fun(R) ->
 	    proplists:get_value(object_key, R) =:= ObjectKey
 	end, proplists:get_value(list, IndexContent)),
-    case length(Record) of
-	0 -> [];
-	_ -> lists:nth(1, Record)
+    case Record of
+	[] -> [];
+	[Rec] -> Rec;
+	[_ | _] = Recs ->
+	    lager:warning("[indexing] Multiple records for key ~p: ~p", [ObjectKey, Recs]),
+	    lists:nth(1, Recs)
     end.
 
 %%
@@ -635,7 +649,13 @@ remove_previous_version(BucketId, GUID, UploadId0, Version) when erlang:is_list(
 	    DVV = proplists:get_value(dot, Attrs),
 	    {UploadId1, Date, DVV}
 	end, List0),
-    [VVTimestamp] = dvvset:values(Version),
+    VVTimestamp =
+	case dvvset:values(Version) of
+	    [VT] -> VT;
+	    _ ->
+		lager:error("[indexing] Invalid version vector: ~p", [Version]),
+		undefined
+	end,
     VVDate = utils:format_timestamp(utils:to_integer(VVTimestamp)),
     PreviousOnes = [I || I <- DVVs, element(1, I) =/= UploadId0 andalso element(2, I) =:= VVDate],
     lists:filtermap(

@@ -27,7 +27,7 @@ start(_Type, _Args) ->
 	    {"/riak/move/[:src_bucket_id]/", move_handler, []},
 	    {"/riak/rename/[...]/", rename_handler, []},
 
-	    {"/riak/action-log/[...]/", action_log, []},
+	    {"/riak/audit-log/[...]/", audit_log_handler, []},
 	    {"/riak-search/", search_handler, []},
 
 	    {"/riak/admin/users/", admin_users_handler, []},

@@ -10,7 +10,6 @@
 
 -include("storage.hrl").
 -include("entities.hrl").
--include("action_log.hrl").
 
 init(Req, Opts) ->
     {cowboy_rest, Req, Opts}.

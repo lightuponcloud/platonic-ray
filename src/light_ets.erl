@@ -1,11 +1,8 @@
 %%
-%% This server loads the following to memory for faster access.
-%%
-%% - unicode characters ( to_lower function )
-%% - MIME types ( guessing content-type by extension )
+%% This server loads Unicode characters and MIME types into ETS tables and maintains a log queue.
 %%
 -module(light_ets).
--export([start_link/0, to_lower/1, guess_content_type/1]).
+-export([start_link/0, to_lower/1, guess_content_type/1, log_operation/2]).
 
 -behaviour(gen_server).
 
@@ -19,7 +16,7 @@
 
 -include("log.hrl").
 
--record(state, {unidata_ets = undefined, mime_ets = undefined}).
+-record(state, {unidata_ets = undefined, mime_ets = undefined, log_ets = undefined}).
 
 %%
 %% Converts characters of a string to a lowercase format.
@@ -30,15 +27,20 @@ to_lower(String) when erlang:is_list(String) ->
 guess_content_type(FileName) when erlang:is_list(FileName) ->
     gen_server:call(?MODULE, {mime_type, FileName}).
 
+%% Log an operation (e.g., for auditing to_lower or guess_content_type calls)
+log_operation(Operation, Details) ->
+    gen_server:cast(?MODULE, {log, Operation, Details}).
 
+%%
+%% Utility Functions
+%%
 hex_to_int(Code) ->
     case io_lib:fread("~16u", Code) of
-	{ok, [Int], []} -> Int;
-	_ -> false
+        {ok, [Int], []} -> Int;
+        _ -> false
     end.
 
-%% This functions are used in parser modules.
--spec split(char(), string()) -> [string].
+-spec split(char(), string()) -> [string()].
 split(Char, Str) -> lists:reverse(do_split(Char, Str, [], [])).
 
 do_split(Char, [Char|Tail], Acc1, Acc2) ->
@@ -48,8 +50,6 @@ do_split(_Char, [], Acc1, Acc2) ->
 do_split(Char, [Head|Tail], Acc1, Acc2) ->
     do_split(Char, Tail, [Head|Acc1], Acc2).
 
-
-%% Return a file descriptor or throw error.
 open_file(FileName) ->
     try
         {ok, Fd} = case lists:reverse(FileName) of
@@ -57,26 +57,25 @@ open_file(FileName) ->
                 file:open(FileName, [read, compressed]);
             _ ->
                 file:open(FileName, [read])
-            end,
+        end,
         Fd
     catch
         Class:Reason ->
             lager:error("~w: Cannot open file ~ts. ~n", [?MODULE, FileName]),
-	    throw(io_lib:format("Failed to open file: ~p ~p", [Class, Reason]))
+            throw(io_lib:format("Failed to open file: ~p ~p", [Class, Reason]))
     end.
-
 
 parse(In) ->
     Tokens = split($;, In),
     [Code,_Comment,_Abbr,_Ccc,_,_DecompMap,_,_,_,_,_,_,_UC,LC|_] = Tokens,
     case hex_to_int(Code) of
-	false -> skip;
-	Char ->
-	    case hex_to_int(LC) of
-		false -> skip;
-		T ->
-		    {ok, [{Char, T}]}
-	    end
+        false -> skip;
+        Char ->
+            case hex_to_int(LC) of
+                false -> skip;
+                T ->
+                    {ok, [{Char, T}]}
+            end
     end.
 
 delete_nr(Str) -> [X || X <- Str, X =/= $\n, X =/= $\r].
@@ -86,58 +85,55 @@ delete_comments(Line) ->
 
 do_delete_comments([], Acc) -> Acc;
 do_delete_comments([$# | _], Acc) -> Acc;
-do_delete_comments([H|T], Acc) -> 
+do_delete_comments([H|T], Acc) ->
     do_delete_comments(T, [H|Acc]).
-
 
 read_file({Fd, Ets} = State) ->
     case file:read_line(Fd) of
-	{ok, []} ->
-	    read_file(State);
-	{ok, Line} ->
-	    case parse(delete_nr(delete_comments(Line))) of
-		skip ->
-		    read_file(State);
-		{ok, Val} ->
-		    ets:insert(Ets, Val),
-		    read_file(State)
-	    end;
-	eof -> ok
+        {ok, []} ->
+            read_file(State);
+        {ok, Line} ->
+            case parse(delete_nr(delete_comments(Line))) of
+                skip ->
+                    read_file(State);
+                {ok, Val} ->
+                    ets:insert(Ets, Val),
+                    read_file(State)
+            end;
+        eof -> ok
     end.
 
-
 load_unicode_mapping() ->
-    EbinDir = filename:dirname(code:which(light_ets)),
+    EbinDir = filename:dirname(code:which(?MODULE)),
     AppDir = filename:dirname(EbinDir),
     FilePath = filename:join([AppDir, "priv", "UnicodeData.txt.gz"]),
     Fd = open_file(FilePath),
     Ets = ets:new(unidata, [{write_concurrency, false}, {read_concurrency, true}]),
     read_file({Fd, Ets}),
-    file:close(FilePath),
+    file:close(Fd),
     Ets.
 
-
 load_mime_types() ->
-    EbinDir = filename:dirname(code:which(light_ets)),
+    EbinDir = filename:dirname(code:which(?MODULE)),
     AppDir = filename:dirname(EbinDir),
     MimeTypesFile = filename:join([AppDir, "priv", "mime.types"]),
     {ok, MimeTypes} = httpd_conf:load_mime_types(MimeTypesFile),
-
     Ets = ets:new(mime_types, [{write_concurrency, false}, {read_concurrency, true}]),
     [ets:insert(Ets, I) || I <- MimeTypes],
     Ets.
 
-%% This function is used in handle_call functions
-string_to_lower(Ets, String) ->
-    lists:map(
-	fun(C) ->
-	    Key = erlang:list_to_integer(io_lib:fwrite("~B", [C])),
-	    case ets:lookup(Ets, Key) of
-		[] -> Key;
-		[{Key, Val}] -> lists:nth(1, unicode:characters_to_list([Val]))
-	    end
-	end, String).
+load_log_ets() ->
+    ets:new(log_queue, [named_table, {write_concurrency, true}, {read_concurrency, true}]).
 
+string_to_lower(Ets, String) ->
+    pmap:pmap(
+        fun(C) ->
+            Key = erlang:list_to_integer(io_lib:fwrite("~B", [C])),
+            case ets:lookup(Ets, Key) of
+                [] -> Key;
+                [{Key, Val}] -> lists:nth(1, unicode:characters_to_list([Val]))
+            end
+        end, String).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -149,7 +145,8 @@ string_to_lower(Ets, String) ->
 start_link() ->
     Ets0 = load_unicode_mapping(),
     Ets1 = load_mime_types(),
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [Ets0, Ets1], []).
+    Ets2 = load_log_ets(),
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [Ets0, Ets1, Ets2], []).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -166,9 +163,8 @@ start_link() ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([UnidataEts, MimeEts]) ->
-    {ok, #state{unidata_ets = UnidataEts, mime_ets=MimeEts}}.
-
+init([UnidataEts, MimeEts, LogEts]) ->
+    {ok, #state{unidata_ets = UnidataEts, mime_ets = MimeEts, log_ets = LogEts}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -184,31 +180,30 @@ init([UnidataEts, MimeEts]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call({to_lower, String}, _, State0) ->
-    Ets = State0#state.unidata_ets,
+handle_call({to_lower, String}, _From, State) ->
+    Ets = State#state.unidata_ets,
     Result = string_to_lower(Ets, String),
-    {reply, Result, State0};
+    {reply, Result, State};
 
-handle_call({mime_type, FileName}, _, State0) ->
-    UnidataEts = State0#state.unidata_ets,
-    MimeEts = State0#state.mime_ets,
-
+handle_call({mime_type, FileName}, _From, State) ->
+    UnidataEts = State#state.unidata_ets,
+    MimeEts = State#state.mime_ets,
     Result =
-	case filename:extension(FileName) of
-	    [] -> "application/octet_stream";
-	    Extension0 ->
-		Extension1 = string_to_lower(UnidataEts, unicode:characters_to_list(Extension0)),
-		case Extension1 of
-		    ".heic" -> "image/heic";  %% nonsense from apple
-		    _ ->
-			LookupKey = string:substr(Extension1, 2),
-			case ets:lookup(MimeEts, LookupKey) of
-			    [] -> "application/octet_stream";
-			    [{_Key, Val}] -> Val
-			end
-		end
-	end,
-    {reply, Result, State0};
+        case filename:extension(FileName) of
+            [] -> "application/octet_stream";
+            Extension0 ->
+                Extension1 = string_to_lower(UnidataEts, unicode:characters_to_list(Extension0)),
+                case Extension1 of
+                    ".heic" -> "image/heic";
+                    _ ->
+                        LookupKey = string:substr(Extension1, 2),
+                        case ets:lookup(MimeEts, LookupKey) of
+                            [] -> "application/octet_stream";
+                            [{_Key, Val}] -> Val
+                        end
+                end
+        end,
+    {reply, Result, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -224,9 +219,21 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast(_Info, State) ->
-    {noreply, State}.
+handle_cast({log, Operation, Details}, State) ->
+    LogEts = State#state.log_ets,
+    % Generate a unique key (e.g., timestamp-based)
+    Key = erlang:unique_integer([monotonic, positive]),
+    % Prepend the new entry to the list of entries for this operation type
+    CurrentEntries = case ets:lookup(LogEts, Operation) of
+        [] -> [];
+        [{Operation, Entries}] -> Entries
+    end,
+    NewEntry = {Key, Details},
+    ets:insert(LogEts, {Operation, [NewEntry | CurrentEntries]}),
+    {noreply, State};
 
+handle_cast(_Msg, State) ->
+    {noreply, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -235,7 +242,7 @@ handle_cast(_Info, State) ->
 %%
 %% @spec handle_info(Info, State) -> {noreply, State} |
 %%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, State}
+%%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
 handle_info(_Info, State) ->
@@ -246,13 +253,17 @@ handle_info(_Info, State) ->
 %% @doc
 %% This function is called by a gen_server when it is about to
 %% terminate. It should be the opposite of Module:init/1 and do any
-%% necessary cleaning up. When it returns, the gen_server terminates
-%% with Reason. The return value is ignored.
+%% necessary cleaning up.
 %%
 %% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, _State) -> ok.
+terminate(_Reason, State) ->
+    % Clean up ETS tables
+    ets:delete(State#state.unidata_ets),
+    ets:delete(State#state.mime_ets),
+    ets:delete(State#state.log_ets),
+    ok.
 
 %%--------------------------------------------------------------------
 %% @private

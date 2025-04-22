@@ -7,7 +7,7 @@
 -module(crypto_utils).
 
 -export([sign_v4/8, hash_password/1, check_password/3, uuid4/0, seed/0, validate_guid/1,
-	 random_string/0, random_string/1, md5/1, calculate_url_signature/4]).
+	 random_string/0, random_string/1, md5/1, calculate_url_signature/4, iso_8601_basic_time/1]).
 
 -define(SALT_LENGTH, 16).
 -define(HASH_ITERATIONS, 4096).
@@ -23,7 +23,7 @@
 -spec sign_v4(atom(), list(), headers(), binary(), string(), string(), list(), #api_config{}) -> headers().
 
 sign_v4(Method, Uri, Headers0, Payload, Region, Service, QueryParams, Config) ->
-    Date = iso_8601_basic_time(),
+    Date = iso_8601_basic_time(calendar:now_to_universal_time(os:timestamp())),
     {PayloadHash, Headers1} =
         sign_v4_content_sha256_header( [{"x-amz-date", Date} | Headers0], Payload ),
     {Request, SignedHeaders} = canonical_request(Method, Uri, QueryParams, Headers1, PayloadHash),
@@ -53,8 +53,7 @@ sign_v4_content_sha256_header( Headers, Payload ) ->
         PayloadHash -> {PayloadHash, Headers}
     end.
 
-iso_8601_basic_time() ->
-    {{Year,Month,Day},{Hour,Min,Sec}} = calendar:now_to_universal_time(os:timestamp()),
+iso_8601_basic_time({{Year,Month,Day},{Hour,Min,Sec}}) ->
     lists:flatten(io_lib:format(
                     "~4.10.0B~2.10.0B~2.10.0BT~2.10.0B~2.10.0B~2.10.0BZ",
                     [Year, Month, Day, Hour, Min, Sec])).

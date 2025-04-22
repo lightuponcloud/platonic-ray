@@ -30,7 +30,6 @@
 -include("log.hrl").
 -include("storage.hrl").
 -include("entities.hrl").
--incoude("action_log.hrl").
 
 -define(INTERNAL_DB_UPDATE_INTERVAL, 1000).  %% 1 second -- db updated every 1 second, if there were changes
 
@@ -537,6 +536,9 @@ open_db(BucketId, Prefix, DbName) ->
 	Object ->
 	    Content = proplists:get_value(content, Object),
 	    case s3_api:head_object(BucketId, PrefixedDbName) of
+		{error, Reason4} ->
+		    ?ERROR("[sqlite_server] Can't access DB object ~p/~p: ~p~n", [BucketId, PrefixedDbName, Reason4]),
+		    {error, TempFn, Reason4};
 		not_found ->
 		    ?ERROR("[sqlite_server] Action log DB object suddenly disappeared~n"),
 		    {error, TempFn, "Action log DB object suddenly disappeared"};
@@ -566,6 +568,9 @@ open_db(BucketId, Prefix, DbName) ->
 lock_db(BucketId, LockName) ->
     %% Check lock file first
     case s3_api:head_object(BucketId, LockName) of
+	{error, Reason} ->
+	    ?ERROR("[sqlite_server] Can't check status of lock object: ~p~n", [Reason]),
+	    {error, Reason};
 	not_found ->
 	    %% Create lock file instantly
 	    Timestamp0 = erlang:round(utils:timestamp()/1000),

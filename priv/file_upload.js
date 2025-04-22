@@ -204,8 +204,8 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
      var pswp_width=v.width;
      var pswp_height=v.height;
      if(v.width+""!="NaN"){
-         var maxWidth = 1024;
-         var maxHeight = 768;
+         var maxWidth = 50;
+         var maxHeight = 50;
          var ratio = 0;
          if(v.width>maxWidth){
             ratio = maxWidth / v.width;

@@ -10,7 +10,6 @@
 	 get_action_log_records/0, get_action_log_records_for_object/1]).
 
 -include("entities.hrl").
--include("action_log.hrl").
 
 
 %%

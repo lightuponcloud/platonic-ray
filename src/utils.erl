@@ -19,7 +19,8 @@
 	 trim_spaces/1, hex/1, unhex/1, unhex_path/1, join_list_with_separator/3,
 	 join_binary_with_separator/2,
 	 timestamp/0, format_timestamp/1, firstmatch/2, timestamp_to_datetime/1,
-	 translate/2, dirname/1, read_config/1, real_prefix/2, get_temp_path/1]).
+	 translate/2, dirname/1, read_config/1, real_prefix/2, get_temp_path/1,
+	 get_server_version/1]).
 
 -include("storage.hrl").
 -include("general.hrl").
@@ -681,7 +682,7 @@ read_config(App) ->
     }.
 
 %%
-%% Returns path to temporary filename.
+%% Return path to temporary filename.
 %%
 get_temp_path(App) ->
     Config = application:get_all_env(App),
@@ -689,6 +690,14 @@ get_temp_path(App) ->
     TempPath = proplists:get_value(temp_path, Config),
 
     filename:join([TempPath, crypto_utils:random_string()]).
+
+%%
+%% Return application version.
+%%
+get_server_version(App) ->
+    Config = application:get_all_env(App),
+
+    proplists:get_value(version, Config).
 
 
 -spec split_thousands(binary()) -> [<<_:24>>].

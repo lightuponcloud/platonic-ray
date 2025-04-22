@@ -29,7 +29,6 @@
 -include("storage.hrl").
 -include("entities.hrl").
 -include("general.hrl").
--include("action_log.hrl").
 -include("log.hrl").
 
 init(Req, Opts) ->

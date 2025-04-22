@@ -19,7 +19,6 @@
 -include("log.hrl").
 -include("storage.hrl").
 -include("entities.hrl").
--include("action_log.hrl").
 
 -record(state, {}).
 

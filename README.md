@@ -72,7 +72,7 @@ tough, and true to its promise of clarity. Here’s why it matters to you:
 
 ### It's ready for deployment on AWS using CDK
 
-[See CDK "How to install on AWS" document](cdk/README.md)
+[See "How to install on AWS"](cdk/README.md)
 
 **Architecture is simple**:
 ![Platonic Ray Application](cdk/aws_architecture.png)

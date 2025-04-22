@@ -150,6 +150,12 @@
 %%
 -define(REAL_OBJECT_PREFIX, "~object").
 %%
+%% Prefix for audit logs.
+%%
+%% Default: "~audit"
+%%
+-define(AUDIT_LOG_PREFIX, "~audit").
+%%
 %% Locked object suffix.
 %% Temporary object created with .lock extension by default.
 %% Locked objects are not supposed to be modified.
