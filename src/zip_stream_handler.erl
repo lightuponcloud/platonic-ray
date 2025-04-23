@@ -1,7 +1,7 @@
 -module(zip_stream_handler).
 
--export([init/2]).
--export([terminate/3]).
+-export([init/2, terminate/3]).
+-export([encode_datetime/1]).
 
 -include("zip.hrl").
 -include("storage.hrl").

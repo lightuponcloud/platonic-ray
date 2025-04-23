@@ -2,7 +2,7 @@
 %% This server loads Unicode characters and MIME types into ETS tables and maintains a log queue.
 %%
 -module(light_ets).
--export([start_link/0, to_lower/1, guess_content_type/1, log_operation/2]).
+-export([start_link/0, to_lower/1, guess_content_type/1, log_operation/2, get_queue_size/1]).
 
 -behaviour(gen_server).
 
@@ -27,9 +27,20 @@ to_lower(String) when erlang:is_list(String) ->
 guess_content_type(FileName) when erlang:is_list(FileName) ->
     gen_server:call(?MODULE, {mime_type, FileName}).
 
+%%
 %% Log an operation (e.g., for auditing to_lower or guess_content_type calls)
+%%
 log_operation(Operation, Details) ->
     gen_server:cast(?MODULE, {log, Operation, Details}).
+
+%%
+%% Get the size of the log queue from light_ets
+%%
+get_queue_size(QueueName) when erlang:is_atom(QueueName) ->
+    case ets:lookup(log_queue, QueueName) of
+        [] -> 0;
+        [{QueueName, Entries}] -> length(Entries)
+    end.
 
 %%
 %% Utility Functions
@@ -124,6 +135,7 @@ load_mime_types() ->
 
 load_log_ets() ->
     ets:new(log_queue, [named_table, {write_concurrency, true}, {read_concurrency, true}]).
+
 
 string_to_lower(Ets, String) ->
     pmap:pmap(

@@ -1,5 +1,8 @@
 %%
-%% This server caches audit log records and updates contents of audit log.
+%% Caches audit log records in memory and periodically flushes them to S3 storage.
+%% It supports rate-limited logging per bucket and provides resilience by retrying failed flushes.
+%% The server triggers flushes either periodically or based on queue size thresholds 
+%% Log records include rich metadata and, when large, are supplemented with manifest files stored separately in S3.
 %%
 -module(audit_log).
 -behaviour(gen_server).
@@ -25,26 +28,37 @@
 -define(INTERNAL_LOG_FLUSH_INTERVAL_LONG, 120000).  % 2 minutes in ms
 -define(INTERNAL_LOG_FLUSH_THRESHOLD_COUNT, 1000).  % Maximum number of logs before forced flush
 
-%%
-%% log_queue -- List of log records for audit log.
-%%
--record(state, {log_queue = [], update_timer = undefined, flushing = false}).
+%% Rate limiting parameters (per bucket)
+-define(LOG_RECORDS_PER_SECOND, 100).  % 100 logs per second per bucket
+-define(BUCKET_CAPACITY, 1000).   % Max tokens in bucket
 
+%%
+%% State record
+%% - failed_queue: Stores entries that failed to flush for retry
+%% - flush_ref: Reference to monitor the async flush process
+%% - rate_limits: Map of {BucketId, {Tokens, LastRefill}} for rate limiting
+%%
+-record(state, {
+    update_timer = undefined,
+    flushing = false,
+    flush_ref = undefined,
+    failed_queue = [],
+    rate_limits = #{}
+}).
 
 -spec log_operation(
-	BucketId :: string(),
-	Prefix :: string(),
-	OperationName :: atom(),
-	Status :: list(),
-	ObjectKeys :: list(),
-	Context :: list()) -> ok.
+        BucketId :: string(),
+        Prefix :: string(),
+        OperationName :: atom(),
+        Status :: list(),
+        ObjectKeys :: list(),
+        Context :: list()) -> ok | {error, rate_limit_exceeded}.
 log_operation(BucketId, Prefix, OperationName, Status, ObjectKeys, Context)
-	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined andalso
-	erlang:is_atom(OperationName) andalso erlang:is_list(Status) andalso 
-	erlang:is_list(ObjectKeys) ->
+        when erlang:is_list(BucketId) andalso (erlang:is_list(Prefix) orelse Prefix =:= undefined) andalso
+             erlang:is_atom(OperationName) andalso erlang:is_list(Status) andalso
+             erlang:is_list(ObjectKeys) ->
     Timestamp = calendar:now_to_universal_time(os:timestamp()),
     gen_server:cast(?MODULE, {log, BucketId, Prefix, OperationName, Status, ObjectKeys, Context, Timestamp}).
-
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -72,9 +86,14 @@ start_link() ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
-    {ok, Tref0} = timer:send_after(?INTERNAL_LOG_FLUSH_INTERVAL_LONG, flush_audit_log),
-    {ok, #state{update_timer = Tref0, log_queue = [], flushing = false}}.
-
+    {ok, Tref} = timer:send_interval(?INTERNAL_LOG_FLUSH_INTERVAL_LONG, flush_audit_log),
+    {ok, #state{
+        update_timer = Tref,
+        flushing = false,
+        flush_ref = undefined,
+        failed_queue = [],
+        rate_limits = #{}
+    }}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -83,11 +102,8 @@ init([]) ->
 %%
 %% @spec handle_call(Request, From, State) ->
 %%                                   {reply, Reply, State} |
-%%                                   {reply, Reply, State, Timeout} |
 %%                                   {noreply, State} |
-%%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, Reply, State} |
-%%                                   {stop, Reason, State}
+%%                                   {stop, Reason, Reply, State}
 %% @end
 %%--------------------------------------------------------------------
 handle_call(_Request, _From, State) ->
@@ -97,238 +113,105 @@ handle_call(_Request, _From, State) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Handling cast messages. This message is received by gen_server:cast() call
+%% Handling cast messages
 %%
 %% @spec handle_cast(Msg, State) -> {noreply, State} |
-%%                                  {noreply, State, Timeout} |
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
 handle_cast({log, BucketId, Prefix, OperationName, Status, ObjectKeys, Context, Timestamp},
-            #state{log_queue = LogQueue0, update_timer = Tref0} = State0) ->
-    %% Adds log records to queue
-    LogQueue1 =
-        case proplists:is_defined(BucketId, LogQueue0) of
-            false ->
-                %% Add new bucket to queue
-                BQ0 = [{BucketId, [{Prefix, OperationName, Status, ObjectKeys, Context, Timestamp}]}],
-                LogQueue0 ++ BQ0;
-            true ->
-                %% Add to existing bucket in queue
-                lists:map(
-                    fun(I) ->
-                        case element(1, I) of
-                            BucketId ->
-                                BQ1 = element(2, I),
-                                {BucketId, BQ1 ++ [{Prefix, OperationName, Status, ObjectKeys, Context, Timestamp}]};
-                            _ -> I
-                        end
-                    end, LogQueue0)
-        end,
-
-    QueueSize = lists:foldl(
-        fun({_BucketId, BucketEntries}, Acc) ->
-            Acc + length(BucketEntries)
-        end, 0, LogQueue1),
-
-    %% Determine if we need to flush immediately due to threshold
-    case QueueSize >= ?INTERNAL_LOG_FLUSH_THRESHOLD_COUNT of
-	true ->
-	    %% Cancel existing timer
-	    timer:cancel(Tref0),
-
-	    %% Start a new long timer
-	    {ok, Tref1} = timer:send_after(?INTERNAL_LOG_FLUSH_INTERVAL_LONG, flush_audit_log),
-
-	    %% Flush logs immediately:
-	    erlang:send_after(0, self(), flush_audit_log),
-
-	    State1 = State0#state{log_queue = LogQueue1, update_timer = Tref1},
-	    {noreply, State1};
-	false ->
-	    %% Just update the queue
-	    {noreply, State0#state{log_queue = LogQueue1}}
+            #state{flushing = Flushing, rate_limits = RateLimits} = State) ->
+    %% Rate limiting: Check if the bucket can log
+    case check_rate_limit(BucketId, RateLimits) of
+        {ok, NewRateLimits} ->
+            %% Log to light_ets
+            light_ets:log_operation(
+                audit_log,
+                {BucketId, Prefix, OperationName, Status, ObjectKeys, Context, Timestamp}
+            ),
+            %% Check queue size and trigger flush if needed
+            QueueSize = light_ets:get_queue_size(audit_log),
+            case QueueSize >= ?INTERNAL_LOG_FLUSH_THRESHOLD_COUNT of
+                true when not Flushing ->
+                    %% Trigger immediate flush
+                    self() ! flush_audit_log,
+                    {noreply, State#state{rate_limits = NewRateLimits}};
+                true ->
+                    %% Flush in progress, schedule retry with short interval
+                    erlang:send_after(?INTERNAL_LOG_FLUSH_INTERVAL_SHORT, self(), flush_audit_log),
+                    {noreply, State#state{rate_limits = NewRateLimits}};
+                false ->
+                    {noreply, State#state{rate_limits = NewRateLimits}}
+            end;
+        {error, rate_limit_exceeded} ->
+            lager:warning("[audit_log] Rate limit exceeded for bucket ~p", [BucketId]),
+            {noreply, State}
     end.
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling info messages
+%%
+%% @spec handle_info(Info, State) -> {noreply, State} |
+%%                                   {stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
 handle_info(flush_audit_log, #state{flushing = true} = State) ->
-    %% Already flushing, reschedule check to avoid concurrent flushes
-    {ok, Tref} = timer:send_after(?INTERNAL_LOG_FLUSH_INTERVAL_SHORT, flush_audit_log),
-    {noreply, State#state{update_timer = Tref}};
+    %% Already flushing, rely on short-interval retry or next periodic flush
+    {noreply, State};
 
-handle_info(flush_audit_log, #state{log_queue = LogQueue, flushing = false} = State) ->
-
-    QueueSize = lists:foldl(
-        fun({_BucketId, BucketEntries}, Acc) ->
-            Acc + length(BucketEntries)
-        end, 0, LogQueue),
-    case QueueSize of
-	0 ->
-	    %% Nothing to do, schedule next check
-	    {ok, Tref1} = timer:send_after(?INTERNAL_LOG_FLUSH_INTERVAL_LONG, flush_audit_log),
-	    {noreply, State#state{update_timer = Tref1}};
-	_ ->
-            %% Start flushing in a separate process to avoid blocking
-	    self() ! {start_async_flush},
-	    {ok, Tref1} = timer:send_after(?INTERNAL_LOG_FLUSH_INTERVAL_LONG, flush_audit_log),
-	    {noreply, State#state{update_timer = Tref1, flushing = true}}
+handle_info(flush_audit_log, #state{flushing = false, failed_queue = FailedQueue} = State) ->
+    QueueSize = light_ets:get_queue_size(audit_log),
+    case QueueSize > 0 orelse FailedQueue =/= [] of
+        true ->
+            %% Start async flush with monitoring
+            Parent = self(),
+            {_Pid, Ref} = erlang:spawn_monitor(fun() ->
+                Result = flush_to_s3(FailedQueue),
+                Parent ! {flush_completed, self(), Result}
+            end),
+            {noreply, State#state{flushing = true, flush_ref = Ref}};
+        false ->
+            {noreply, State}
     end;
 
-handle_info({start_async_flush}, #state{log_queue = LogQueue} = State) ->
-    %% Spawn process to handle the flush
-    spawn_link(fun() ->
-	%% Process flush outside the gen_server process
-	%% Process each bucket's logs, but only if the bucket queue is not empty
-	lists:foreach(
-	    fun({BucketId, BucketEntries}) ->
-		case BucketEntries of
-		    [] -> ok;
-		    _ ->
-			%% Group entries by prefix/directory for efficient writing
-			EntriesByPrefix = lists:foldl(
-			    fun({Prefix, OperationName, Status, ObjectKeys, Context, Timestamp}, Acc) ->
-				PrefixEntries = maps:get(Prefix, Acc, []),
-				maps:put(Prefix,
-				    PrefixEntries ++ [{OperationName, Status, ObjectKeys, Context, Timestamp}],
-				    Acc)
-			    end, #{}, BucketEntries),
-			%% Write each group to appropriate S3 path
-			maps:foreach(
-			    fun(Prefix, Entries) ->
-				log_operation(BucketId, Prefix, Entries)
-			    end, EntriesByPrefix)
-		end
-	    end, LogQueue),
-	%% Signal completion
-	self() ! {flush_completed, LogQueue}
-    end),
+handle_info({flush_completed, _Pid, Result}, #state{flush_ref = Ref} = State) ->
+    %% Handle flush completion
+    erlang:demonitor(Ref, [flush]),
+    case Result of
+        {ok, FailedEntries} ->
+            {noreply, State#state{flushing = false, flush_ref = undefined, failed_queue = FailedEntries}};
+        {error, FailedEntries} ->
+            lager:error("[audit_log] Flush failed, preserving ~p entries", [length(FailedEntries)]),
+            {noreply, State#state{
+                flushing = false,
+                flush_ref = undefined,
+                failed_queue = FailedEntries ++ State#state.failed_queue
+            }}
+    end;
 
-    %% Immediately clear the queue for new additions
-    {noreply, State#state{log_queue = []}};
-
-handle_info({flush_completed, _FlushedQueue}, State) ->
-    %% Flush operation finished
-    {noreply, State#state{flushing = false}}.
-
-
-log_operation(BucketId, Prefix, Entries) ->
-    Version = utils:get_server_version(middleware),
-    ManifestPath = utils:to_binary(io_lib:format("~s.json", [EventId])),
-    JSONEntries = lists:map(
-	fun({OperationName, Status, ObjectKeys, Context, Timestamp}) ->
-	    EventId = crypto_utils:uuid4(),
-	    IncludedObjectKeys =
-		case length(ObjectKeys) < 100 of
-		    true -> ObjectKeys;  %% Include keys directly if reasonable
-		    false -> null        %% Otherwise omit
-		end,
-	    DateTime = utils:to_binary(iso_8601_basic_time(Timestamp)),
-	    Entry = [
-		{event_id, EventId},
-		{version, utils:to_binary(Version)},
-		{timestamp, DateTime},
-		{severity, <<"info">>},
-		{facility, <<"user">>},
-		{message, utils:to_binary(io_lib:format("~s on ~B objects", [OperationName, length(ObjectKeys)]))},
-		{operation_name, utils:to_binary(OperationName)},
-		{operation, [
-		    {status, Status},
-		    {status_code, proplists:get_value(status_code, Context, 200)},
-		    {request_id, proplists:get_value(request_id, Context, null)},
-		    {time_to_response_ns, proplists:get_value(time_to_response_ns, Context, null)}
-		]},
-		{object_keys, IncludedObjectKeys},
-		{object_count, length(ObjectKeys)},
-		{user_id, proplists:get_value(user_id, Context, null)},
-		{actor, proplists:get_value(actor, Context, null)},
-		{environment, proplists:get_value(environment, Context, null)},
-		{compliance_metadata, proplists:get_value(compliance_metadata, Context, null)},
-	    ],
-	    ManifestPath =
-		%% Create detailed manifest if object count is large
-		case length(ObjectKeys) >= 100 of
-		    true ->
-			Path = utils:to_binary(io_lib:format("~s.json", [EventId])),
-			Manifest = [
-			    {operation_id, EventId},
-			    {operation_name, OperationName},
-			    {timestamp, DateTime},
-			    {object_keys, ObjectKeys}
-			],
-			ManifestJSON = jsx:encode(Manifest),
-			Options = [{meta, [{"md5", crypto_utils:md5(ManifestJSON)}]}],
-			Response0 = s3_api:put_object(?SECURITY_BUCKET_NAME, ?AUDIT_LOG_PREFIX ++ "/manifests",
-			    io_lib:format("~s.json", [EventId]), ManifestJSON, Options),
-			case Response0 of
-			    {error, Reason0} -> lager:error("[audit_log] Can't save manifest ~p/~p/~p: ~p",
-							    [?SECURITY_BUCKET_NAME, ?AUDIT_LOG_PREFIX ++ "/manifests",
-							     io_lib:format("~s.json", [EventId]), Reason0]);
-			    _ -> ok
-			end;
-		    false -> null
-		end,
-	    <<(jsx:encode(Entry ++ [{manifest_path, ManifestPath}]))/binary, "\n">>
-	end, Entries),
-
-	Output = iolist_to_binary(JSONEntries),
-
-	Bits = string:tokens(BucketId, "-"),
-	BucketTenantId = string:to_lower(lists:nth(2, Bits)),
-	LogPath0 = io_lib:format("~s/buckets/tenant-~s", [?AUDIT_LOG_PREFIX, BucketTenantId]),
-	LogPath1 = io_lib:format("~s/~4.10.0B/~2.10.0B/~2.10.0B.jsonl",
-	    [utils:prefixed_object_key(LogPath0, Prefix), Year, Month, Day]),
-	%% Append to existing log if exists
-	case s3_api:head_object(?SECURITY_BUCKET_NAME, LogPath1) of
-	    {error, Reason1} ->
-		lager:error("[audit_log] head_object error ~p/~p: ~p", [?SECURITY_BUCKET_NAME, LogPath1, Reason1]);
-	    not_found ->
-		%% Create a new log object
-		Response1 = s3_api:put_object(?SECURITY_BUCKET_NAME, LogPath1,
-		    io_lib:format("~s.json", [EventId]), Output, [{meta, [{"md5", crypto_utils:md5(Output)}]}]),
-		case Response1 of
-		    {error, Reason2} -> lager:error("[audit_log] Can't put object ~p/~p: ~p",
-						    [?SECURITY_BUCKET_NAME, LogPath1, Reason2]);
-		    _ -> ok
-		end
-	    _ ->
-		%% Append to existing object
-		case s3_api:get_object(?SECURITY_BUCKET_NAME, LogPath1) of
-		    {error, Reason3} ->
-			lager:error("[audit_log] get_object error ~p/~p: ~p", [?SECURITY_BUCKET_NAME, LogPath1, Reason3]);
-		    not_found ->
-			lager:error("[audit_log] get_object ~p/~p: not_found", [?SECURITY_BUCKET_NAME, LogPath1]);
-		    Response2 ->
-			CurrentContent = proplists:get_value(content, Response2),
-			NewContent = <<CurrentContent/binary, "\n", Output/binary>>,
-			Response3 = s3_api:put_object(?SECURITY_BUCKET_NAME, LogPath1,
-						      [{meta, [{"md5", crypto_utils:md5(NewContent)}]}]),
-			case Response3 of
-			    {error, Reason4} -> lager:error("[audit_log] Can't put object ~p/~p: ~p",
-							    [?SECURITY_BUCKET_NAME, LogPath1, Reason4]);
-			    _ -> ok
-			end
-		end
-	end.
-
+handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{flush_ref = Ref} = State) ->
+    %% Flush process crashed
+    lager:error("[audit_log] Flush process crashed: ~p", [Reason]),
+    {noreply, State#state{flushing = false, flush_ref = undefined}}.
 
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
 %% This function is called by a gen_server when it is about to
 %% terminate. It should be the opposite of Module:init/1 and do any
-%% necessary cleaning up. When it returns, the gen_server terminates
-%% with Reason. The return value is ignored.
+%% necessary cleaning up.
 %%
 %% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
 terminate(_Reason, #state{update_timer = Timer} = _State) ->
     case Timer of
-	undefined -> ok;
-	_ ->
-	    erlang:cancel_timer(Timer),
-	    ok
-    end.
-
+        undefined -> ok;
+        _ -> timer:cancel(Timer)
+    end,
+    ok.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -340,3 +223,281 @@ terminate(_Reason, #state{update_timer = Timer} = _State) ->
 %%--------------------------------------------------------------------
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
+
+%% Flush logs to S3
+flush_to_s3(FailedQueue) ->
+    %% Retrieve logs from light_ets
+    LogQueue = case ets:lookup(log_queue, audit_log) of
+        [] -> [];
+        [{audit_log, Entries}] ->
+            %% Clear the ETS table
+            ets:insert(log_queue, {audit_log, []}),
+            [{BucketId, Entries} || {_, {BucketId, _Prefix, _Op, _Status, _Keys, _Context, _Ts}} = _Entry <- Entries]
+    end,
+    AllEntries = FailedQueue ++ LogQueue,
+    case AllEntries of
+        [] -> {ok, []};
+        _ ->
+            try
+                Failed = lists:foldl(
+                    fun({BucketId, BucketEntries}, Acc) ->
+                        case BucketEntries of
+                            [] -> Acc;
+                            _ ->
+                                %% Group entries by prefix
+                                EntriesByPrefix = lists:foldl(
+                                    fun({_, Prefix, OperationName, Status, ObjectKeys, Context, Timestamp}, Map) ->
+                                        PrefixEntries = maps:get(Prefix, Map, []),
+                                        maps:put(Prefix,
+                                                 PrefixEntries ++ [{OperationName, Status, ObjectKeys, Context, Timestamp}],
+                                                 Map)
+                                    end, #{}, BucketEntries),
+                                %% Process each prefix
+                                maps:fold(
+                                    fun(Prefix, Entries, Acc2) ->
+                                        case log_to_s3(BucketId, Prefix, Entries) of
+                                            ok -> Acc2;
+                                            {error, _} -> [{BucketId, Entries} | Acc2]
+                                        end
+                                    end, Acc, EntriesByPrefix)
+                        end
+                    end, [], AllEntries),
+                {ok, Failed}
+            catch
+                Class:Reason ->
+                    lager:error("[audit_log] Flush failed: ~p:~p", [Class, Reason]),
+                    {error, AllEntries}
+            end
+    end.
+
+%%
+%% Adds file to zip archive using deflate compression method.
+%%
+compress_data(Filename, JSON) when erlang:is_list(Filename) and erlang:is_binary(JSON) ->
+    Z = zlib:open(),
+    ok = zlib:deflateInit(Z, default, deflated, -15, ?COMPRESSION_DEFLATE, default), % DEFLATE compression, 32K window
+    CompressedChunks = zlib:deflate(Z, JSON, finish),
+    CompressedJSON = iolist_to_binary(CompressedChunks),
+    ok = zlib:deflateEnd(Z),
+    zlib:close(Z),
+
+    Crc32 = erlang:crc32(JSON),
+    UncompressedSize = byte_size(JSON),
+    CompressedSize = byte_size(CompressedJSON),
+
+    Offset0 = 0,
+    Name = unicode:characters_to_binary(erlang:list_to_binary(Filename),, utf8),
+    {DosDate, DosTime} = zip_stream_handler:encode_datetime({{Year, Month, Day}, {H, M, S}}),
+    LocalHeader = <<
+        ?LOCAL_FILE_HEADER_SIGNATURE:32/little,
+        ?VERSION_ZIP64:16/little,
+        (?USE_UTF8 bor ?USE_DATA_DESCRIPTOR):16/little,
+        ?COMPRESSION_DEFLATE:16/little,
+        DosTime:16/little,
+        DosDate:16/little,
+        0:32/little,
+        16#FFFFFFFF:32/little,
+        16#FFFFFFFF:32/little,
+        (byte_size(Name)):16/little,
+        0:16/little,
+        Name/binary
+    >>,
+
+    DataDescriptor = <<
+        ?DATA_DESCRIPTOR_SIGNATURE:32/little,
+        Crc32:32/little,
+        CompressedSize:64/little,
+        UncompressedSize:64/little
+    >>,
+
+    CentralEntry = <<
+        ?CENTRAL_DIR_SIGNATURE:32/little,
+        ?VERSION_ZIP64:16/little,
+        ?VERSION_ZIP64:16/little,
+        (?USE_UTF8 bor ?USE_DATA_DESCRIPTOR):16/little,
+        ?COMPRESSION_DEFLATE:16/little,
+        DosTime:16/little,
+        DosDate:16/little,
+        Crc32:32/little,
+        16#FFFFFFFF:32/little,
+        16#FFFFFFFF:32/little,
+        (byte_size(Name)):16/little,
+        24:16/little,
+        0:16/little,
+        0:16/little,
+        0:16/little,
+        16#81B60000:32/little,
+        Offset0:32/little,
+        Name/binary,
+        16#0001:16/little,
+        24:16/little,
+        UncompressedSize:64/little,
+        CompressedSize:64/little,
+        Offset0:64/little
+    >>,
+
+    TotalEntries = 1,
+    CdSize = byte_size(CentralEntry),
+    Offset1 = Offset0 + byte_size(LocalHeader) + CompressedSize + byte_size(DataDescriptor),
+
+    Zip64EndRecord = <<
+        ?ZIP64_END_OF_CENTRAL_DIR_SIGNATURE:32/little,
+        44:64/little,
+        ?VERSION_ZIP64:16/little,
+        ?VERSION_ZIP64:16/little,
+        0:32/little,
+        0:32/little,
+        TotalEntries:64/little,
+        TotalEntries:64/little,
+        CdSize:64/little,
+        Offset1:64/little
+    >>,
+
+    Zip64EndLocator = <<
+        ?ZIP64_END_OF_CENTRAL_DIR_LOCATOR_SIGNATURE:32/little,
+        0:32/little,
+        (Offset1 + CdSize):64/little,
+        1:32/little
+    >>,
+
+    EndRecord = <<
+        ?END_OF_CENTRAL_DIR_SIGNATURE:32/little,
+        0:16/little,
+        0:16/little,
+        16#FFFF:16/little,
+        16#FFFF:16/little,
+        16#FFFFFFFF:32/little,
+        16#FFFFFFFF:32/little,
+        0:16/little
+    >>,
+
+    << LocalHeader/binary,
+       CompressedJSON/binary,
+       DataDescriptor/binary,
+       CentralEntry/binary,
+       Zip64EndRecord/binary,
+       Zip64EndLocator/binary,
+       EndRecord/binary >>.
+
+
+%% Write log entries to S3
+log_to_s3(BucketId, Prefix, Entries) ->
+    Version = utils:get_server_version(middleware),
+    EventId = crypto_utils:uuid4(),
+    %% Batch encode entries as a single JSON array
+    JSONEntries = [
+        begin
+            IncludedObjectKeys = case length(ObjectKeys) < 100 of
+                true -> ObjectKeys;
+                false -> null
+            end,
+            DateTime = utils:to_binary(crypto_utils:iso_8601_basic_time(Timestamp)),
+            Entry = [
+                {event_id, EventId},
+                {version, utils:to_binary(Version)},
+                {timestamp, DateTime},
+                {severity, <<"info">>},
+                {facility, <<"user">>},
+                {message, utils:to_binary(io_lib:format("~s on ~B objects", [OperationName, length(ObjectKeys)]))},
+                {operation_name, utils:to_binary(OperationName)},
+                {operation, [
+                    {status, Status},
+                    {status_code, proplists:get_value(status_code, Context, 200)},
+                    {request_id, proplists:get_value(request_id, Context, null)},
+                    {time_to_response_ns, proplists:get_value(time_to_response_ns, Context, null)}
+                ]},
+                {object_keys, IncludedObjectKeys},
+                {object_count, length(ObjectKeys)},
+                {user_id, proplists:get_value(user_id, Context, null)},
+                {actor, proplists:get_value(actor, Context, null)},
+                {environment, proplists:get_value(environment, Context, null)},
+                {compliance_metadata, proplists:get_value(compliance_metadata, Context, null)}
+            ],
+            ManifestPath = case length(ObjectKeys) >= 100 of
+                true ->
+                    Path = utils:to_binary(io_lib:format("~s.json", [EventId])),
+                    Manifest = [
+                        {operation_id, EventId},
+                        {operation_name, OperationName},
+                        {timestamp, DateTime},
+                        {object_keys, ObjectKeys}
+                    ],
+                    ManifestJSON = jsx:encode(Manifest),
+                    Options = [{meta, [{"md5", crypto_utils:md5(ManifestJSON)}]}],
+                    case s3_api:retry_s3_operation(
+                        fun() ->
+                            s3_api:put_object(?SECURITY_BUCKET_NAME, ?AUDIT_LOG_PREFIX ++ "/manifests",
+                                              io_lib:format("~s.json", [EventId]), ManifestJSON, Options)
+                        end,
+                        ?S3_RETRY_COUNT,
+                        ?S3_BASE_DELAY_MS
+                    ) of
+                        {error, Reason} ->
+                            lager:error("[audit_log] Can't save manifest ~p/~p/~p: ~p",
+                                        [?SECURITY_BUCKET_NAME, ?AUDIT_LOG_PREFIX ++ "/manifests",
+                                         io_lib:format("~s.json", [EventId]), Reason]),
+                            null;
+                        _ -> Path
+                    end;
+                false -> null
+            end,
+            Entry ++ [{manifest_path, ManifestPath}]
+        end || {OperationName, Status, ObjectKeys, Context, Timestamp} <- Entries
+    ],
+    Output = iolist_to_binary([jsx:encode(JSONEntries), "\n"]),
+    Bits = string:tokens(BucketId, "-"),
+    BucketTenantId = string:to_lower(lists:nth(2, Bits)),
+    LogPath0 = io_lib:format("~s/buckets/tenant-~s", [?AUDIT_LOG_PREFIX, BucketTenantId]),
+    {{Year, Month, Day}, {_H, _M, _S}} = calendar:now_to_universal_time(os:timestamp()),
+    LogPath1 = io_lib:format("~s/~4.10.0B/~2.10.0B/~2.10.0B_~s.jsonl.zip",
+                             [utils:prefixed_object_key(LogPath0, Prefix), Year, Month, Day, EventId]),
+
+    CompressedOutput = compress_data(
+	io_lib:format("~4.10.0B-~2.10.0B-~2.10.0B_~s.jsonl", [Year, Month, Day, EventId]),
+	Output
+    ),
+    %% Write new object
+    Response = s3_api:retry_s3_operation(
+        fun() ->
+            s3_api:put_object(
+                ?SECURITY_BUCKET_NAME,
+                LogPath1,
+                CompressedOutput,
+                [{meta, [{"md5", crypto_utils:md5(Output)}]}]
+            )
+        end,
+        ?S3_RETRY_COUNT,
+        ?S3_BASE_DELAY_MS
+    ),
+    case Response of
+        {error, Reason} ->
+            lager:error("[audit_log] Can't put object ~p/~p: ~p", [?SECURITY_BUCKET_NAME, LogPath1, Reason]),
+            {error, Reason};
+        _ -> ok
+    end.
+
+%% Rate limiting using token bucket algorithm
+check_rate_limit(BucketId, RateLimits) ->
+    Now = erlang:monotonic_time(second),
+    case maps:get(BucketId, RateLimits, undefined) of
+        undefined ->
+            %% Initialize bucket with full tokens
+            NewRateLimits = maps:put(BucketId, {?BUCKET_CAPACITY, Now}, RateLimits),
+            {ok, NewRateLimits};
+        {Tokens, LastRefill} ->
+            %% Refill tokens based on elapsed time
+            Elapsed = Now - LastRefill,
+            NewTokens = min(?BUCKET_CAPACITY, Tokens + Elapsed * ?LOG_RECORDS_PER_SECOND),
+            case NewTokens >= 1 of
+                true ->
+                    %% Consume one token
+                    NewRateLimits = maps:put(BucketId, {NewTokens - 1, Now}, RateLimits),
+                    {ok, NewRateLimits};
+                false ->
+                    {error, rate_limit_exceeded}
+            end
+    end.

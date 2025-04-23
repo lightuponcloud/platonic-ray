@@ -19,7 +19,8 @@
 	 s3_request/8,
 	 request_httpc/6,
 	 recursively_list_pseudo_dir/2,
-	 mark_filename_conflict/2
+	 mark_filename_conflict/2,
+	 retry_s3_operation/3
         ]).
 
 -include("storage.hrl").
@@ -30,6 +31,58 @@
 -define(XMLNS_S3, "http://s3.amazonaws.com/doc/2006-03-01/").
 -define(LIST_OBJECTS_MAX_KEYS, 10000).
 -define(DEFAULT_TIMEOUT, 10000).
+
+%%
+%% Retry an S3 operation with exponential backoff and jitter
+%%
+retry_s3_operation(Fun, MaxRetries, BaseDelay) ->
+    retry_s3_operation(Fun, MaxRetries, BaseDelay, 0).
+
+retry_s3_operation(Fun, MaxRetries, _BaseDelay, Attempt) when Attempt >= MaxRetries ->
+    %% Exhausted retries, return the last error
+    case Fun() of
+        {error, Reason} = Error ->
+            lager:error("[s3_api] S3 operation failed after ~p retries: ~p", [MaxRetries, Reason]),
+            Error;
+        Result ->
+            Result
+    end;
+
+retry_s3_operation(Fun, MaxRetries, BaseDelay, Attempt) ->
+    case Fun() of
+        {error, Reason} = Error ->
+            case is_retryable_error(Reason) of
+                true ->
+                    %% Calculate delay with exponential backoff and jitter
+                    Delay = calculate_delay(BaseDelay, Attempt),
+                    lager:warning("[s3_api] S3 operation failed (attempt ~p/~p): ~p, retrying after ~p ms",
+                                  [Attempt + 1, MaxRetries, Reason, Delay]),
+                    timer:sleep(Delay),
+                    retry_s3_operation(Fun, MaxRetries, BaseDelay, Attempt + 1);
+                false ->
+                    lager:error("[s3_api] Non-retryable S3 error: ~p", [Reason]),
+                    Error
+            end;
+        Result ->
+            Result
+    end.
+
+%% Determine if an error is retryable
+is_retryable_error(timeout) -> true;
+is_retryable_error(service_unavailable) -> true;
+is_retryable_error({http_error, Status, _}) when Status >= 500, Status < 600 -> true; % 5xx errors
+is_retryable_error(_) -> false.
+
+%% Calculate delay with exponential backoff and jitter
+calculate_delay(BaseDelay, Attempt) ->
+    %% Exponential backoff: BaseDelay * 2^Attempt
+    Backoff = BaseDelay * (1 bsl Attempt),
+    %% Cap at max delay
+    CappedBackoff = min(Backoff, ?S3_MAX_DELAY_MS),
+    %% Add jitter: up to 10% of the delay
+    Jitter = round(CappedBackoff * ?S3_JITTER_PERCENT * (rand:uniform() - 0.5)),
+    max(0, CappedBackoff + Jitter).
+
 
 -spec copy_object(DestBucketId, DestKeyName, SrcBucketId, SrcKeyName) -> proplist() when
     DestBucketId :: string(),
