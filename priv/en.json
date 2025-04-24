@@ -52,6 +52,9 @@
     "51": "Etags do not match",
     "52": "content-range header is required",
     "53": "Chunk size is too small",
+    "54": "Incorrect month",
+    "55": "Incorrect day",
+    "56": "Incorrect year",
     "Loading..": "Loading..",
     "Something's went horribly wrong.": "Something's went horribly wrong.",
     "notmodified": "Old version."

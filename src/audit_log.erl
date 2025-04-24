@@ -8,7 +8,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, log_operation/6]).
+-export([start_link/0, log_operation/6, compress_data/1, decompress_data/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -59,6 +59,25 @@ log_operation(BucketId, Prefix, OperationName, Status, ObjectKeys, Context)
              erlang:is_list(ObjectKeys) ->
     Timestamp = calendar:now_to_universal_time(os:timestamp()),
     gen_server:cast(?MODULE, {log, BucketId, Prefix, OperationName, Status, ObjectKeys, Context, Timestamp}).
+
+%%
+%% Function for compressing and decompressing single file.
+%%
+compress_data(Data) ->
+    Z = zlib:open(),
+    zlib:deflateInit(Z, default, deflated, 31, 8, default),  %% 31 -- Gzip header
+    Compressed = zlib:deflate(Z, Data, finish),
+    zlib:deflateEnd(Z),
+    zlib:close(Z),
+    iolist_to_binary(Compressed).
+
+decompress_data(CompressedData) ->
+    Z = zlib:open(),
+    zlib:inflateInit(Z, 31),
+    Decompressed = zlib:inflate(Z, CompressedData),
+    zlib:inflateEnd(Z),
+    zlib:close(Z),
+    iolist_to_binary(Decompressed).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -274,115 +293,6 @@ flush_to_s3(FailedQueue) ->
             end
     end.
 
-%%
-%% Adds file to zip archive using deflate compression method.
-%%
-compress_data(Filename, JSON) when erlang:is_list(Filename) and erlang:is_binary(JSON) ->
-    Z = zlib:open(),
-    ok = zlib:deflateInit(Z, default, deflated, -15, ?COMPRESSION_DEFLATE, default), % DEFLATE compression, 32K window
-    CompressedChunks = zlib:deflate(Z, JSON, finish),
-    CompressedJSON = iolist_to_binary(CompressedChunks),
-    ok = zlib:deflateEnd(Z),
-    zlib:close(Z),
-
-    Crc32 = erlang:crc32(JSON),
-    UncompressedSize = byte_size(JSON),
-    CompressedSize = byte_size(CompressedJSON),
-
-    Offset0 = 0,
-    Name = unicode:characters_to_binary(erlang:list_to_binary(Filename),, utf8),
-    {DosDate, DosTime} = zip_stream_handler:encode_datetime({{Year, Month, Day}, {H, M, S}}),
-    LocalHeader = <<
-        ?LOCAL_FILE_HEADER_SIGNATURE:32/little,
-        ?VERSION_ZIP64:16/little,
-        (?USE_UTF8 bor ?USE_DATA_DESCRIPTOR):16/little,
-        ?COMPRESSION_DEFLATE:16/little,
-        DosTime:16/little,
-        DosDate:16/little,
-        0:32/little,
-        16#FFFFFFFF:32/little,
-        16#FFFFFFFF:32/little,
-        (byte_size(Name)):16/little,
-        0:16/little,
-        Name/binary
-    >>,
-
-    DataDescriptor = <<
-        ?DATA_DESCRIPTOR_SIGNATURE:32/little,
-        Crc32:32/little,
-        CompressedSize:64/little,
-        UncompressedSize:64/little
-    >>,
-
-    CentralEntry = <<
-        ?CENTRAL_DIR_SIGNATURE:32/little,
-        ?VERSION_ZIP64:16/little,
-        ?VERSION_ZIP64:16/little,
-        (?USE_UTF8 bor ?USE_DATA_DESCRIPTOR):16/little,
-        ?COMPRESSION_DEFLATE:16/little,
-        DosTime:16/little,
-        DosDate:16/little,
-        Crc32:32/little,
-        16#FFFFFFFF:32/little,
-        16#FFFFFFFF:32/little,
-        (byte_size(Name)):16/little,
-        24:16/little,
-        0:16/little,
-        0:16/little,
-        0:16/little,
-        16#81B60000:32/little,
-        Offset0:32/little,
-        Name/binary,
-        16#0001:16/little,
-        24:16/little,
-        UncompressedSize:64/little,
-        CompressedSize:64/little,
-        Offset0:64/little
-    >>,
-
-    TotalEntries = 1,
-    CdSize = byte_size(CentralEntry),
-    Offset1 = Offset0 + byte_size(LocalHeader) + CompressedSize + byte_size(DataDescriptor),
-
-    Zip64EndRecord = <<
-        ?ZIP64_END_OF_CENTRAL_DIR_SIGNATURE:32/little,
-        44:64/little,
-        ?VERSION_ZIP64:16/little,
-        ?VERSION_ZIP64:16/little,
-        0:32/little,
-        0:32/little,
-        TotalEntries:64/little,
-        TotalEntries:64/little,
-        CdSize:64/little,
-        Offset1:64/little
-    >>,
-
-    Zip64EndLocator = <<
-        ?ZIP64_END_OF_CENTRAL_DIR_LOCATOR_SIGNATURE:32/little,
-        0:32/little,
-        (Offset1 + CdSize):64/little,
-        1:32/little
-    >>,
-
-    EndRecord = <<
-        ?END_OF_CENTRAL_DIR_SIGNATURE:32/little,
-        0:16/little,
-        0:16/little,
-        16#FFFF:16/little,
-        16#FFFF:16/little,
-        16#FFFFFFFF:32/little,
-        16#FFFFFFFF:32/little,
-        0:16/little
-    >>,
-
-    << LocalHeader/binary,
-       CompressedJSON/binary,
-       DataDescriptor/binary,
-       CentralEntry/binary,
-       Zip64EndRecord/binary,
-       Zip64EndLocator/binary,
-       EndRecord/binary >>.
-
 
 %% Write log entries to S3
 log_to_s3(BucketId, Prefix, Entries) ->
@@ -424,7 +334,7 @@ log_to_s3(BucketId, Prefix, Entries) ->
                         {operation_id, EventId},
                         {operation_name, OperationName},
                         {timestamp, DateTime},
-                        {object_keys, ObjectKeys}
+-                        {object_keys, ObjectKeys}
                     ],
                     ManifestJSON = jsx:encode(Manifest),
                     Options = [{meta, [{"md5", crypto_utils:md5(ManifestJSON)}]}],
@@ -449,23 +359,19 @@ log_to_s3(BucketId, Prefix, Entries) ->
         end || {OperationName, Status, ObjectKeys, Context, Timestamp} <- Entries
     ],
     Output = iolist_to_binary([jsx:encode(JSONEntries), "\n"]),
-    Bits = string:tokens(BucketId, "-"),
-    BucketTenantId = string:to_lower(lists:nth(2, Bits)),
-    LogPath0 = io_lib:format("~s/buckets/tenant-~s", [?AUDIT_LOG_PREFIX, BucketTenantId]),
     {{Year, Month, Day}, {_H, _M, _S}} = calendar:now_to_universal_time(os:timestamp()),
-    LogPath1 = io_lib:format("~s/~4.10.0B/~2.10.0B/~2.10.0B_~s.jsonl.zip",
-                             [utils:prefixed_object_key(LogPath0, Prefix), Year, Month, Day, EventId]),
+    Bits = string:tokens(BucketId, "-"),
+    TenantId = string:to_lower(lists:nth(2, Bits)),
+    LogPath = io_lib:format("~s/~s/buckets/~s/~4.10.0B/~2.10.0B/~2.10.0B_~s.jsonl.gz",
+	[?AUDIT_LOG_PREFIX, TenantId, utils:prefixed_object_key(BucketId, Prefix), Year, Month, Day, EventId]),
 
-    CompressedOutput = compress_data(
-	io_lib:format("~4.10.0B-~2.10.0B-~2.10.0B_~s.jsonl", [Year, Month, Day, EventId]),
-	Output
-    ),
+    CompressedOutput = compress_data(Output),
     %% Write new object
     Response = s3_api:retry_s3_operation(
         fun() ->
             s3_api:put_object(
                 ?SECURITY_BUCKET_NAME,
-                LogPath1,
+                LogPath,
                 CompressedOutput,
                 [{meta, [{"md5", crypto_utils:md5(Output)}]}]
             )
@@ -475,7 +381,7 @@ log_to_s3(BucketId, Prefix, Entries) ->
     ),
     case Response of
         {error, Reason} ->
-            lager:error("[audit_log] Can't put object ~p/~p: ~p", [?SECURITY_BUCKET_NAME, LogPath1, Reason]),
+            lager:error("[audit_log] Can't put object ~p/~p: ~p", [?SECURITY_BUCKET_NAME, LogPath, Reason]),
             {error, Reason};
         _ -> ok
     end.

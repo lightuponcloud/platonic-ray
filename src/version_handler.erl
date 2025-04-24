@@ -10,7 +10,7 @@
 -module(version_handler).
 -behavior(cowboy_handler).
 
--export([init/2]).
+-export([init/2, receive_streamed_body/3]).
 
 -include("storage.hrl").
 -include("entities.hrl").

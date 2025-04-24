@@ -273,3 +273,10 @@
 %% The number of seconds lock can exist.
 %%
 -define(DB_LOCK_COOLOFF_TIME, 30).
+%%
+%% Retry parameters for S3 operations
+%%
+-define(S3_RETRY_COUNT, 3).           % Maximum number of retries
+-define(S3_BASE_DELAY_MS, 100).       % Base delay for exponential backoff (100ms)
+-define(S3_MAX_DELAY_MS, 5000).       % Maximum delay for backoff (5 seconds)
+-define(S3_JITTER_PERCENT, 0.1).      % 10% jitter for randomization
