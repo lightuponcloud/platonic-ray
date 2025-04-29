@@ -57,7 +57,7 @@
 %%
 %% The number of ffmpeg gen_server processes for transcoding videos.
 %%
--define(VIDEO_WORKERS, 2).
+-define(VIDEO_WORKERS, 4).
 
 
 %%

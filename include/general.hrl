@@ -1,3 +1,4 @@
+%%
 %% brand_name
 %%	Name that appears in title of index.html
 %%

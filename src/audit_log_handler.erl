@@ -125,15 +125,6 @@ to_json(Req0, State) ->
     end.
 
 
-    case s3_api:get_object(?AUDIT_LOG_PREFIX, LogPath) of
-	{error, Reason} ->
-	    lager:error("[admin_tenants_handler] get_object error ~p/~p: ~p",
-			[?SECURITY_BUCKET_NAME, PrefixedTenantId, Reason]),
-	    not_found;
-	not_found -> not_found;
-	Response ->
-	    %% TODO
-    end.
 
 % Filter objects by date and bucket_id
 filter_objects(Objects, Filters) ->
@@ -189,20 +180,15 @@ stream_logs(Req0, BucketId0, Prefix, Filters, OperationName) when OperationName 
     FilteredObjects = filter_objects(List0, Filters),
     lists:foreach(
 	fun(ObjectKey) ->
-	    case s3_api:get_object(BucketId0, ObjectKey, stream) of
-		not_found ->
-		    %% Object could have disappeared
-		    Req2 = cowboy_req:set_resp_body(<<>>, Req1),
-		    {ok, Req2, []};
-		{ok, RequestId} ->
-		    receive
-			{http, {RequestId, stream_start, _Headers, Pid}} ->
-			    version_handler:receive_streamed_body(Req1, RequestId, Pid);
-			{http, Msg} -> ?ERROR("[audit_log_handler] error starting stream: ~p", [Msg])
-		    end,
-		    {ok, Req1, []}
+	    case s3_api:get_object(BucketId0, ObjectKey) of
+		{error, Reason} -> ok;
+		not_found -> ok;
+		{ok, Response} ->
+		    BinBodyPart = proplists:get_value(content, Response),
+		    cowboy_req:stream_body(BinBodyPart, nofin, Req1)
 	    end
 	end, FilteredObjects),
+    cowboy_req:stream_body(<<>>, fin, Req1).
 
 %%
 %% Checks if provided token is correct.

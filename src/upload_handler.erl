@@ -1123,7 +1123,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 		    case indexing:update(BucketId, Prefix1, [{modified_keys, [ObjectKey0]}]) of
 			lock ->
 			    lager:warning("[list_handler] Can't update index during upload, as lock exist: ~p/~p",
-				       [BucketId, Prefix1]),
+					  [BucketId, Prefix1]),
 			    js_handler:too_many(Req0);
 			_ ->
 			    %% Update Solr index if file type is supported
@@ -1156,7 +1156,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 			    ObjExt = filename:extension(light_ets:to_lower(ObjectKey0)),
 			    IsVideo = lists:member(ObjExt, ?VIDEO_EXTENSIONS),
 			    case IsVideo of
-				true -> video_transcoding:ffmpeg(BucketId, ObjectKey0);
+				true -> video_transcoding:ffmpeg(BucketId, utils:prefixed_object_key(Prefix1, ObjectKey0));
 				false -> ok
 			    end,
 			    upload_response(Req0, OrigName0, IsLocked0, LockModifiedTime0,
