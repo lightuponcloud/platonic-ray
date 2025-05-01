@@ -24,7 +24,7 @@
     is_locked_for_user/4]).
 
 -export([validate_delete/2, delete_resource/2, delete_completed/2,
-         delete_pseudo_directory/6, delete_objects/6]).
+         delete_pseudo_directory/5, delete_objects/5]).
 
 -include("storage.hrl").
 -include("entities.hrl").
@@ -324,15 +324,7 @@ patch_operation(Req0, unlock, BucketId, Prefix, User, ObjectsList) ->
 	_ -> {true, Req1, []}
     end;
 patch_operation(Req0, undelete, BucketId, Prefix, User, ObjectsList) ->
-    Timestamp = utils:timestamp(),
-    ActionLogRecord0 = #action_log_record{
-	action="undelete",
-	user_id=User#user.id,
-	user_name=User#user.name,
-	tenant_name=User#user.tenant_name,
-	timestamp=io_lib:format("~p", [erlang:round(Timestamp/1000)])
-    },
-    ModifiedKeys0 = undelete(BucketId, Prefix, ObjectsList, ActionLogRecord0),
+    ModifiedKeys0 = undelete(BucketId, Prefix, ObjectsList, User),
     case indexing:update(BucketId, Prefix, [{modified_keys, ModifiedKeys0}]) of
 	lock ->
 	    lager:warning("[list_handler] Can't update index during undeleting object, as index lock exists: ~p/~p",
@@ -344,14 +336,14 @@ patch_operation(Req0, undelete, BucketId, Prefix, User, ObjectsList) ->
 %%
 %% Restore pseudo-directory.
 %%
-undelete_pseudo_directory(BucketId, Prefix, HexDirectoryName, ActionLogRecord0) ->
+undelete_pseudo_directory(BucketId, Prefix, HexDirectoryName, _User) ->
     DstDirectoryName0 = utils:unhex(erlang:list_to_binary(HexDirectoryName)),
     %% Remove -deleted-timestamp suffix
     DstDirectoryName1 = lists:nth(1, binary:split(DstDirectoryName0, <<"-deleted-">>, [global])),
     PrefixedSrcDirectoryName = utils:prefixed_object_key(Prefix, HexDirectoryName),
 
     Result = rename_handler:rename_pseudo_directory(BucketId, Prefix, PrefixedSrcDirectoryName,
-	unicode:characters_to_binary(DstDirectoryName1), ActionLogRecord0),
+	unicode:characters_to_binary(DstDirectoryName1), false),
 
     case Result of
 	lock -> lock;
@@ -408,13 +400,13 @@ undelete_object(BucketId, Prefix, ObjectKey) ->
 %%
 %% Restores list of objects
 %%
-undelete(BucketId, Prefix, ObjectKeys, ActionLogRecord0) ->
+undelete(BucketId, Prefix, ObjectKeys, User) ->
     T0 = utils:timestamp(),
     RestoredObjectKeys = lists:filtermap(
 	fun(ObjectKey) ->
 	    case utils:ends_with(ObjectKey, <<"/">>) of
 		true ->
-		    case undelete_pseudo_directory(BucketId, Prefix, ObjectKey, ActionLogRecord0) of
+		    case undelete_pseudo_directory(BucketId, Prefix, ObjectKey, User) of
 			lock -> false;
 			undefined -> false;
 			{error, _Reason} -> false;
@@ -430,17 +422,23 @@ undelete(BucketId, Prefix, ObjectKeys, ActionLogRecord0) ->
 
     T1 = utils:timestamp(),
     OrigNames = utils:join_binary_with_separator([element(2, I) || I <- RestoredObjectKeys], <<" ">>),
-    UserName = utils:unhex(erlang:list_to_binary(ActionLogRecord0#action_log_record.user_name)),
-    ActionLogRecord1 = ActionLogRecord0#action_log_record{
-	details = << "Restored by \"", UserName/binary, "\": ", OrigNames/binary >>,
-	duration = io_lib:format("~.2f", [utils:to_float(T1-T0)/1000]),
-	is_locked = false,
-	lock_user_id = undefined,
-	lock_user_name = undefined,
-	lock_user_tel = undefined,
-	lock_modified_utc = undefined
-    },
-    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord1),
+    UserName = utils:unhex(erlang:list_to_binary(User#user.name)),
+
+    audit_log:log_operation(
+	BucketId,
+	Prefix,
+	download,
+	200,
+	[ObjectKeys],
+	[{status_code, 200},
+	 {request_id, null},
+	 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+	 {user_id, User#user.id},
+	 {user_name, UserName},
+	 {actor, user},
+	 {environment, null},
+	 {compliance_metadata, [{summary, << "Restored by \"", UserName/binary, "\": ", OrigNames/binary >>}]}]
+    ),
     [element(1, I) || I <- RestoredObjectKeys].
 
 %%
@@ -482,17 +480,6 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 			 {lock_user_tel, undefined},
 			 {is_locked, undefined}]
 		end,
-	    ActionLogRecord0 = #action_log_record{
-		key = ObjectKey,
-		orig_name = proplists:get_value("x-amz-meta-orig-filename", Metadata0),
-		guid = proplists:get_value("x-amz-meta-guid", Metadata0),
-		is_dir = false,  %% only files can be locked for now
-		user_id = User#user.id,
-		user_name = User#user.name,
-		tenant_name = User#user.tenant_name,
-		timestamp = LockModifiedTime0,
-		version = proplists:get_value("x-amz-meta-version", Metadata0)
-	    },
 	    IsDeleted = utils:to_list(proplists:get_value("x-amz-meta-is-deleted", Metadata0)),
 	    case (LockUserId0 =:= undefined orelse LockUserId0 =:= User#user.id)
 		    andalso IsDeleted =/= "true" andalso WasLocked =/= IsLocked0 of
@@ -519,23 +506,30 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 				    V -> utils:unhex(erlang:list_to_binary(V))
 				end,
 			    T1 = utils:timestamp(),
-			    ActionLogRecord1 = ActionLogRecord0#action_log_record{
-				duration = io_lib:format("~.2f", [utils:to_float(T1-T0)/1000]),
-				is_locked = IsLocked0,
-				lock_user_id = User#user.id,
-				lock_user_name = User#user.name,
-				lock_user_tel = LockUserTel,
-				lock_modified_utc = LockModifiedTime0
-			    },
-			    UserName = erlang:binary_to_list(utils:unhex(erlang:list_to_binary(User#user.name))),
-			    ActionLogRecord2 =
+			    OperationName =
 				case IsLocked0 of
-				    true -> ActionLogRecord1#action_log_record{action = "lock",
-						details = io_lib:format("Locked by ~p", [UserName])};
-				    false -> ActionLogRecord1#action_log_record{action = "unlock",
-						details = io_lib:format("Unlocked by ~p", [UserName])}
+				    true -> lock;
+				    false -> unlock
 				end,
-			    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord2),
+                            OrigName = utils:unhex(utils:to_binary(proplists:get_value("x-amz-meta-orig-filename", Metadata0))),
+			    Summary = <<"Lock state changes from", (utils:to_binary(WasLocked))/binary,
+					(utils:to_binary(IsLocked0))/binary, BucketId/binary, PrefixedObjectKey/binary>>,
+			    audit_log:log_operation(
+				BucketId,
+				Prefix,
+				OperationName,
+				200,
+				[ObjectKey],
+				[{status_code, 200},
+				 {request_id, null},
+				 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+				 {user_id, User#user.id},
+				 {user_name, utils:unhex(erlang:list_to_binary(User#user.name))},
+				 {actor, user},
+				 {environment, null},
+				 {compliance_metadata, [{orig_name, OrigName}, {summary, Summary},
+				    {guid, utils:to_binary(proplists:get_value("x-amz-meta-guid", Metadata0))}]}]
+			    ),
 			    [{object_key, erlang:list_to_binary(ObjectKey)},
 			     {is_locked, utils:to_binary(IsLocked0)},
 			     {lock_user_id, erlang:list_to_binary(User#user.id)},
@@ -722,8 +716,7 @@ validate_post(Body, BucketId) ->
 create_pseudo_directory(Req0, State) when erlang:is_list(State) ->
     BucketId = proplists:get_value(bucket_id, State),
     PrefixedDirectoryName = proplists:get_value(prefixed_directory_name, State),
-    DirectoryName0 = proplists:get_value(directory_name, State),
-    DirectoryName1 = unicode:characters_to_list(DirectoryName0),
+    DirectoryName = proplists:get_value(directory_name, State),
     Prefix = proplists:get_value(prefix, State),
     T0 = utils:timestamp(), %% measure time of request
     case indexing:update(BucketId, PrefixedDirectoryName++"/") of
@@ -739,20 +732,25 @@ create_pseudo_directory(Req0, State) when erlang:is_list(State) ->
 		    js_handler:too_many(Req0);
 		_ ->
 		    User = proplists:get_value(user, State),
-		    sqlite_server:create_pseudo_directory(BucketId, Prefix, DirectoryName0, User),
+		    sqlite_server:create_pseudo_directory(BucketId, Prefix, DirectoryName, User),
+
 		    T1 = utils:timestamp(), %% measure time of request
-		    ActionLogRecord0 = #action_log_record{
-			action="mkdir",
-			orig_name = DirectoryName0,
-			user_id=User#user.id,
-			user_name=User#user.name,
-			tenant_name=User#user.tenant_name,
-			timestamp=io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
-			duration=io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
-		    },
-		    Summary0 = lists:flatten([["Created directory \""], DirectoryName1 ++ ["/\"."]]),
-		    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
-		    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord1),
+		    Summary = <<"Created directory \"", DirectoryName/binary, "/\".">>,
+		    audit_log:log_operation(
+			BucketId,
+			Prefix,
+			mkdir,
+			200,
+			[DirectoryName],
+			[{status_code, 200},
+			 {request_id, null},
+			 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+			 {user_id, User#user.id},
+			 {user_name, utils:unhex(erlang:list_to_binary(User#user.name))},
+			 {actor, user},
+			 {environment, null},
+			 {compliance_metadata, [{summary, Summary}]}]
+		    ),
 		    {true, Req0, []}
 	    end
     end.
@@ -841,8 +839,8 @@ validate_delete(Req0, State) ->
 	    end
     end.
 
-delete_pseudo_directory(_BucketId, "", "/", _User, _ActionLogRecord, _Timestamp) -> {dir_name, "/"};
-delete_pseudo_directory(BucketId, Prefix, HexDirName, User, ActionLogRecord0, Timestamp) ->
+delete_pseudo_directory(_BucketId, "", "/", _User, _Timestamp) -> {dir_name, "/"};
+delete_pseudo_directory(BucketId, Prefix, HexDirName, User, Timestamp) ->
     %%     - mark directory as deleted
     %%     - mark all nested objects as deleted
     %%     - leave record in action log
@@ -861,7 +859,7 @@ delete_pseudo_directory(BucketId, Prefix, HexDirName, User, ActionLogRecord0, Ti
 		    PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(HexDirName)),
 		    DstDirectoryName2 = lists:concat([DstDirectoryName1, "-deleted-", Timestamp]),
 		    Result = rename_handler:rename_pseudo_directory(BucketId, Prefix, PrefixedObjectKey,
-			unicode:characters_to_binary(DstDirectoryName2), ActionLogRecord0),
+			unicode:characters_to_binary(DstDirectoryName2), true),
 		    case Result of
 			lock -> lock;
 			{accepted, _} -> undefined; %% Rename is not complete, as Riak CS was busy.
@@ -869,34 +867,53 @@ delete_pseudo_directory(BucketId, Prefix, HexDirName, User, ActionLogRecord0, Ti
 			{dir_name, deleted, _} ->
 			    sqlite_server:delete_pseudo_directory(BucketId, Prefix, DstDirectoryName0, User#user.id),
 
-			    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName1, ["/\"."]]),
 			    T1 = utils:timestamp(), %% measure time of request
-			    ActionLogRecord1 = ActionLogRecord0#action_log_record{
-				orig_name=DstDirectoryName1,
-				details=Summary0,
-				duration=io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
-			    },
-			    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord1),
+			    Summary = <<"Deleted directory \"", DstDirectoryName0/binary, "/\".">>,
+			    audit_log:log_operation(
+				BucketId,
+				Prefix,
+				delete,
+				200,
+				[DstDirectoryName0],
+				[{status_code, 200},
+				 {request_id, null},
+				 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+				 {user_id, User#user.id},
+				 {user_name, utils:unhex(erlang:list_to_binary(User#user.name))},
+				 {actor, user},
+				 {environment, null},
+				 {compliance_metadata, [{summary, Summary}]}]
+			    ),
 			    HexDirName
 		    end
 	    end;
 	_ ->
 	    %% "-deleted-" substring was found in directory name. Directory is marked as deleted already.
 	    %% No need to add another tag. rename_pseudo_directory() marks pseudo-directory as "uncommited".
-	    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName1 ++ ["/\"."]]),
 	    T1 = utils:timestamp(),
-	    ActionLogRecord1 = ActionLogRecord0#action_log_record{
-		orig_name=DstDirectoryName0,
-		details=Summary0,
-		duration=io_lib:format("~.2f", [utils:to_float(T1-Timestamp)/1000])
-	    },
-	    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord1),
+	    Summary = <<"Deleted directory \"", DstDirectoryName0/binary, "/\".">>,
+	    audit_log:log_operation(
+		BucketId,
+		Prefix,
+		delete,
+		200,
+		[DstDirectoryName0],
+		[{status_code, 200},
+		 {request_id, null},
+		 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+		 {user_id, User#user.id},
+		 {user_name, utils:unhex(erlang:list_to_binary(User#user.name))},
+		 {actor, user},
+		 {environment, null},
+		 {compliance_metadata, [{summary, Summary}]}]
+	    ),
 	    HexDirName
     end.
 
 
-delete_objects(_BucketId, _Prefix, [], _ActionLogRecord0, _Timestamp, _UserId) -> ok;
-delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserId) ->
+delete_objects(_BucketId, _Prefix, [], _Timestamp, _User) -> ok;
+delete_objects(BucketId, Prefix, ObjectKeys0, Timestamp, User) ->
+    T0 = utils:timestamp(),
     ObjectKeys1 = lists:filtermap(
 	fun(K) ->
 	    Key = erlang:binary_to_list(K),
@@ -910,7 +927,7 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
 		not_found -> {true, {K, Timestamp}};
 		LockMeta ->
 		    LockUserId = proplists:get_value("x-amz-meta-lock-user-id", LockMeta),
-		    case LockUserId =:= UserId of
+		    case LockUserId =:= User#user.id of
 			true -> {true, {K, Timestamp}};
 			false -> false
 		    end
@@ -923,44 +940,60 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
 	    lock;
 	_ ->
 	    %% Update SQLite db
-	    [sqlite_server:delete_object(BucketId, Prefix, erlang:binary_to_list(element(1, K)))
-	     || K <- ObjectKeys1],
+	    [sqlite_server:delete_object(BucketId, Prefix, erlang:binary_to_list(element(1, K))) || K <- ObjectKeys1],
 	    %% Leave record in action log and update object records with is_deleted flag
-	    OrigNames = lists:map(
+	    NameBinaryParts = lists:filtermap(
 		fun(I) ->
 		    ObjectKey = element(1, I),
 		    PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(ObjectKey)),
 		    case s3_api:head_object(BucketId, PrefixedObjectKey) of
 			{error, Reason} ->
-			    lager:error("[list_handler] head_object error ~p/~p: ~p",
-					[BucketId, PrefixedObjectKey, Reason]),
-			    [];
-			not_found -> [];
+			    lager:error("[list_handler] head_object error ~p/~p: ~p", [BucketId, PrefixedObjectKey, Reason]),
+			    false;
+			not_found -> false;
 			Metadata0 ->
 			    Meta = parse_object_record(Metadata0, [{is_deleted, "true"}]),
 			    case s3_api:put_object(BucketId, Prefix, erlang:binary_to_list(ObjectKey), <<>>, [{meta, Meta}]) of
 				ok ->
 				    UnicodeObjectName0 = proplists:get_value("orig-filename", Meta),
 				    UnicodeObjectName1 = utils:unhex(erlang:list_to_binary(UnicodeObjectName0)),
-				    ["\"", unicode:characters_to_list(UnicodeObjectName1), "\""];
+				    {true, <<"\"", (unicode:characters_to_binary(UnicodeObjectName1))/binary, "\"">>};
 				{error, Reason} ->
 				    lager:error("[list_handler] Can't put object ~p/~p/~p: ~p",
-						[BucketId, Prefix, erlang:binary_to_list(ObjectKey), Reason]),
-				    []
+					[BucketId, Prefix, erlang:binary_to_list(ObjectKey), Reason]),
+				    false
 			    end
 		    end
 		end, ObjectKeys1),
+	    OrigNames =
+		case NameBinaryParts of
+		    [] -> <<>>;
+		    [FirstPart | Rest] ->
+			lists:foldl(
+			    fun(Part, Acc) ->
+				<<Acc/binary, ",", Part/binary>>
+			    end, FirstPart, Rest)
+		end,
 	    case length(ObjectKeys1) of
 		0 -> [];
 		_ ->
-		    Summary0 = lists:flatten([["Deleted "], OrigNames]),
 		    T1 = utils:timestamp(),
-		    ActionLogRecord1 = ActionLogRecord0#action_log_record{
-			orig_name = OrigNames,
-			details = Summary0,
-			duration = io_lib:format("~.2f", [utils:to_float(T1-Timestamp)/1000])
-		    },
-		    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord1),
+		    Summary = <<"Deleted ", OrigNames/binary>>,
+		    audit_log:log_operation(
+			BucketId,
+			Prefix,
+			delete,
+			200,
+			[ObjectKeys1],
+			[{status_code, 200},
+			 {request_id, null},
+			 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+			 {user_id, User#user.id},
+			 {user_name, utils:unhex(erlang:list_to_binary(User#user.name))},
+			 {actor, user},
+			 {environment, null},
+			 {compliance_metadata, [{summary, Summary}]}]
+		    ),
 		    [element(1, I) || I <- ObjectKeys1]
 	    end
     end.
@@ -972,13 +1005,6 @@ delete_resource(Req0, State) ->
 	{Req1, BucketId, Prefix, PseudoDirectories, ObjectKeys1} ->
 	    Timestamp = utils:timestamp(),
 	    User = proplists:get_value(user, State),
-	    ActionLogRecord0 = #action_log_record{
-		action="delete",
-		user_id=User#user.id,
-		user_name=User#user.name,
-		tenant_name=User#user.tenant_name,
-		timestamp=io_lib:format("~p", [erlang:round(Timestamp/1000)])
-	    },
 	    %% Set "uncommitted" flag only if ther's a lot of delete
 	    case length(PseudoDirectories) > 0 of
 		true ->
@@ -989,9 +1015,8 @@ delete_resource(Req0, State) ->
 			    js_handler:too_many(Req1);
 			_ ->
 			    PseudoDirectoryResults = [delete_pseudo_directory(
-				BucketId, Prefix, P, User, ActionLogRecord0, Timestamp) || P <- PseudoDirectories],
-			    DeleteResult0 = delete_objects(BucketId, Prefix, ObjectKeys1,
-							   ActionLogRecord0, Timestamp, User#user.id),
+				BucketId, Prefix, P, User, Timestamp) || P <- PseudoDirectories],
+			    DeleteResult0 = delete_objects(BucketId, Prefix, ObjectKeys1,  Timestamp, User),
 			    case DeleteResult0 of
 				lock -> js_handler:too_many(Req0);
 				_ ->
@@ -1000,8 +1025,7 @@ delete_resource(Req0, State) ->
 			    end
 		    end;
 		false ->
-		    case delete_objects(BucketId, Prefix, ObjectKeys1,
-					ActionLogRecord0, Timestamp, User#user.id) of
+		    case delete_objects(BucketId, Prefix, ObjectKeys1, Timestamp, User) of
 			lock -> js_handler:too_many(Req1);
 			DeleteResult1 -> {true, Req1, [{delete_result, DeleteResult1}]}
 		    end

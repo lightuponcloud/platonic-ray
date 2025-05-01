@@ -9,17 +9,26 @@
 %% 3. The check_queue operation converts the queue to a list for processing, which is O(n) and could be optimized with ETS’s select/2.
 %%
 -module(light_ets).
--export([start_link/0, to_lower/1, guess_content_type/1, log_operation/2, get_queue_size/1,
-         enqueue_transcode/2, dequeue_transcode/1, requeue_transcode/1, get_transcode_queue_size/0]).
 
 -behaviour(gen_server).
 
-%% gen_server callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
+-export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
+-export([to_lower/1]).
+-export([guess_content_type/1]).
+-export([log_operation/2]).
+-export([get_queue_size/1, enqueue_transcode/2, dequeue_transcode/1, requeue_transcode/1,
+         get_transcode_queue_size/0, add_subscriber/4, remove_subscriber/1, get_subscribers/0,
+         get_subscribers_by_bucket/1, store_message/1, delete_message/2, get_messages_by_user/1,
+         add_bucket_node/2, get_nodes_by_bucket/1
+]).
 
 -include("log.hrl").
+-include("entities.hrl").
 
 -define(VIDEO_TRANSCODE_QUEUE, video_transcode_queue).
+-define(SUBSCRIBERS_TABLE, subscribers).
+-define(MESSAGES_TABLE, messages).
+-define(BUCKET_NODES_TABLE, bucket_nodes).
 -define(MAX_QUEUE_SIZE, 10_000). % From video_transcoding
 -define(PMAP_WORKERS, 4).        % From video_transcoding
 
@@ -27,14 +36,15 @@
     unidata_ets = undefined :: ets:tid() | undefined,
     mime_ets = undefined :: ets:tid() | undefined,
     log_ets = undefined :: ets:tid() | undefined,
-    transcode_ets = undefined :: ets:tid() | undefined
+    transcode_ets = undefined :: ets:tid() | undefined,
+    subscribers_ets = undefined :: ets:tid() | undefined,
+    messages_ets = undefined :: ets:tid() | undefined,
+    bucket_nodes_ets = undefined :: ets:tid() | undefined
 }).
 
 %% API for existing functionality
 
-%%
 %% Converts characters of a string to a lowercase format.
-%%
 to_lower(String) when is_list(String) ->
     gen_server:call(?MODULE, {to_lower, String}).
 
@@ -44,16 +54,13 @@ guess_content_type(FileName) when is_list(FileName) ->
 log_operation(Operation, Details) ->
     gen_server:cast(?MODULE, {log, Operation, Details}).
 
-%%
 %% Get the size of the log queue from light_ets
-%%
 get_queue_size(QueueName) when is_atom(QueueName) ->
     case ets:lookup(log_queue, QueueName) of
         [] -> 0;
         [{QueueName, Entries}] -> length(Entries)
     end.
 
-%% API for video transcoding queue
 enqueue_transcode(BucketId, ObjectKey) ->
     gen_server:cast(?MODULE, {enqueue_transcode, BucketId, ObjectKey}).
 
@@ -66,7 +73,33 @@ requeue_transcode(Task) ->
 get_transcode_queue_size() ->
     gen_server:call(?MODULE, get_transcode_queue_size).
 
+%% API for subscribers and messages
+
+%% Add subscriber, if it do not exist yet
+add_subscriber(UserId, Pid, SessionId, BucketIdList) when is_list(UserId), is_pid(Pid), is_list(SessionId), is_list(BucketIdList) ->
+    gen_server:cast(?MODULE, {add_subscriber, UserId, Pid, SessionId, BucketIdList}).
+
+%% Terminates user sessions on the same device and removes stale session
+remove_subscriber(SessionId) when is_list(SessionId) ->
+    gen_server:cast(?MODULE, {remove_subscriber, SessionId}).
+
+get_subscribers() ->
+    gen_server:call(?MODULE, get_subscribers).
+
+get_subscribers_by_bucket(BucketId) when is_list(BucketId) ->
+    gen_server:call(?MODULE, {get_subscribers_by_bucket, BucketId}).
+
+store_message(MessageEntry) when is_record(MessageEntry, message_entry) ->
+    gen_server:cast(?MODULE, {store_message, MessageEntry}).
+
+delete_message(AtomicId, UserId) when is_list(AtomicId), is_list(UserId) ->
+    gen_server:cast(?MODULE, {delete_message, AtomicId, UserId}).
+
+get_messages_by_user(UserId) when is_list(UserId) ->
+    gen_server:call(?MODULE, {get_messages_by_user, UserId}).
+
 %% Utility Functions
+
 hex_to_int(Code) ->
     case io_lib:fread("~16u", Code) of
         {ok, [Int], []} -> Int;
@@ -146,6 +179,16 @@ load_unicode_mapping() ->
     file:close(Fd),
     Ets.
 
+%% Add bucket_nodes ETS initialization
+load_bucket_nodes_ets() ->
+    ets:new(?BUCKET_NODES_TABLE, [
+        bag,
+        named_table,
+        {write_concurrency, true},
+        {read_concurrency, true},
+        public
+    ]).
+
 load_mime_types() ->
     EbinDir = filename:dirname(code:which(?MODULE)),
     AppDir = filename:dirname(EbinDir),
@@ -166,6 +209,24 @@ load_transcode_ets() ->
         private
     ]).
 
+load_subscribers_ets() ->
+    ets:new(?SUBSCRIBERS_TABLE, [
+        set,
+        named_table,
+        {write_concurrency, true},
+        {read_concurrency, true},
+        public
+    ]).
+
+load_messages_ets() ->
+    ets:new(?MESSAGES_TABLE, [
+        set,
+        named_table,
+        {write_concurrency, true},
+        {read_concurrency, true},
+        public
+    ]).
+
 string_to_lower(Ets, String) ->
     pmap:pmap(
         fun(C) ->
@@ -182,15 +243,27 @@ start_link() ->
     Ets1 = load_mime_types(),
     Ets2 = load_log_ets(),
     Ets3 = load_transcode_ets(),
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [Ets0, Ets1, Ets2, Ets3], []).
+    Ets4 = load_subscribers_ets(),
+    Ets5 = load_messages_ets(),
+    Ets6 = load_bucket_nodes_ets(),
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [Ets0, Ets1, Ets2, Ets3, Ets4, Ets5, Ets6], []).
+
+add_bucket_node(BucketId, Node) when is_list(BucketId), is_atom(Node) ->
+    gen_server:cast(?MODULE, {add_bucket_node, BucketId, Node}).
+
+get_nodes_by_bucket(BucketId) when is_list(BucketId) ->
+    gen_server:call(?MODULE, {get_nodes_by_bucket, BucketId}).
 
 %%% gen_server callbacks
-init([UnidataEts, MimeEts, LogEts, TranscodeEts]) ->
+init([UnidataEts, MimeEts, LogEts, TranscodeEts, SubscribersEts, MessagesEts, BucketNodesEts]) ->
     {ok, #state{
         unidata_ets = UnidataEts,
         mime_ets = MimeEts,
         log_ets = LogEts,
-        transcode_ets = TranscodeEts
+        transcode_ets = TranscodeEts,
+        subscribers_ets = SubscribersEts,
+        messages_ets = MessagesEts,
+        bucket_nodes_ets = BucketNodesEts
     }}.
 
 handle_call({to_lower, String}, _From, State) ->
@@ -232,6 +305,23 @@ handle_call(get_transcode_queue_size, _From, #state{transcode_ets = Ets} = State
     Size = ets:info(Ets, size),
     {reply, Size, State};
 
+handle_call(get_subscribers, _From, #state{subscribers_ets = Ets} = State) ->
+    Subscribers = ets:tab2list(Ets),
+    {reply, Subscribers, State};
+
+handle_call({get_subscribers_by_bucket, BucketId}, _From, #state{subscribers_ets = Ets} = State) ->
+    Subscribers = ets:match_object(Ets, {'$1', '$2', '$3', '$4'}),
+    Filtered = [S || S <- Subscribers, lists:member(BucketId, element(4, S))],
+    {reply, Filtered, State};
+
+handle_call({get_messages_by_user, UserId}, _From, #state{messages_ets = Ets} = State) ->
+    Messages = ets:match_object(Ets, {'$1', #message_entry{user_id = UserId, _ = '_'}}),
+    {reply, Messages, State};
+
+handle_call({get_nodes_by_bucket, BucketId}, _From, #state{bucket_nodes_ets = Ets} = State) ->
+    Nodes = lists:usort([Node || {_, Node} <- ets:lookup(Ets, BucketId)]),
+    {reply, Nodes, State};
+
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -249,7 +339,7 @@ handle_cast({log, Operation, Details}, State) ->
 handle_cast({enqueue_transcode, BucketId, ObjectKey}, #state{transcode_ets = Ets} = State) ->
     case ets:info(Ets, size) >= ?MAX_QUEUE_SIZE of
         true ->
-            ?WARNING("[light_ets] Transcode queue overflow for bucket ~p", [BucketId]),
+            ?WARN("[light_ets] Transcode queue overflow for bucket ~p", [BucketId]),
             {noreply, State};
         false ->
             Seq = erlang:unique_integer([monotonic, positive]),
@@ -260,13 +350,39 @@ handle_cast({enqueue_transcode, BucketId, ObjectKey}, #state{transcode_ets = Ets
 handle_cast({requeue_transcode, Task}, #state{transcode_ets = Ets} = State) ->
     case ets:info(Ets, size) >= ?MAX_QUEUE_SIZE of
         true ->
-            ?WARNING("[light_ets] Transcode queue overflow during requeue"),
+            ?WARN("[light_ets] Transcode queue overflow during requeue"),
             {noreply, State};
         false ->
             Seq = erlang:unique_integer([monotonic, positive]),
             ets:insert(Ets, {Seq, Task}),
             {noreply, State}
     end;
+
+handle_cast({add_subscriber, UserId, Pid, SessionId, BucketIdList}, #state{subscribers_ets = Ets} = State) ->
+    ets:insert(Ets, {UserId, Pid, SessionId, BucketIdList}),
+    ?INFO("[light_ets] Added subscriber ~p", [UserId]),
+    {noreply, State};
+
+handle_cast({remove_subscriber, SessionId}, #state{subscribers_ets = Ets} = State) ->
+    ets:match_delete(Ets, {'$1', '$2', SessionId, '$3'}),
+    ?INFO("[light_ets] Removed subscriber with session ~p", [SessionId]),
+    {noreply, State};
+
+handle_cast({store_message, MessageEntry}, #state{messages_ets = Ets} = State) ->
+    Key = {MessageEntry#message_entry.atomic_id, MessageEntry#message_entry.user_id},
+    ets:insert(Ets, {Key, MessageEntry}),
+    ?INFO("[light_ets] Stored message ~p for user ~p", [MessageEntry#message_entry.atomic_id, MessageEntry#message_entry.user_id]),
+    {noreply, State};
+
+handle_cast({delete_message, AtomicId, UserId}, #state{messages_ets = Ets} = State) ->
+    ets:delete(Ets, {AtomicId, UserId}),
+    ?INFO("[light_ets] Deleted message ~p for user ~p", [AtomicId, UserId]),
+    {noreply, State};
+
+handle_cast({add_bucket_node, BucketId, Node}, #state{bucket_nodes_ets = Ets} = State) ->
+    ets:insert(Ets, {BucketId, Node}),
+    ?INFO("[light_ets] Added node ~p for bucket ~p", [Node, BucketId]),
+    {noreply, State};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -279,8 +395,10 @@ terminate(_Reason, State) ->
     ets:delete(State#state.mime_ets),
     ets:delete(State#state.log_ets),
     ets:delete(State#state.transcode_ets),
+    ets:delete(State#state.subscribers_ets),
+    ets:delete(State#state.messages_ets),
+    ets:delete(State#state.bucket_nodes_ets),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-

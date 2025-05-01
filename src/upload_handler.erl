@@ -253,24 +253,28 @@ add_action_log_record(State) ->
     Version1 = base64:encode(jsx:encode(Version0)),
 
     UnicodeObjectKey = unicode:characters_to_list(OrigName),
-    Summary = lists:flatten([["Uploaded \""], [UnicodeObjectKey],
-			     [io_lib:format("\" ( ~s )", [utils:bytes_to_string(TotalBytes)])]]),
-    T1 = utils:timestamp()/1000,
-    ActionLogRecord = #action_log_record{
-	key = ObjectKey,
-	orig_name = OrigName,
-	guid = GUID,
-	is_dir = false,
-	action = "upload",
-	details = Summary,
-	user_id = User#user.id,
-	user_name = utils:unhex(erlang:list_to_binary(User#user.name)),
-	tenant_name = utils:unhex(erlang:list_to_binary(User#user.tenant_name)),
-	timestamp = UploadTime0,
-	duration = io_lib:format("~.2f", [utils:to_float(T1-UploadTime1)]),
-	version = Version1
-    },
-    sqlite_server:add_action_log_record(BucketId, Prefix, ActionLogRecord).
+    Summary = <<"Uploaded \"", UnicodeObjectKey/binary, "\" ( ", (utils:to_binary(TotalBytes)), " )">>,
+    audit_log:log_operation(
+	BucketId,
+	Prefix,
+	upload,
+	200,
+	[ObjectKey],
+	[{status_code, 200},
+	 {request_id, null},
+	 {time_to_response_ns, null},
+	 {user_id, User#user.id},
+	 {user_name, utils:unhex(erlang:list_to_binary(User#user.name))},
+	 {actor, user},
+	 {environment, null},
+	 {compliance_metadata, [
+	    {orig_name, OrigName},
+	    {guid, GUID},
+	    {summary, Summary},
+	    {version, Version1},
+	    {upload_time, UploadTime1}
+	]}]
+    ).
 
 %%
 %% .Net sends UTF-8 filename in "filename*" field, when "filename" contains garbage.

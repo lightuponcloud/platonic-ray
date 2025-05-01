@@ -4,98 +4,335 @@
 %%
 -module(ws_handler).
 
-%% Cowboy callbacks.
+%% Cowboy callbacks
 -export([init/2, websocket_handle/2, websocket_info/2, websocket_init/1]).
-
 -export([content_types_provided/2, to_json/2, terminate/3]).
 
 -include("general.hrl").
 -include("entities.hrl").
 -include("log.hrl").
 
+%% Ping interval in milliseconds
+-define(PING_INTERVAL, 30000). % 30 seconds
+
+%% State record for clarity and extensibility
+-record(state, {
+    user_id = undefined :: string() | undefined,
+    session_id = undefined :: string() | undefined
+}).
+
 content_types_provided(Req, State) ->
     {[
       {{<<"application">>, <<"json">>, '*'}, to_json}
      ], Req, State}.
 
-
 to_json(Req0, _State) -> {<<>>, Req0, []}.
-
 
 init(Req0, _Opts) ->
     %% Set CORS headers
     Req1 = cowboy_req:set_resp_header(<<"access-control-allow-methods">>, <<"GET, OPTIONS">>, Req0),
     Req2 = cowboy_req:set_resp_header(<<"access-control-allow-origin">>, <<"*">>, Req1),
-    {cowboy_websocket, Req2, []}.
-
+    {cowboy_websocket, Req2, #state{}}.
 
 websocket_init(State) ->
+    %% Start ping timer
+    erlang:start_timer(?PING_INTERVAL, self(), ping),
     {ok, State}.
 
-parse_message(<<"CONFIRM ", AtomicId/binary>>, State) ->
-    case proplists:get_value(user_id, State) of
-	undefined -> {ok, State};  %% not logged in
-	UserId0 ->
-	    case byte_size(AtomicId) > 0 of
-		true ->
-		    %% Delete message from queue only if session is present
-		    SessionId = proplists:get_value(session_id, State),
-		    events_server_sup:confirm_reception(utils:to_list(AtomicId), UserId0, SessionId),
-		    {ok, State};
-		false -> ok
-	    end
+validate_binary(Bin) when is_binary(Bin), byte_size(Bin) > 0 -> true;
+validate_binary(_) -> false.
+
+parse_message(<<"CONFIRM ", AtomicId/binary>>, #state{user_id = undefined} = State) ->
+    ?INFO("[ws_handler] Confirmation attempted without login"),
+    {ok, State};
+parse_message(<<"CONFIRM ", AtomicId/binary>>, #state{user_id = UserId, session_id = SessionId} = State) ->
+    case validate_binary(AtomicId) of
+        true ->
+            try
+                events_server:confirm_reception(utils:to_list(AtomicId), UserId, SessionId),
+                {ok, State}
+            catch
+                error:Reason ->
+                    ?ERROR("[ws_handler] Failed to confirm ~p: ~p", [AtomicId, Reason]),
+                    {ok, State}
+            end;
+        false ->
+            ?WARN("[ws_handler] Invalid AtomicId: ~p", [AtomicId]),
+            {ok, State}
     end;
 parse_message(<<"Authorization ", Token0/binary>>, State) ->
-    Token1 = utils:to_list(Token0),
-    case login_handler:check_token(Token1) of
-	not_found ->
-	    ?INFO("[ws_handler] authentication failed for token ~p: not_found", [Token1]),
-	    {ok, State};
-	expired ->
-	    ?INFO("[ws_handler] authentication failed for token ~p: expired", [Token1]),
-	    {ok, State};
-	User0 ->
-	    ?INFO("[ws_handler] authentication passed"),
-	    {ok, [{user_id, User0#user.id}, {session_id, Token1}]}
+    case validate_binary(Token0) of
+        true ->
+            Token1 = utils:to_list(Token0),
+            case login_handler:check_token(Token1) of
+                not_found ->
+                    ?INFO("[ws_handler] Authentication failed for token ~p: not_found", [Token1]),
+                    {ok, State};
+                expired ->
+                    ?INFO("[ws_handler] Authentication failed for token ~p: expired", [Token1]),
+                    {ok, State};
+                User0 ->
+                    ?INFO("[ws_handler] Authentication passed for user ~p", [User0#user.id]),
+                    {ok, State#state{user_id = User0#user.id, session_id = Token1}}
+            end;
+        false ->
+            ?WARN("[ws_handler] Invalid token"),
+            {ok, State}
     end;
-parse_message(<<"SUBSCRIBE ", BucketIdList0/binary>>, State) ->
-    case proplists:get_value(user_id, State) of
-	undefined -> {ok, State};  %% not logged in
-	UserId ->
-	    BucketIdList1 = binary:split(BucketIdList0, <<" ">>, [global]),
-	    BucketIdList2 = [erlang:binary_to_list(B) || B <- BucketIdList1],
-	    SessionId = proplists:get_value(session_id, State),
-	    events_server_sup:new_subscriber(UserId, self(), SessionId, BucketIdList2),
-	    {ok, State}
+parse_message(<<"SUBSCRIBE ", BucketIdList0/binary>>, #state{user_id = undefined} = State) ->
+    ?INFO("[ws_handler] Subscription attempted without login"),
+    {ok, State};
+parse_message(<<"SUBSCRIBE ", BucketIdList0/binary>>, #state{user_id = UserId, session_id = SessionId} = State) ->
+    case validate_binary(BucketIdList0) of
+        true ->
+            try
+                BucketIdList1 = binary:split(BucketIdList0, <<" ">>, [global]),
+                BucketIdList2 = [erlang:binary_to_list(B) || B <- BucketIdList1, validate_binary(B)],
+                case BucketIdList2 of
+                    [] ->
+                        ?WARN("[ws_handler] Empty or invalid bucket list"),
+                        {ok, State};
+                    _ ->
+                        case events_server:new_subscriber(UserId, self(), SessionId, BucketIdList2) of
+                            ok ->
+                                {ok, State};
+                            {error, Reason} ->
+                                ?ERROR("[ws_handler] Subscription failed: ~p", [Reason]),
+                                {ok, State}
+                        end
+                end
+            catch
+                error:Reason ->
+                    ?ERROR("[ws_handler] Failed to process subscription: ~p", [Reason]),
+                    {ok, State}
+            end;
+        false ->
+            ?WARN("[ws_handler] Invalid bucket list"),
+            {ok, State}
     end;
-parse_message(_, State) -> {ok, State}.
+parse_message(Data, State) ->
+    ?WARN("[ws_handler] Unrecognized message: ~p", [Data]),
+    {ok, State}.
 
-%% Callback on received websockets data.
+%% Handle WebSocket frames
+websocket_handle(ping, State) ->
+    {reply, pong, State};
+websocket_handle({ping, Data}, State) ->
+    {reply, {pong, Data}, State};
+websocket_handle(pong, State) ->
+    {ok, State};
+websocket_handle({pong, _Data}, State) ->
+    {ok, State};
 websocket_handle({text, Data}, State) ->
     parse_message(Data, State);
-
-websocket_handle(_, State) ->
+websocket_handle(Frame, State) ->
+    ?WARN("[ws_handler] Unhandled frame: ~p", [Frame]),
     {ok, State}.
 
-%% Callback on message from erlang.
-websocket_info({events_server_sup, stop}, State) ->
+%% Handle Erlang messages
+websocket_info({timeout, _Ref, ping}, State) ->
+    erlang:start_timer(?PING_INTERVAL, self(), ping),
+    {reply, {ping, <<>>}, State};
+websocket_info({events_server, flush}, State) ->
+    %% Ensure all pending messages are processed by relying on Cowboy's synchronous handling
+    events_server ! {flushed, self()},
+    {ok, State};
+websocket_info({events_server, stop}, State) ->
     {stop, State};
-websocket_info({events_server_sup, Data0}, State) ->
-    Data1 = jsx:encode(Data0),
-    {reply, {binary, Data1}, State};
-websocket_info(_, State) ->
+websocket_info({events_server, Data}, State) ->
+    try
+        {reply, {binary, Data}, State}
+    catch
+        error:Reason ->
+            ?ERROR("[ws_handler] Failed to send message: ~p", [Reason]),
+            {ok, State}
+    end;
+websocket_info(Info, State) ->
+    ?WARN("[ws_handler] Unhandled info: ~p", [Info]),
     {ok, State}.
 
+terminate(Reason, PartialReq, #state{user_id = UserId, session_id = SessionId}) ->
+    LogMsg = case UserId of
+        undefined ->
+            ?INFO("[ws_handler] Terminating, reason: ~p, req: ~p", [Reason, PartialReq]);
+        _ ->
+            ?INFO("[ws_handler] Terminating for user ~s, reason: ~p, req: ~p", [UserId, Reason, PartialReq])
+    end,
+    case SessionId of
+        undefined -> ok;
+        _ ->
+            try
+                events_server:logout_subscriber(SessionId)
+            catch
+                error:Reason2 ->
+                    ?ERROR("[ws_handler] Failed to logout subscriber ~p: ~p", [SessionId, Reason2])
+            end
+    end,
+    LogMsg,
+    ok.-module(ws_handler).
 
-terminate(Reason, PartialReq, State) ->
-    %% terminating, going to deregister from _sup
-    case proplists:get_value(user_id, State) of
-	undefined ->
-	    ?INFO("[ws_handler] terminating, reason: ~p, req: ~p", [Reason, PartialReq]);
-	UserId ->
-	    ?INFO("[ws_handler] terminating for user ~s, reason: ~p, req: ~p",
-		[UserId, Reason, PartialReq]),
-	    SessionId = proplists:get_value(session_id, State),
-	    events_server_sup:logout_subscriber(SessionId)
+%% Cowboy callbacks
+-export([init/2, websocket_handle/2, websocket_info/2, websocket_init/1]).
+-export([content_types_provided/2, to_json/2, terminate/3]).
+
+-include("general.hrl").
+-include("entities.hrl").
+-include("log.hrl").
+
+%% Ping interval in milliseconds
+-define(PING_INTERVAL, 30000). % 30 seconds
+
+%% State record for clarity and extensibility
+-record(state, {
+    user_id = undefined :: string() | undefined,
+    session_id = undefined :: string() | undefined
+}).
+
+content_types_provided(Req, State) ->
+    {[
+      {{<<"application">>, <<"json">>, '*'}, to_json}
+     ], Req, State}.
+
+to_json(Req0, _State) -> {<<>>, Req0, []}.
+
+init(Req0, _Opts) ->
+    %% Set CORS headers
+    Req1 = cowboy_req:set_resp_header(<<"access-control-allow-methods">>, <<"GET, OPTIONS">>, Req0),
+    Req2 = cowboy_req:set_resp_header(<<"access-control-allow-origin">>, <<"*">>, Req1),
+    {cowboy_websocket, Req2, #state{}}.
+
+websocket_init(State) ->
+    %% Start ping timer
+    erlang:start_timer(?PING_INTERVAL, self(), ping),
+    {ok, State}.
+
+validate_binary(Bin) when is_binary(Bin), byte_size(Bin) > 0 -> true;
+validate_binary(_) -> false.
+
+parse_message(<<"CONFIRM ", AtomicId/binary>>, #state{user_id = undefined} = State) ->
+    ?INFO("[ws_handler] Confirmation attempted without login"),
+    {ok, State};
+parse_message(<<"CONFIRM ", AtomicId/binary>>, #state{user_id = UserId, session_id = SessionId} = State) ->
+    case validate_binary(AtomicId) of
+        true ->
+            try
+                events_server:confirm_reception(utils:to_list(AtomicId), UserId, SessionId),
+                {ok, State}
+            catch
+                error:Reason ->
+                    ?ERROR("[ws_handler] Failed to confirm ~p: ~p", [AtomicId, Reason]),
+                    {ok, State}
+            end;
+        false ->
+            ?WARN("[ws_handler] Invalid AtomicId: ~p", [AtomicId]),
+            {ok, State}
+    end;
+parse_message(<<"Authorization ", Token0/binary>>, State) ->
+    case validate_binary(Token0) of
+        true ->
+            Token1 = utils:to_list(Token0),
+            case login_handler:check_token(Token1) of
+                not_found ->
+                    ?INFO("[ws_handler] Authentication failed for token ~p: not_found", [Token1]),
+                    {ok, State};
+                expired ->
+                    ?INFO("[ws_handler] Authentication failed for token ~p: expired", [Token1]),
+                    {ok, State};
+                User0 ->
+                    ?INFO("[ws_handler] Authentication passed for user ~p", [User0#user.id]),
+                    {ok, State#state{user_id = User0#user.id, session_id = Token1}}
+            end;
+        false ->
+            ?WARN("[ws_handler] Invalid token"),
+            {ok, State}
+    end;
+parse_message(<<"SUBSCRIBE ", BucketIdList0/binary>>, #state{user_id = undefined} = State) ->
+    ?INFO("[ws_handler] Subscription attempted without login"),
+    {ok, State};
+parse_message(<<"SUBSCRIBE ", BucketIdList0/binary>>, #state{user_id = UserId, session_id = SessionId} = State) ->
+    case validate_binary(BucketIdList0) of
+        true ->
+            try
+                BucketIdList1 = binary:split(BucketIdList0, <<" ">>, [global]),
+                BucketIdList2 = [erlang:binary_to_list(B) || B <- BucketIdList1, validate_binary(B)],
+                case BucketIdList2 of
+                    [] ->
+                        ?WARN("[ws_handler] Empty or invalid bucket list"),
+                        {ok, State};
+                    _ ->
+                        case events_server:new_subscriber(UserId, self(), SessionId, BucketIdList2) of
+                            ok ->
+                                {ok, State};
+                            {error, Reason} ->
+                                ?ERROR("[ws_handler] Subscription failed: ~p", [Reason]),
+                                {ok, State}
+                        end
+                end
+            catch
+                error:Reason ->
+                    ?ERROR("[ws_handler] Failed to process subscription: ~p", [Reason]),
+                    {ok, State}
+            end;
+        false ->
+            ?WARN("[ws_handler] Invalid bucket list"),
+            {ok, State}
+    end;
+parse_message(Data, State) ->
+    ?WARN("[ws_handler] Unrecognized message: ~p", [Data]),
+    {ok, State}.
+
+%% Handle WebSocket frames
+websocket_handle(ping, State) ->
+    {reply, pong, State};
+websocket_handle({ping, Data}, State) ->
+    {reply, {pong, Data}, State};
+websocket_handle(pong, State) ->
+    {ok, State};
+websocket_handle({pong, _Data}, State) ->
+    {ok, State};
+websocket_handle({text, Data}, State) ->
+    parse_message(Data, State);
+websocket_handle(Frame, State) ->
+    ?WARN("[ws_handler] Unhandled frame: ~p", [Frame]),
+    {ok, State}.
+
+%% Handle Erlang messages
+websocket_info({timeout, _Ref, ping}, State) ->
+    erlang:start_timer(?PING_INTERVAL, self(), ping),
+    {reply, {ping, <<>>}, State};
+websocket_info({events_server, flush}, State) ->
+    %% Ensure all pending messages are processed by relying on Cowboy's synchronous handling
+    events_server ! {flushed, self()},
+    {ok, State};
+websocket_info({events_server, stop}, State) ->
+    {stop, State};
+websocket_info({events_server, Data}, State) ->
+    try
+        {reply, {binary, Data}, State}
+    catch
+        error:Reason ->
+            ?ERROR("[ws_handler] Failed to send message: ~p", [Reason]),
+            {ok, State}
+    end;
+websocket_info(Info, State) ->
+    ?WARN("[ws_handler] Unhandled info: ~p", [Info]),
+    {ok, State}.
+
+terminate(Reason, PartialReq, #state{user_id = UserId, session_id = SessionId}) ->
+    LogMsg = case UserId of
+        undefined ->
+            ?INFO("[ws_handler] Terminating, reason: ~p, req: ~p", [Reason, PartialReq]);
+        _ ->
+            ?INFO("[ws_handler] Terminating for user ~s, reason: ~p, req: ~p", [UserId, Reason, PartialReq])
+    end,
+    case SessionId of
+        undefined -> ok;
+        _ ->
+            try
+                events_server:logout_subscriber(SessionId)
+            catch
+                error:Reason2 ->
+                    ?ERROR("[ws_handler] Failed to logout subscriber ~p: ~p", [SessionId, Reason2])
+            end
     end,
     ok.

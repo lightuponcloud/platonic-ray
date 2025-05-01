@@ -194,31 +194,31 @@ copy_delete(BucketId, PrefixedSrcDirectoryName, PrefixedDstDirectoryName, Prefix
 %%
 %% SrcDirectoryName0 -- hex encoded pseudo-directory, that should be renamed
 %%
-rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirectoryName0, ActionLogRecord0)
+rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirectoryName0, IsDeleted)
 	when erlang:is_list(BucketId), erlang:is_list(Prefix0) orelse Prefix0 =:= undefined,
-	     erlang:is_list(PrefixedSrcDirectoryName), erlang:is_binary(DstDirectoryName0) ->
+	     erlang:is_list(PrefixedSrcDirectoryName), erlang:is_binary(DstDirectoryName0)
+	     andalso erlang:is_boolean(IsDeleted) ->
     PrefixedDstDirectoryName0 =
 	case Prefix0 of
 	    undefined -> utils:hex(DstDirectoryName0);
 	    _ -> utils:prefixed_object_key(Prefix0, utils:hex(DstDirectoryName0))
 	end,
     rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirectoryName0,
-			    PrefixedDstDirectoryName0, ActionLogRecord0).
+			    PrefixedDstDirectoryName0, IsDeleted).
 
--spec rename_pseudo_directory(BucketId, Prefix, PrefixedSrcDirectoryName, DstDirectoryName,
-			      PrefixedDstDirectoryName0, ActionLogRecord) ->
+-spec rename_pseudo_directory(BucketId, Prefix, PrefixedSrcDirectoryName, DstDirectoryName, PrefixedDstDirectoryName0) ->
     not_found|exists|true when
     BucketId :: string(),
     Prefix :: string()|undefined,
     PrefixedSrcDirectoryName :: string(),
     PrefixedDstDirectoryName0 :: string(),  %% prefixed hex-encoded directory name
-    DstDirectoryName :: binary(),           %% original directory name
-    ActionLogRecord :: action_log_record().
+    DstDirectoryName :: binary().           %% original directory name
 
 rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirectoryName0,
-			PrefixedDstDirectoryName0, ActionLogRecord0)
+			PrefixedDstDirectoryName0, IsDeleted)
 	when erlang:is_list(BucketId), erlang:is_list(Prefix0) orelse Prefix0 =:= undefined,
-	     erlang:is_list(PrefixedSrcDirectoryName), erlang:is_binary(DstDirectoryName0) ->
+	     erlang:is_list(PrefixedSrcDirectoryName), erlang:is_binary(DstDirectoryName0)
+	     andalso erlang:is_boolean(IsDeleted) ->
     Timestamp = utils:timestamp(), %% measure time of request
     List0 = s3_api:recursively_list_pseudo_dir(BucketId, PrefixedSrcDirectoryName),
     RenameResult0 = [copy_delete(BucketId, PrefixedSrcDirectoryName,
@@ -237,8 +237,7 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 			    "." -> undefined;
 			    P0 -> P0++"/"
 			end,
-		    DstKey0 = re:replace(PrefixedObjectKey, "^"++PrefixedSrcDirectoryName,
-					 "", [{return, list}]),
+		    DstKey0 = re:replace(PrefixedObjectKey, "^"++PrefixedSrcDirectoryName, "", [{return, list}]),
 		    DstPrefix =
 			case utils:prefixed_object_key(PrefixedDstDirectoryName0, DstKey0) of
 			    "." -> undefined;
@@ -267,27 +266,21 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 	false -> {accepted, {RenameErrors1, RenameErrors2}};
 	true ->
 	    DstDirectoryName1 = utils:hex(DstDirectoryName0),
-	    case ActionLogRecord0#action_log_record.action of
-		"delete" ->
-		    %%
-		    %% This function can be called when user deletes directory
-		    %% In this case we might need to rename directory, in order
-		    %% to allow "undelete" operation later.
-		    %%
+	    case IsDeleted of
+		true ->
+		    %% User initiated deletion of directory. We need to rename directory, in order to allow undelete later.
 		    case indexing:update(BucketId, Prefix0, [{to_delete,
 					 [{erlang:list_to_binary(DstDirectoryName1++"/"), Timestamp}]}]) of
 			lock ->
-			    lager:warning("[rename_handler] Can't move directory, as lock exists: ~p/~p",
-				       [BucketId, Prefix0]),
+			    lager:warning("[rename_handler] Can't move directory, as lock exists: ~p/~p", [BucketId, Prefix0]),
 			    lock;
 			_ -> {dir_name, deleted, DstDirectoryName0}
 		    end;
-		_ ->
+		false ->
 		    %% Update pseudo-directory index
 		    case indexing:update(BucketId, Prefix0) of
 			lock ->
-			    lager:warning("[rename_handler] Can't move directory, as lock exists: ~p/~p",
-				       [BucketId, Prefix0]),
+			    lager:warning("[rename_handler] Can't move directory, as lock exists: ~p/~p", [BucketId, Prefix0]),
 			    lock;
 			_ -> {dir_name, renamed, DstDirectoryName0}
 		    end
@@ -328,14 +321,12 @@ delete_source_object(BucketId, SrcPrefix, SrcObjectKey, DstObjectKey) ->
 %%
 %% Copies object using new name, deletes old object.
 %%
-rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexContent, ActionLogRecord0) ->
-
+rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexContent) ->
     %% We can't just update index with new name, as further file upload or rename operations
     %% would complain "object exist". Provided they have the same object name.
     UserName = utils:unhex(erlang:list_to_binary(User#user.name)),
 
     T0 = utils:timestamp(), %% measure time of request
-
     {ObjectKey0, OrigName0, _IsNewVersion, ExistingObject0, _IsConflict} = s3_api:pick_object_key(
 	    BucketId, Prefix0, DstObjectName0, undefined, UserName, IndexContent),
     %% Check if target object exists
@@ -364,7 +355,6 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 			    ObjectRecord = lists:nth(1,
 				[I || I <- proplists:get_value(list, IndexContent),
 				 proplists:get_value(object_key, I) =:= erlang:list_to_binary(SrcObjectKey0)]),
-			    PreviousOrigName = unicode:characters_to_list(proplists:get_value(orig_name, ObjectRecord)),
 
 			    %% Update objects index
 			    case indexing:update(BucketId, Prefix0, [{modified_keys, [ObjectKey0]}]) of
@@ -374,19 +364,26 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 				    lock;
 				_ ->
 				    %% Create action log record
-				    OrigName2 = unicode:characters_to_list(OrigName0),
-				    Summary1 = lists:flatten([["Renamed \""], [PreviousOrigName], ["\" to \""],
-							     [OrigName2], ["\""]]),
+				    PreviousOrigName = utils:to_binary(proplists:get_value(orig_name, ObjectRecord)),
+				    Summary = <<"Renamed \"", PreviousOrigName/binary, "\" to \"", OrigName0/binary, "\"">>,
 				    T1 = utils:timestamp(), %% measure time of request
-				    ActionLogRecord2 = ActionLogRecord0#action_log_record{
-					key=ObjectKey0,
-					orig_name=OrigName0,
-					details=Summary1,
-					duration=io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
-				    },
-				    sqlite_server:add_action_log_record(BucketId, Prefix0, ActionLogRecord2),
+				    audit_log:log_operation(
+					BucketId,
+					Prefix0,
+					rename,
+					200,
+					[utils:to_binary(SrcObjectKey0)],
+					[{status_code, 200},
+					 {request_id, null},
+					 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+					 {user_id, User#user.id},
+					 {user_name, utils:unhex(erlang:list_to_binary(User#user.name))},
+					 {actor, user},
+					 {environment, null},
+					 {compliance_metadata, [{orig_name, PreviousOrigName}, {summary, Summary}]}]
+				    ),
 				    Metadata1 = list_handler:parse_object_record(Metadata0, [
-					{orig_name, unicode:characters_to_binary(OrigName2)}]),
+					{orig_name, unicode:characters_to_binary(OrigName0)}]),
 				    {ObjectKey0, Metadata1, SQL}
 			    end
 		    end
@@ -401,19 +398,12 @@ rename(Req0, BucketId, State, IndexContent) ->
     PrefixedDstDirectoryName = proplists:get_value(prefixed_dst_directory_name, State),
     User = proplists:get_value(user, State),
     T0 = erlang:round(utils:timestamp()/1000),
-    ActionLogRecord0 = #action_log_record{
-	action="rename",
-	user_id=User#user.id,
-	user_name=User#user.name,
-	tenant_name=User#user.tenant_name,
-	timestamp=io_lib:format("~p", [T0])
-    },
     SrcObjectKey1 = utils:to_list(SrcObjectKey0),
     case utils:ends_with(SrcObjectKey1, <<"/">>) of
 	true ->
 	    DstDirectoryName0 =
 		case rename_pseudo_directory(BucketId, Prefix0, SrcObjectKey1, DstObjectName0,
-					     PrefixedDstDirectoryName, ActionLogRecord0) of
+					     PrefixedDstDirectoryName, false) of
 		    lock -> js_handler:too_many(Req0);
 		    {accepted, {RenameErrors1, RenameErrors2}} ->
 			%% Rename is not complete, as Riak CS was busy.
@@ -423,37 +413,33 @@ rename(Req0, BucketId, State, IndexContent) ->
 			}, jsx:encode([{dir_errors, RenameErrors1}, {object_errors, RenameErrors2}]), Req0),
 			{true, Req1, []};
 		    {error, Number} -> js_handler:bad_request(Req0, Number);
-		    {dir_name, deleted, DstDirectoryName1} ->
-			DstDirectoryName2 = unicode:characters_to_list(DstDirectoryName1),
-			Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName2, ["/\"."]]),
-			T1 = utils:timestamp(), %% measure time of request
-			ActionLogRecord1 = ActionLogRecord0#action_log_record{
-			    orig_name=DstDirectoryName2,
-			    details=Summary0,
-			    duration=io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
-			},
-			sqlite_server:add_action_log_record(BucketId, Prefix0, ActionLogRecord1),
-			DstDirectoryName1;
 		    {dir_name, renamed, DstDirectoryName2} ->
 			SrcObjectKey2 = filename:basename(SrcObjectKey1),
-			SrcObjectKey3 = unicode:characters_to_list(utils:unhex(erlang:list_to_binary(SrcObjectKey2))),
-			DstDirectoryName3 = unicode:characters_to_list(DstDirectoryName2),
-			Summary0 = lists:flatten([["Renamed \""], [SrcObjectKey3, "\" to \"", DstDirectoryName3, "\""]]),
+			SrcObjectKey3 = utils:unhex(erlang:list_to_binary(SrcObjectKey2)),
 			T1 = utils:timestamp(), %% measure time of request
-			ActionLogRecord1 = ActionLogRecord0#action_log_record{
-			    orig_name=DstDirectoryName3,
-			    key=SrcObjectKey0,
-			    details=Summary0,
-			    duration=io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
-			},
-			sqlite_server:add_action_log_record(BucketId, Prefix0, ActionLogRecord1),
+			Summary = <<"Renamed \"", SrcObjectKey3/binary, "\" to \"", DstDirectoryName2/binary, "\"">>,
+			audit_log:log_operation(
+			    BucketId,
+			    Prefix0,
+			    rename,
+			    200,
+			    [SrcObjectKey3],
+			    [{status_code, 200},
+			     {request_id, null},
+			     {time_to_response_ns, utils:to_float(T1-T0)/1000},
+			     {user_id, User#user.id},
+			     {user_name, utils:unhex(erlang:list_to_binary(User#user.name))},
+			     {actor, user},
+			     {environment, null},
+			     {compliance_metadata, [{summary, Summary}]}]
+			),
 			DstDirectoryName2
 		end,
 	    sqlite_server:rename_pseudo_directory(BucketId, Prefix0, filename:basename(SrcObjectKey1), DstDirectoryName0),
 	    Req2 = cowboy_req:set_resp_body(jsx:encode([{dir_name, DstDirectoryName0}]), Req0),
 	    {true, Req2, []};
 	false ->
-	    case rename_object(BucketId, Prefix0, SrcObjectKey1, DstObjectName0, User, IndexContent, ActionLogRecord0) of
+	    case rename_object(BucketId, Prefix0, SrcObjectKey1, DstObjectName0, User, IndexContent) of
 		{error, Number} -> js_handler:bad_request(Req0, Number);
 		lock -> js_handler:too_many(Req0);
 		not_found -> js_handler:not_found(Req0);

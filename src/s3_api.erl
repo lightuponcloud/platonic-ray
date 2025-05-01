@@ -634,7 +634,6 @@ put_object(BucketId, Prefix, ObjectKey, BinaryData, Options)
 	    ?DB_VERSION_KEY -> "application/vnd.sqlite3";
 	    ?DB_VERSION_LOCK_FILENAME -> "application/vnd.lightup";
 	    ?WATERMARK_OBJECT_KEY -> "image/png";
-	    ?ACTION_LOG_FILENAME -> "application/xml";
 	    ?LOCK_DVV_INDEX_FILENAME -> "application/vnd.lightup";
 	    ?DVV_INDEX_FILENAME -> "application/vnd.lightup";
 	    ?LOCK_INDEX_FILENAME -> "application/vnd.lightup";

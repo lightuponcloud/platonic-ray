@@ -334,7 +334,7 @@ log_to_s3(BucketId, Prefix, Entries) ->
                         {operation_id, EventId},
                         {operation_name, OperationName},
                         {timestamp, DateTime},
--                        {object_keys, ObjectKeys}
+                        {object_keys, ObjectKeys}
                     ],
                     ManifestJSON = jsx:encode(Manifest),
                     Options = [{meta, [{"md5", crypto_utils:md5(ManifestJSON)}]}],

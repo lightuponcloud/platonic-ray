@@ -230,7 +230,6 @@ get_diff_list(BucketId, Prefix0, List0, DeletedObjects0, ModifiedKeys, IsUncommi
 			utils:prefixed_object_key(Prefix0, erlang:binary_to_list(K)),
 			ActualListContents) andalso
 		    (utils:ends_with(K, <<"/">>) =:= false andalso
-			utils:ends_with(K, erlang:list_to_binary(?ACTION_LOG_FILENAME)) =:= false andalso
 			utils:ends_with(K, erlang:list_to_binary(?LOCK_INDEX_FILENAME)) =:= false)
 		 ] ++ [{K, proplists:get_value(K, DeletedObjects0)}
 		    || K <- proplists:get_keys(DeletedObjects0),

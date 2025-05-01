@@ -50,7 +50,7 @@ handle_call(_Request, _From, State) ->
 handle_cast({ffmpeg, BucketId, ObjectKey}, State) ->
     case check_rate_limit(BucketId, State) of
         {error, rate_limited} ->
-            ?WARNING("[video_sup] Rate limit exceeded for bucket ~p", [BucketId]),
+            ?WARN("[video_sup] Rate limit exceeded for bucket ~p", [BucketId]),
             {noreply, State};
         {ok, NewRateLimits} ->
             light_ets:enqueue_transcode(BucketId, ObjectKey),

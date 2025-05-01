@@ -3,11 +3,10 @@
 %%
 -module(sql_lib).
 
--export([create_items_table_if_not_exist/1, create_action_log_table_if_not_exist/1,
+-export([create_items_table_if_not_exist/1,
 	 create_pseudo_directory/3, add_object/2, lock_object/3, delete_object/2,
 	 get_object/2, get_pseudo_directory/2, delete_pseudo_directory/2,
-	 rename_object/4, rename_pseudo_directory/3, add_action_log_record/1,
-	 get_action_log_records/0, get_action_log_records_for_object/1]).
+	 rename_object/4, rename_pseudo_directory/3]).
 
 -include("entities.hrl").
 
@@ -46,40 +45,6 @@ create_items_table_if_not_exist(DbName) ->
 	    end;
 	_ -> exists  %% table exists
     end.
-
-create_action_log_table_if_not_exist(DbName) ->
-    %% Table for storing action log records. Check if it exists.
-    Result = sqlite3:read(DbName, sqlite_master, {name, "actions"}),
-    case proplists:get_value(rows, Result) of
-	[] ->
-	    TableInfo = [{id, integer, [{primary_key, [asc, autoincrement]}]},
-		 {is_dir, boolean, not_null},  %% flag indicating whether record is directory
-		 {key, text, [{default, ""}]},
-		 {orig_name, text, [not_null]},  %% UTF-8 filename
-		 {guid, text, [{default, ""}]},  %% unique identifier on filesystem ( dirs do not have GUID )
-		 {action, text, [not_null]},
-		 {details, text, [not_null]},
-		 {user_id, text, [{default, ""}]},
-		 {user_name, text, [not_null]},
-		 {tenant_name, text, [not_null]},
-		 {timestamp, integer},
-		 {duration, integer},
-		 {version, text, [{default, ""}]},
-		 {is_locked, boolean, not_null},
-		 {lock_user_id, text, [{default, ""}]},
-		 {lock_user_name, text, [{default, ""}]},
-		 {lock_user_tel, text, [{default, ""}]},
-		 {lock_modified_utc, integer}
-	    ],
-	    case sqlite3:create_table(DbName, actions, TableInfo) of
-		ok -> ok;
-		{error, _, Reason} ->
-		    lager:error("[sql_lib] error creating table 'actions': ~p", [Reason]),
-		    {error, Reason}
-	    end;
-	_ -> exists  %% table exists
-    end.
-
 
 -spec(create_pseudo_directory(Prefix0 :: string() | undefined, Name :: binary(),
 			      User :: #user{}) -> list()).
@@ -252,40 +217,3 @@ delete_object(Prefix0, Key)
 	    _ -> Prefix0
 	end,
     SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"].
-
-
--spec(add_action_log_record(Record :: #action_log_record{}) -> list()).
-add_action_log_record(Record) ->
-    ["INSERT OR REPLACE INTO actions (key, orig_name, guid, is_dir, action, details, user_id, user_name, "
-     "tenant_name, timestamp, duration, version, is_locked, lock_user_id, lock_user_name, lock_user_tel, "
-     "lock_modified_utc) VALUES (",
-     sqlite3_lib:value_to_sql(Record#action_log_record.key), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.orig_name), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.guid), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.is_dir), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.action), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.details), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.user_id), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.user_name), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.tenant_name), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.timestamp), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.duration), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.version), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.is_locked), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.lock_user_id), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.lock_user_name), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.lock_user_tel), ", ",
-     sqlite3_lib:value_to_sql(Record#action_log_record.lock_modified_utc), ");"].
-
-
--spec(get_action_log_records() -> list()).
-get_action_log_records() ->
-    ["SELECT key, orig_name, guid, is_dir, action, details, user_id, user_name, ",
-     "tenant_name, timestamp, duration, version FROM actions ORDER BY timestamp"].
-
--spec(get_action_log_records_for_object(ObjectKey :: string() | undefined) -> list()).
-get_action_log_records_for_object(undefined) -> get_action_log_records();
-get_action_log_records_for_object(ObjectKey) ->
-    ["SELECT key, orig_name, guid, is_dir, action, details, user_id, user_name, ",
-     "tenant_name, timestamp, duration, version FROM actions WHERE key = ",
-     sqlite3_lib:value_to_sql(ObjectKey), " ORDER BY timestamp;"].

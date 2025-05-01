@@ -79,6 +79,30 @@ first_version(Req0, UserId) ->
     {ok, Req1, []}.
 
 
+init(Req0, _Opts) ->
+    cowboy_req:cast({set_options, #{idle_timeout => infinity}}, Req0),
+    ParsedQs = cowboy_req:parse_qs(Req0),
+    BucketId =
+	case cowboy_req:binding(bucket_id, Req0) of
+	    undefined -> undefined;
+	    BV -> erlang:binary_to_list(BV)
+	end,
+    PresentedSignature =
+	case proplists:get_value(<<"signature">>, ParsedQs) of
+	    undefined -> undefined;
+	    Signature -> unicode:characters_to_list(Signature)
+	end,
+    case download_handler:has_access(Req0, BucketId, undefined, undefined, PresentedSignature) of
+	{error, Number} ->
+	    Req1 = cowboy_req:reply(403, #{
+		<<"content-type">> => <<"application/json">>
+	    }, jsx:encode([{error, Number}]), Req0),
+	    {ok, Req1, []};
+	{_BucketId, _Prefix, _ObjectKey, User} ->
+	    Method = cowboy_req:method(Req0),
+	    response(Req0, Method, BucketId, User)
+    end.
+
 %%
 %% HEAD HTTP request returns DVV in JSON format
 %%
@@ -86,12 +110,12 @@ first_version(Req0, UserId) ->
 %%
 %% POST request uploads a new version of SQLite DB.
 %%
-response(Req0, <<"HEAD">>, BucketId, UserId) ->
+response(Req0, <<"HEAD">>, BucketId, User) ->
     case s3_api:head_object(BucketId, ?DB_VERSION_KEY) of
 	{error, Reason} ->
 	    lager:error("[version_handler] head_object failed ~p/~p: ~p", [BucketId, ?DB_VERSION_KEY, Reason]),
-	    first_version(Req0, UserId);
-	not_found -> first_version(Req0, UserId);
+	    first_version(Req0, User#user.id);
+	not_found -> first_version(Req0, User#user.id);
 	Meta ->
 	    DbMeta = list_handler:parse_object_record(Meta, []),
 	    Version = proplists:get_value("version", DbMeta),
@@ -103,7 +127,7 @@ response(Req0, <<"HEAD">>, BucketId, UserId) ->
 	    {ok, Req1, []}
     end;
 
-response(Req0, <<"GET">>, BucketId, _UserId) ->
+response(Req0, <<"GET">>, BucketId, _User) ->
     case s3_api:head_object(BucketId, ?DB_VERSION_KEY) of
 	{error, Reason} ->
 	    lager:error("[version_handler] get_object failed ~p/~p: ~p", [BucketId, ?DB_VERSION_KEY, Reason]),
@@ -125,19 +149,54 @@ response(Req0, <<"GET">>, BucketId, _UserId) ->
 	    end
     end;
 
+response(Req0, _Method, _BucketId, _User) ->
+    js_handler:bad_request_ok(Req0, 17).
+
 %%
-%% Returns true if a casual version exists.
+%% Restore previous version of file
 %%
-version_exists(BucketId, GUID, Version) when erlang:is_list(Version) ->
-    case indexing:get_object_index(BucketId, GUID) of
-	[] -> false;
-	List0 ->
-	    DVVs = lists:map(
-		fun(I) ->
-		    Attrs = element(2, I),
-		    proplists:get_value(dot, Attrs)
-		end, List0),
-	    lists:member(Version, DVVs)
+response(Req0, <<"POST">>, BucketId, Prefix, User, Body) ->
+    T0 = erlang:round(utils:timestamp()/1000),
+    {ok, Body, Req1} = cowboy_req:read_body(Req0),
+    case validate_post(Body, BucketId, Prefix) of
+	{error, Number} -> js_handler:bad_request(Req1, Number);
+	{Prefix, ObjectKey0, Version, Meta} ->
+	    ObjectKey1 = erlang:binary_to_list(ObjectKey0),
+	    case s3_api:put_object(BucketId, Prefix, ObjectKey1, <<>>, [{meta, Meta}]) of
+		ok ->
+		    %% Update pseudo-directory index for faster listing.
+		    case indexing:update(BucketId, Prefix, [{modified_keys, [ObjectKey1]}]) of
+			lock ->
+			    lager:warning("[version_handler] Can't update index: lock exists"),
+			    js_handler:too_many(Req0);
+			_ ->
+			    OrigName = utils:unhex(erlang:list_to_binary(proplists:get_value("orig-filename", Meta))),
+			    [VVTimestamp] = dvvset:values(Version),
+			    PrevDate = utils:format_timestamp(utils:to_integer(VVTimestamp)),
+			    T1 = erlang:round(utils:timestamp()/1000),
+			    Summary = <<"Restored \"", OrigName/binary, "\" to version from ", (utils:to_binary(PrevDate))/binary >>,
+			    audit_log:log_operation(
+				BucketId,
+				Prefix,
+				restored,
+				200,
+				[ObjectKey1],
+				[{status_code, 200},
+				 {request_id, null},
+				 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+				 {user_id, User#user.id},
+				 {actor, user},
+				 {environment, null},
+				 {compliance_metadata, [{orig_name, OrigName}, {summary, Summary}]}]
+			    ),
+			    {true, Req0, []}
+		    end;
+		{error, Reason} ->
+		    lager:error("[version_handler] Can't put object ~p/~p/~p: ~p",
+				[BucketId, Prefix, ObjectKey1, Reason]),
+		    lager:warning("[version_handler] Can't update index: ~p", [Reason]),
+		    js_handler:too_many(Req1)
+	    end
     end.
 
 validate_post(Body, BucketId, Prefix) ->
@@ -159,65 +218,72 @@ validate_post(Body, BucketId, Prefix) ->
     end.
 
 %%
-%% Adds record to pseudo-directory's history.
-%% ( used in function for restoring object versions ).
+%% Check if object exists by provided prefix and object key.
+%% Also chek if real object exist for specified date.
 %%
-log_restore_action(State) ->
-    User = proplists:get_value(user, State),
-    BucketId = proplists:get_value(bucket_id, State),
-    Prefix = proplists:get_value(prefix, State),
-    OrigName = proplists:get_value(orig_name, State),
-    PrevDate = proplists:get_value(prev_date, State),
-    Timestamp = io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
-    ActionLogRecord0 = #action_log_record{
-	action="restored",
-	user_name=User#user.name,
-	tenant_name=User#user.tenant_name,
-	timestamp=Timestamp
-    },
-    UnicodeObjectKey = unicode:characters_to_list(OrigName),
-    Summary = lists:flatten([["Restored \""], [UnicodeObjectKey], ["\" to version from "], [PrevDate]]),
-    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary},
-    action_log:add_record(BucketId, Prefix, ActionLogRecord1).
-
-%%
-%% Restore previous version of file
-%%
-response(Req0, <<"POST">>, BucketId, Prefix, UserId, Body) ->
-    BucketId = proplists:get_value(bucket_id, State0),
-    Prefix = proplists:get_value(prefix, State0),
-    {ok, Body, Req1} = cowboy_req:read_body(Req0),
-    case validate_post(Body, BucketId, Prefix) of
-	{error, Number} -> js_handler:bad_request(Req1, Number);
-	{Prefix, ObjectKey0, Version, Meta} ->
-	    ObjectKey1 = erlang:binary_to_list(ObjectKey0),
-	    case s3_api:put_object(BucketId, Prefix, ObjectKey1, <<>>, [{meta, Meta}]) of
-		ok ->
-		    %% Update pseudo-directory index for faster listing.
-		    case indexing:update(BucketId, Prefix, [{modified_keys, [ObjectKey1]}]) of
-			lock ->
-			    lager:warning("[action_log] Can't update index: lock exists"),
-			    js_handler:too_many(Req0);
-			_ ->
-			    OrigName = utils:unhex(erlang:list_to_binary(proplists:get_value("orig-filename", Meta))),
-			    [VVTimestamp] = dvvset:values(Version),
-			    PrevDate = utils:format_timestamp(utils:to_integer(VVTimestamp)),
-			    State1 = [{orig_name, OrigName},
-				      {prev_date, utils:format_timestamp(PrevDate)}],
-			    log_restore_action(State0 ++ State1),
-			    {true, Req0, []}
-		    end;
-		{error, Reason} ->
-		    lager:error("[action_log] Can't put object ~p/~p/~p: ~p",
-				[BucketId, Prefix, ObjectKey1, Reason]),
-		    lager:warning("[action_log] Can't update index: ~p", [Reason]),
-		    js_handler:too_many(Req1)
+validate_object_key(_BucketId, _Prefix, undefined, _Version) -> {error, 17};
+validate_object_key(_BucketId, _Prefix, null, _Version) -> {error, 17};
+validate_object_key(_BucketId, _Prefix, <<>>, _Version) -> {error, 17};
+validate_object_key(_BucketId, _Prefix, _ObjectKey, undefined) -> {error, 17};
+validate_object_key(_BucketId, _Prefix, _ObjectKey, null) -> {error, 17};
+validate_object_key(_BucketId, _Prefix, _ObjectKey, <<>>) -> {error, 17};
+validate_object_key(BucketId, Prefix, ObjectKey, Version)
+	when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
+	     erlang:is_binary(ObjectKey), erlang:is_list(Version) ->
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(ObjectKey)),
+    case s3_api:head_object(BucketId, PrefixedObjectKey) of
+	{error, Reason} ->
+	    lager:error("[version_handler] head_object failed ~p/~p: ~p",
+			[BucketId, PrefixedObjectKey, Reason]),
+	    {error, 5};
+	not_found -> {error, 17};
+	Metadata0 ->
+	    IsLocked = utils:to_list(proplists:get_value("x-amz-meta-is-locked", Metadata0)),
+	    case IsLocked of
+		"true" -> {error, 43};
+		_ ->
+		    GUID0 = proplists:get_value("x-amz-meta-guid", Metadata0),
+		    %% Old GUID, old bucket id and upload id are needed for 
+		    %% determining URI of the original object, before it was copied
+		    OldGUID = proplists:get_value("x-amz-meta-copy-from-guid", Metadata0),
+		    GUID1 =
+			case OldGUID =/= undefined andalso OldGUID =/= GUID0 of
+			    true -> OldGUID;
+			    false -> GUID0
+			end,
+		    %% Check if casual version exists.
+		    VersionExists =
+			case indexing:get_object_index(BucketId, GUID1) of
+			    [] -> false;
+			    List0 ->
+				DVVs = lists:map(
+				    fun(I) ->
+					Attrs = element(2, I),
+					proplists:get_value(dot, Attrs)
+				    end, List0),
+				lists:member(Version, DVVs)
+			end,
+		    case VersionExists of
+			false -> {error, 44};
+			Metadata1 ->
+			    OrigName = proplists:get_value("x-amz-meta-orig-filename", Metadata0),
+			    Bytes = proplists:get_value("x-amz-meta-bytes", Metadata0),
+			    Md5 = proplists:get_value(etag, Metadata0),
+			    Meta = list_handler:parse_object_record(Metadata1, [
+				{orig_name, OrigName},
+				{bytes, Bytes},
+				{is_deleted, "false"},
+				{is_locked, "false"},
+				{lock_user_id, undefined},
+				{lock_user_name, undefined},
+				{lock_user_tel, undefined},
+				{lock_modified_utc, undefined},
+				{md5, Md5}]),
+			    {Prefix, ObjectKey, Meta}
+		    end
 	    end
     end.
 
-
-response(Req0, _Method, _BucketId, _UserId) ->
-    js_handler:bad_request_ok(Req0, 17).
 
 %%
 %% Retrieves list of objects from Riak CS (all pages).
@@ -242,118 +308,4 @@ fetch_full_object_history(BucketId, GUID, ObjectList0, Marker0)
 		    NextPart = fetch_full_object_history(BucketId, GUID, ObjectList0 ++ ObjectList1, NextMarker),
 		    ObjectList0 ++ NextPart
 	    end
-    end.
-
-%%
-%% Returns the list of available versions of object.
-%%
-get_object_changelog(Req0, State, BucketId, Prefix, ObjectKey) ->
-    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
-    case s3_api:head_object(BucketId, PrefixedObjectKey) of
-	{error, Reason} ->
-	    lager:error("[action_log] head_object failed ~p/~p: ~p",
-			[BucketId, PrefixedObjectKey, Reason]),
-	    js_handler:not_found(Req0);
-	not_found -> js_handler:not_found(Req0);
-	RiakResponse0 ->
-	    GUID = proplists:get_value("x-amz-meta-guid", RiakResponse0),
-	    ObjectList0 = [list_handler:parse_object_record(s3_api:head_object(BucketId, I), [])
-			   || I <- fetch_full_object_history(BucketId, GUID),
-			   utils:is_hidden_object(I) =:= false],
-	    ObjectList1 = lists:map(
-		fun(I) ->
-		    AuthorId = utils:to_binary(proplists:get_value("author-id", I)),
-		    AuthorName = utils:unhex(utils:to_binary(proplists:get_value("author-name", I))),
-		    AuthorTel =
-			case proplists:get_value("author-tel", I) of
-			    undefined -> null;
-			    Tel -> utils:unhex(erlang:list_to_binary(Tel))
-			end,
-		    [{author_id, AuthorId},
-		     {author_name, AuthorName},
-		     {author_tel, AuthorTel},
-		     {last_modified_utc, erlang:list_to_binary(proplists:get_value("modified-utc", I))}]
-		end, ObjectList0),
-	    Output = jsx:encode(ObjectList1),
-	    {Output, Req0, State}
-    end.
-
-%%
-%% Check if object exists by provided prefix and object key.
-%% Also chek if real object exist for specified date.
-%%
-validate_object_key(_BucketId, _Prefix, undefined, _Version) -> {error, 17};
-validate_object_key(_BucketId, _Prefix, null, _Version) -> {error, 17};
-validate_object_key(_BucketId, _Prefix, <<>>, _Version) -> {error, 17};
-validate_object_key(_BucketId, _Prefix, _ObjectKey, undefined) -> {error, 17};
-validate_object_key(_BucketId, _Prefix, _ObjectKey, null) -> {error, 17};
-validate_object_key(_BucketId, _Prefix, _ObjectKey, <<>>) -> {error, 17};
-validate_object_key(BucketId, Prefix, ObjectKey, Version)
-	when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
-	     erlang:is_binary(ObjectKey), erlang:is_list(Version) ->
-    PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(ObjectKey)),
-    case s3_api:head_object(BucketId, PrefixedObjectKey) of
-	{error, Reason} ->
-	    lager:error("[action_log] head_object failed ~p/~p: ~p",
-			[BucketId, PrefixedObjectKey, Reason]),
-	    {error, 5};
-	not_found -> {error, 17};
-	Metadata0 ->
-	    IsLocked = utils:to_list(proplists:get_value("x-amz-meta-is-locked", Metadata0)),
-	    case IsLocked of
-		"true" -> {error, 43};
-		_ ->
-		    GUID0 = proplists:get_value("x-amz-meta-guid", Metadata0),
-		    %% Old GUID, old bucket id and upload id are needed for 
-		    %% determining URI of the original object, before it was copied
-		    OldGUID = proplists:get_value("x-amz-meta-copy-from-guid", Metadata0),
-		    GUID1 =
-			case OldGUID =/= undefined andalso OldGUID =/= GUID0 of
-			    true -> OldGUID;
-			    false -> GUID0
-			end,
-		    case version_exists(BucketId, GUID1, Version) of
-			false -> {error, 44};
-			Metadata1 ->
-			    OrigName = proplists:get_value("x-amz-meta-orig-filename", Metadata0),
-			    Bytes = proplists:get_value("x-amz-meta-bytes", Metadata0),
-			    Md5 = proplists:get_value(etag, Metadata0),
-			    Meta = list_handler:parse_object_record(Metadata1, [
-				{orig_name, OrigName},
-				{bytes, Bytes},
-				{is_deleted, "false"},
-				{is_locked, "false"},
-				{lock_user_id, undefined},
-				{lock_user_name, undefined},
-				{lock_user_tel, undefined},
-				{lock_modified_utc, undefined},
-				{md5, Md5}]),
-			    {Prefix, ObjectKey, Meta}
-		    end
-	    end
-    end.
-
-
-init(Req0, _Opts) ->
-    cowboy_req:cast({set_options, #{idle_timeout => infinity}}, Req0),
-    ParsedQs = cowboy_req:parse_qs(Req0),
-    BucketId =
-	case cowboy_req:binding(bucket_id, Req0) of
-	    undefined -> undefined;
-	    BV -> erlang:binary_to_list(BV)
-	end,
-    PresentedSignature =
-	case proplists:get_value(<<"signature">>, ParsedQs) of
-	    undefined -> undefined;
-	    Signature -> unicode:characters_to_list(Signature)
-	end,
-    case download_handler:has_access(Req0, BucketId, undefined, undefined, PresentedSignature) of
-	{error, Number} ->
-	    Req1 = cowboy_req:reply(403, #{
-		<<"content-type">> => <<"application/json">>
-	    }, jsx:encode([{error, Number}]), Req0),
-	    {ok, Req1, []};
-	{_BucketId, _Prefix, _ObjectKey, User} ->
-	    Method = cowboy_req:method(Req0),
-	    response(Req0, Method, BucketId, User#user.id)
     end.

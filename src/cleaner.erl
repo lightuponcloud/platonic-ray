@@ -3,7 +3,6 @@
 %%
 %% - old CSRF tokens
 %% - old authentication tokens
-%% - deleted objects (TODO)
 %%
 -module(cleaner).
 

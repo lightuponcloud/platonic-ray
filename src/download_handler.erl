@@ -181,7 +181,7 @@ receive_streamed_body(Req0, RequestId0, Pid0, BucketId, NextObjectKeys0) ->
 %%
 %% Lists objects in 'real' prefix ( "~object/" ), sorts them and streams them to client.
 %%
-stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte, EndByte, T0) ->
+stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte, EndByte, OrigBucketId, OrigPrefix, User, T0) ->
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
     PartNumStart = (StartByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1,
     PartNumEnd =
@@ -261,12 +261,27 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 			    %% Add log record with time it took to download ZIP
 			    lager:info("[download_handler] download finished in ~p", [
 				io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])]),
+
+			    audit_log:log_operation(
+				OrigBucketId,
+				OrigPrefix,
+				download,
+				200,
+				[OrigName],
+				[{status_code, 200},
+				 {request_id, null},
+				 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+				 {user_id, User#user.id},
+				 {actor, user},
+				 {environment, null},
+				 {compliance_metadata, [{orig_name, OrigName}]}]
+			    ),
 			    {ok, Req3, []}
 		    end
 	    end
     end.
 
-response(Req0, <<"HEAD">>, BucketId, Prefix, ObjectKey, T0) ->
+response(Req0, <<"HEAD">>, BucketId, Prefix, ObjectKey, _User, T0) ->
     case get_object_metadata(BucketId, Prefix, ObjectKey) of
 	not_found ->
 	    Req1 = cowboy_req:reply(404, #{
@@ -284,7 +299,7 @@ response(Req0, <<"HEAD">>, BucketId, Prefix, ObjectKey, T0) ->
 	    {ok, Req1, []}
     end;
 
-response(Req0, <<"GET">>, BucketId, Prefix, ObjectKey, T0) ->
+response(Req0, <<"GET">>, BucketId, Prefix, ObjectKey, User, T0) ->
     case get_object_metadata(BucketId, Prefix, ObjectKey) of
 	not_found ->
 	    Req1 = cowboy_req:reply(404, #{
@@ -296,10 +311,10 @@ response(Req0, <<"GET">>, BucketId, Prefix, ObjectKey, T0) ->
 	    case validate_range(cowboy_req:header(<<"range">>, Req0), Bytes) of
 		undefined ->
 		    EndByte = utils:to_integer(Bytes),
-		    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, 0, EndByte, T0);
+		    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, 0, EndByte, BucketId, Prefix, User, T0);
 		{error, Number} -> js_handler:bad_request(Req0, Number);
 		{StartByte, EndByte} ->
-		    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte, EndByte, T0)
+		    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte, EndByte, BucketId, Prefix, User, T0)
 	    end
     end.
 
@@ -340,8 +355,9 @@ init(Req0, _Opts) ->
 	{error, Number} ->
 	    Req1 = cowboy_req:reply(403, #{
 		<<"content-type">> => <<"application/json">>,
-                <<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
+		<<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
 	    }, jsx:encode([{error, Number}]), Req0),
 	    {ok, Req1, []};
-	{BucketId1, Prefix1, ObjectKey1, _User} -> response(Req0, Method, BucketId1, Prefix1, ObjectKey1, T0)
+	{BucketId1, Prefix1, ObjectKey1, User} ->
+	    response(Req0, Method, BucketId1, Prefix1, ObjectKey1, User, T0)
     end.

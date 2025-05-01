@@ -35,15 +35,17 @@ content_types_provided(Req, State) ->
 
 validate_operation_name(OpName) ->
     case OpName of
-        <<"upload">> -> upload;
-        <<"download">> -> download;
-        <<"delete">> -> delete;
-        <<"undelete">> -> undelete;
-        <<"copy">> -> copy;
-        <<"move">> -> move;
-        <<"mkdir">> -> mkdir;
-        <<"rename">> -> rename;
-        <<"restored">> -> restored;
+	<<"upload">> -> upload;
+	<<"download">> -> download;
+	<<"delete">> -> delete;
+	<<"undelete">> -> undelete;
+	<<"copy">> -> copy;
+	<<"move">> -> move;
+	<<"mkdir">> -> mkdir;
+	<<"rename">> -> rename;
+	<<"restored">> -> restored;
+	<<"lock">> -> lock;
+	<<"unlock">> -> unlock;
 	[] -> undefined;
 	<<>> -> undefined;
 	null -> undefined;
@@ -67,7 +69,7 @@ validate_date(Year, Month, Day) ->
 validate_year(undefined) -> {ok, undefined};
 validate_year(null) -> {ok, undefined};
 validate_year(<<>>) -> {ok, undefined};
-validate_year(Year)  ->
+validate_year(Year) when is_binary(Year) ->
     case utils:to_ingeger(Year) of
 	Y when Y >= 1970 andalso Y =< 9999 -> Y;
 	_ -> {error, 56}
@@ -77,7 +79,7 @@ validate_year(_) -> {error, 56}.
 validate_month(undefined) -> {ok, undefined};
 validate_month(null) -> {ok, undefined};
 validate_month(<<>>) -> {ok, undefined};
-validate_month(Month) ->
+validate_month(Month) when is_binary(Month) ->
     case utils:to_ingeger(Month) of
 	M when M >= 1 andalso M =< 12 -> M;
 	_ -> {error, 54}
@@ -87,7 +89,7 @@ validate_month(_) -> {error, 54}.
 validate_day(undefined) -> {ok, undefined};
 validate_day(null) -> {ok, undefined};
 validate_day(<<>>) -> {ok, undefined};
-validate_day(Day) ->
+validate_day(Day) when is_binary(Day) ->
     case utils:to_ingeger(Day) of
 	D when D >= 1 andalso D =< 31 -> D;
 	_ -> {error, 55}
@@ -109,22 +111,19 @@ to_json(Req0, State) ->
     ),
 
     case lists:keyfind(error, 1, [Prefix, OperationName, Year, Month, Day]) of
-	{error, Number0} -> js_handler:bad_request(Req1, Number0);
+	{error, Number0} -> js_handler:bad_request(Req0, Number0);
 	false ->
 	    Bits = string:tokens(BucketId, "-"),
 	    TenantId = string:to_lower(lists:nth(2, Bits)),
-	    RealPrefix = io_lib:format("~s/~s/buckets/~s/~4.10.0B/~2.10.0B/~2.10.0B_~s.jsonl.gz",
-				       [?AUDIT_LOG_PREFIX, TenantId]),
-	    Filters = #s3_fetch:filter{
-		bucket_id = BucketId,
+	    RealPrefix = io_lib:format("~s/~s/buckets/~s",
+		[?AUDIT_LOG_PREFIX, TenantId, utils:prefixed_object_key(BucketId, Prefix)]),
+	    Filters = #filter{
 		year = Year,
 		month = Month,
 		day = Day
 	    },
-	    stream_logs(Req0, BucketId, Prefix, Filters, OperationName)
+	    stream_logs(Req0, BucketId, RealPrefix, Filters, OperationName)
     end.
-
-
 
 % Filter objects by date and bucket_id
 filter_objects(Objects, Filters) ->
@@ -175,13 +174,12 @@ stream_logs(Req0, BucketId0, Prefix, Filters, OperationName) when OperationName 
     },
     Req1 = cowboy_req:stream_reply(200, Headers0, Req0),
 
-    LogPath = io_lib:format("~s/buckets/~s", [?AUDIT_LOG_PREFIX, utils:prefixed_object_key(BucketId0, Prefix)]),
-    List0 = s3_api:recursively_list_pseudo_dir(?SECURITY_BUCKET_NAME, LogPath),
+    List0 = s3_api:recursively_list_pseudo_dir(?SECURITY_BUCKET_NAME, Prefix),
     FilteredObjects = filter_objects(List0, Filters),
     lists:foreach(
 	fun(ObjectKey) ->
 	    case s3_api:get_object(BucketId0, ObjectKey) of
-		{error, Reason} -> ok;
+		{error, _Reason} -> ok;
 		not_found -> ok;
 		{ok, Response} ->
 		    BinBodyPart = proplists:get_value(content, Response),

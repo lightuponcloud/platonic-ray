@@ -516,7 +516,6 @@ is_hidden_object(ObjInfo) ->
         undefined -> true;  %% .stop file or something
         ObjectKey ->
 	    lists:suffix(?INDEX_FILENAME, ObjectKey) =:= true orelse 
-	    lists:suffix(?ACTION_LOG_FILENAME, ObjectKey) =:= true orelse
 	    lists:suffix(?LOCK_INDEX_FILENAME, ObjectKey) =:= true orelse
 	    lists:suffix(?LOCK_SUFFIX, ObjectKey) =:= true orelse
 	    lists:suffix(?DB_VERSION_KEY, ObjectKey) =:= true orelse

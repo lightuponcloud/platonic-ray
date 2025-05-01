@@ -171,7 +171,7 @@ handle_cast({add_task, BucketId, Module, Func, Args}, #state{sync_sql_queue = Sy
 			end
 		    end, SyncSqlQueue0)
 	end,
-    {noreply, State0#state{sync_sql_queue = SyncSqlQueue1}};
+    {noreply, State0#state{sync_sql_queue = SyncSqlQueue1}}.
 
 %%
 %% Adds pseudo-directory in SQLite db, if it do not exist yet

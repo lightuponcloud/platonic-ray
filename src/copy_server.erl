@@ -121,15 +121,7 @@ handle_cast({copy, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
     {CopiedDirectories, CopiedObjects} = prepare_action_log(Copied0),
 
     T1 = utils:timestamp(),
-    ActionLogRecord0 = #action_log_record{
-	action="copy",
-	user_id=User#user.id,
-	user_name=User#user.name,
-	tenant_name=User#user.tenant_name,
-	timestamp=io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
-	duration = io_lib:format("~.2f", [utils:to_float(T1-T0)/1000]),
-	orig_name = CopiedDirectories ++ CopiedObjects
-    },
+
     SrcPrefix1 =
 	case SrcPrefix0 of
 	    undefined -> "/";
@@ -137,9 +129,21 @@ handle_cast({copy, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 	end,
     Summary0 = lists:flatten([["Copied"], CopiedDirectories ++ CopiedObjects,
 			     ["\" from \"", SrcPrefix1, "\"."]]),
-    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
-    sqlite_server:add_action_log_record(DstBucketId, DstPrefix0, ActionLogRecord1),
 
+    audit_log:log_operation(
+	DstBucketId,
+	DstPrefix0,
+	copy,
+	200,
+	[SrcObjectKeys],
+	[{status_code, 200},
+	 {request_id, null},
+	 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+	 {user_id, User#user.id},
+	 {actor, user},
+	 {environment, null},
+	 {compliance_metadata, [{summary, Summary0}]}]
+    ),
     DstPrefix1 =
 	case DstPrefix0 of
 	    undefined -> "/";
@@ -152,8 +156,20 @@ handle_cast({copy, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 	false ->
 	    Summary1 = lists:flatten([["Copied"], CopiedDirectories ++ CopiedObjects,
 				      [" to \""], [DstPrefix1, "\"."]]),
-	    ActionLogRecord2 = ActionLogRecord0#action_log_record{details=Summary1},
-	    sqlite_server:add_action_log_record(SrcBucketId, SrcPrefix0, ActionLogRecord2)
+	    audit_log:log_operation(
+		SrcBucketId,
+		SrcPrefix0,
+		copy,
+		200,
+		[SrcObjectKeys],
+		[{status_code, 200},
+		 {request_id, null},
+		 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+		 {user_id, User#user.id},
+		 {actor, user},
+		 {environment, null},
+		 {compliance_metadata, [{summary, Summary1}]}]
+	    )
     end,
     {noreply, State};
 
@@ -247,17 +263,6 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 	    %%
 	    {CopiedDirectories, CopiedObjects} = prepare_action_log(Copied0),
 	    T1 = utils:timestamp(), %% measure time of request
-	    ActionLogRecord0 = #action_log_record{
-		action="move",
-		user_id=User#user.id,
-		user_name=User#user.name,
-		tenant_name=User#user.tenant_name,
-		timestamp=io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
-		duration=io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
-%%	key = 
-%%	orig_name = 
-%%	version = 
-	    },
 	    SrcPrefix2 =
 		case SrcPrefix0 of
 		    undefined -> "/";
@@ -265,9 +270,20 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 		end,
 	    Summary0 = lists:flatten([["Moved"], CopiedDirectories ++ CopiedObjects,
 				      ["\" from \"", SrcPrefix2, "\"."]]),
-	    ActionLogRecord1 = ActionLogRecord0#action_log_record{details=Summary0},
-	    sqlite_server:add_action_log_record(DstBucketId, DstPrefix0, ActionLogRecord1),
-
+	    audit_log:log_operation(
+		DstBucketId,
+		DstPrefix0,
+		move,
+		200,
+		[SrcObjectKeys],
+		[{status_code, 200},
+		 {request_id, null},
+		 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+		 {user_id, User#user.id},
+		 {actor, user},
+		 {environment, null},
+		 {compliance_metadata, [{summary, Summary0}]}]
+	    ),
 	    DstPrefix1 =
 		case DstPrefix0 of
 		    undefined -> "/";
@@ -280,8 +296,20 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 		false ->
 		    Summary1 = lists:flatten([["Moved"], CopiedDirectories ++ CopiedObjects,
 					      [" to \""], [DstPrefix1, "\"."]]),
-		    ActionLogRecord2 = ActionLogRecord0#action_log_record{details=Summary1},
-		    sqlite_server:add_action_log_record(SrcBucketId, SrcPrefix0, ActionLogRecord2)
+		    audit_log:log_operation(
+			SrcBucketId,
+			SrcPrefix0,
+			move,
+			200,
+			[SrcObjectKeys],
+			[{status_code, 200},
+			 {request_id, null},
+			 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+			 {user_id, User#user.id},
+			 {actor, user},
+			 {environment, null},
+			 {compliance_metadata, [{summary, Summary1}]}]
+		    )
 	    end
     end,
     {noreply, State};
@@ -588,19 +616,6 @@ copy_objects(SrcBucketId, DstBucketId, SrcPrefix, DstPrefix, ObjectKey0, NewName
 	    NewDst = element(2, SrcDstPath),
 	    NewDstPrefix = utils:dirname(NewDst),
 	    NewDstIndexContent = indexing:get_index(DstBucketId, NewDstPrefix),
-	    %% Copy action log, if it absent in destination directory
-	    %% Reason: someone could destroy log of actions by copying/moving directories otherwise
-	    SrcActionLog = utils:prefixed_object_key(CurrentPrefix, ?ACTION_LOG_FILENAME),
-	    DstActionLog = utils:prefixed_object_key(NewDstPrefix, ?ACTION_LOG_FILENAME),
-	    case s3_api:head_object(DstBucketId, DstActionLog) of
-		{error, Reason} ->
-		    lager:error("[copy_handler] head_object failed ~p/~p: ~p",
-				[DstBucketId, DstActionLog, Reason]),
-		    s3_api:copy_object(DstBucketId, DstActionLog, SrcBucketId, SrcActionLog);
-		not_found -> s3_api:copy_object(DstBucketId, DstActionLog, SrcBucketId,
-						  SrcActionLog);
-		_ -> ok
-	    end,
 	    Copied0 = [do_copy(SrcBucketId, DstBucketId, element(1, I), NewDstPrefix,
 			       element(3, I), NewDstIndexContent, User) || I <- NewPaths,
 			utils:is_hidden_object([{key, element(1, I)}]) =/= true andalso
@@ -735,8 +750,6 @@ delete_pseudo_directory(BucketId, Prefix0, CopiedObjects, UserId) ->
 				[BucketId, PrefixedIndexKey, Reason]);
 		{ok, _} -> ok
 	    end,
-	    PrefixedActionLogKey = utils:prefixed_object_key(Prefix1, ?ACTION_LOG_FILENAME),
-	    s3_api:delete_object(BucketId, PrefixedActionLogKey),
 	    %% Mark deleted in SQLite db
 	    DirName = utils:unhex(erlang:list_to_binary(filename:basename(Prefix1))),
 	    SQL1 = sql_lib:delete_pseudo_directory(utils:dirname(Prefix1), DirName),
