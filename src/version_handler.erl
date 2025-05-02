@@ -1,11 +1,14 @@
 %%
-%% Version handler returns info on provided bucket DVV ( Dotted version Vector )
+%% Version handler
 %%
 %% HEAD application/json
-%%	Returns version of DB in JSON format.
+%%	Returns info on provided bucket DVV ( Dotted version Vector ) in JSON format.
 %%
 %% GET application/octet-stream
-%%	Allows to download SQLite DB
+%%	Allows to download SQLite DB, used for synchronization.
+%%
+%% POST
+%%	Allows to restore previous version of file.
 %%
 -module(version_handler).
 -behavior(cowboy_handler).
@@ -81,36 +84,50 @@ first_version(Req0, UserId) ->
 
 init(Req0, _Opts) ->
     cowboy_req:cast({set_options, #{idle_timeout => infinity}}, Req0),
-    ParsedQs = cowboy_req:parse_qs(Req0),
-    BucketId =
-	case cowboy_req:binding(bucket_id, Req0) of
+    T0 = erlang:round(utils:timestamp()/1000),
+    PathInfo = cowboy_req:path_info(Req0),
+    BucketId0 =
+	case lists:nth(1, PathInfo) of
 	    undefined -> undefined;
+	    <<>> -> undefined;
 	    BV -> erlang:binary_to_list(BV)
 	end,
+    Prefix0 =
+	case length(PathInfo) < 2 of
+	    true -> undefined;
+	    false ->
+		%% prefix should go just after bucket id
+		erlang:binary_to_list(utils:join_binary_with_separator(lists:nthtail(1, PathInfo), <<"/">>))
+	end,
+    ParsedQs = cowboy_req:parse_qs(Req0),
     PresentedSignature =
 	case proplists:get_value(<<"signature">>, ParsedQs) of
 	    undefined -> undefined;
 	    Signature -> unicode:characters_to_list(Signature)
 	end,
-    case download_handler:has_access(Req0, BucketId, undefined, undefined, PresentedSignature) of
+    Method = cowboy_req:method(Req0),
+    case download_handler:has_access(Req0, BucketId0, Prefix0, undefined, PresentedSignature) of
 	{error, Number} ->
 	    Req1 = cowboy_req:reply(403, #{
-		<<"content-type">> => <<"application/json">>
+		<<"content-type">> => <<"application/json">>,
+		<<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
 	    }, jsx:encode([{error, Number}]), Req0),
 	    {ok, Req1, []};
-	{_BucketId, _Prefix, _ObjectKey, User} ->
-	    Method = cowboy_req:method(Req0),
-	    response(Req0, Method, BucketId, User)
+	{BucketId1, Prefix1, _ObjectKey, User} ->
+	    case cowboy_req:method(Req0) of
+		<<"POST">> ->
+		    {ok, Body, Req1} = cowboy_req:read_body(Req0),
+		    case validate_post(Body, BucketId1, Prefix0) of
+			{error, Number} -> js_handler:bad_request(Req1, Number);
+			{Prefix1, ObjectKey, Version, Meta} ->
+			    response(Req1, <<"POST">>, BucketId1, Prefix1, ObjectKey, User, Meta, Version, T0)
+		    end;
+		Method -> response(Req0, Method, BucketId1, User, T0)
+	    end
     end.
 
-%%
 %% HEAD HTTP request returns DVV in JSON format
-%%
-%% GET request returns SQLite DB itself.
-%%
-%% POST request uploads a new version of SQLite DB.
-%%
-response(Req0, <<"HEAD">>, BucketId, User) ->
+response(Req0, <<"HEAD">>, BucketId, User, T0) ->
     case s3_api:head_object(BucketId, ?DB_VERSION_KEY) of
 	{error, Reason} ->
 	    lager:error("[version_handler] head_object failed ~p/~p: ~p", [BucketId, ?DB_VERSION_KEY, Reason]),
@@ -119,15 +136,18 @@ response(Req0, <<"HEAD">>, BucketId, User) ->
 	Meta ->
 	    DbMeta = list_handler:parse_object_record(Meta, []),
 	    Version = proplists:get_value("version", DbMeta),
+	    T1 = erlang:round(utils:timestamp()/1000),
 	    Req1 = cowboy_req:reply(200, #{
 		<<"md5">> => proplists:get_value("md5", DbMeta),
 		<<"DVV">> => utils:to_binary(Version),
-		<<"content-type">> => <<"application/json">>
+		<<"content-type">> => <<"application/json">>,
+		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 	    }, <<>>, Req0),
 	    {ok, Req1, []}
     end;
 
-response(Req0, <<"GET">>, BucketId, _User) ->
+%% GET request returns SQLite DB itself.
+response(Req0, <<"GET">>, BucketId, _User, _T0) ->
     case s3_api:head_object(BucketId, ?DB_VERSION_KEY) of
 	{error, Reason} ->
 	    lager:error("[version_handler] get_object failed ~p/~p: ~p", [BucketId, ?DB_VERSION_KEY, Reason]),
@@ -149,54 +169,50 @@ response(Req0, <<"GET">>, BucketId, _User) ->
 	    end
     end;
 
-response(Req0, _Method, _BucketId, _User) ->
+response(Req0, _Method, _BucketId, _User, _T0) ->
     js_handler:bad_request_ok(Req0, 17).
 
-%%
 %% Restore previous version of file
-%%
-response(Req0, <<"POST">>, BucketId, Prefix, User, Body) ->
-    T0 = erlang:round(utils:timestamp()/1000),
-    {ok, Body, Req1} = cowboy_req:read_body(Req0),
-    case validate_post(Body, BucketId, Prefix) of
-	{error, Number} -> js_handler:bad_request(Req1, Number);
-	{Prefix, ObjectKey0, Version, Meta} ->
-	    ObjectKey1 = erlang:binary_to_list(ObjectKey0),
-	    case s3_api:put_object(BucketId, Prefix, ObjectKey1, <<>>, [{meta, Meta}]) of
-		ok ->
-		    %% Update pseudo-directory index for faster listing.
-		    case indexing:update(BucketId, Prefix, [{modified_keys, [ObjectKey1]}]) of
-			lock ->
-			    lager:warning("[version_handler] Can't update index: lock exists"),
-			    js_handler:too_many(Req0);
-			_ ->
-			    OrigName = utils:unhex(erlang:list_to_binary(proplists:get_value("orig-filename", Meta))),
-			    [VVTimestamp] = dvvset:values(Version),
-			    PrevDate = utils:format_timestamp(utils:to_integer(VVTimestamp)),
-			    T1 = erlang:round(utils:timestamp()/1000),
-			    Summary = <<"Restored \"", OrigName/binary, "\" to version from ", (utils:to_binary(PrevDate))/binary >>,
-			    audit_log:log_operation(
-				BucketId,
-				Prefix,
-				restored,
-				200,
-				[ObjectKey1],
-				[{status_code, 200},
-				 {request_id, null},
-				 {time_to_response_ns, utils:to_float(T1-T0)/1000},
-				 {user_id, User#user.id},
-				 {actor, user},
-				 {environment, null},
-				 {compliance_metadata, [{orig_name, OrigName}, {summary, Summary}]}]
-			    ),
-			    {true, Req0, []}
-		    end;
-		{error, Reason} ->
-		    lager:error("[version_handler] Can't put object ~p/~p/~p: ~p",
-				[BucketId, Prefix, ObjectKey1, Reason]),
-		    lager:warning("[version_handler] Can't update index: ~p", [Reason]),
-		    js_handler:too_many(Req1)
-	    end
+response(Req0, <<"POST">>, BucketId, Prefix, ObjectKey, User, Meta, Version, T0) ->
+    case s3_api:put_object(BucketId, Prefix, ObjectKey, <<>>, [{meta, Meta}]) of
+	ok ->
+	    %% Update pseudo-directory index for faster listing.
+	    case indexing:update(BucketId, Prefix, [{modified_keys, [ObjectKey]}]) of
+		lock ->
+		    lager:warning("[version_handler] Can't update index: lock exists"),
+		    js_handler:too_many(Req0);
+		_ ->
+		    OrigName = utils:unhex(erlang:list_to_binary(proplists:get_value("orig-filename", Meta))),
+		    [VVTimestamp] = dvvset:values(Version),
+		    PrevDate = utils:format_timestamp(utils:to_integer(VVTimestamp)),
+		    T1 = erlang:round(utils:timestamp()/1000),
+		    Summary = <<"Restored \"", OrigName/binary, "\" to version from ", (utils:to_binary(PrevDate))/binary >>,
+		    audit_log:log_operation(
+			BucketId,
+			Prefix,
+			restored,
+			200,
+			[ObjectKey],
+			[{status_code, 200},
+			 {request_id, null},
+			 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+			 {user_id, User#user.id},
+			 {actor, user},
+			 {environment, null},
+			 {compliance_metadata, [{orig_name, OrigName}, {summary, Summary}]}]
+		    ),
+		    T1 = erlang:round(utils:timestamp()/1000),
+		    Req1 = cowboy_req:reply(200, #{
+			<<"content-type">> => <<"application/json">>,
+			<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+		    }, <<>>, Req0),
+		    {ok, Req1, []}
+	    end;
+	{error, Reason} ->
+	    lager:error("[version_handler] Can't put object ~p/~p/~p: ~p",
+			[BucketId, Prefix, ObjectKey, Reason]),
+	    lager:warning("[version_handler] Can't update index: ~p", [Reason]),
+	    js_handler:too_many(Req0)
     end.
 
 validate_post(Body, BucketId, Prefix) ->
@@ -281,31 +297,5 @@ validate_object_key(BucketId, Prefix, ObjectKey, Version)
 				{md5, Md5}]),
 			    {Prefix, ObjectKey, Meta}
 		    end
-	    end
-    end.
-
-
-%%
-%% Retrieves list of objects from Riak CS (all pages).
-%%
-fetch_full_object_history(BucketId, GUID)
-	when erlang:is_list(BucketId), erlang:is_list(GUID) ->
-    fetch_full_object_history(BucketId, GUID, [], undefined).
-
-fetch_full_object_history(BucketId, GUID, ObjectList0, Marker0)
-	when erlang:is_list(BucketId), erlang:is_list(ObjectList0), erlang:is_list(GUID) ->
-    RealPrefix = utils:prefixed_object_key(?REAL_OBJECT_PREFIX, GUID++"/"),
-    RiakResponse = s3_api:list_objects(BucketId, [{prefix, RealPrefix}, {marker, Marker0}]),
-    case RiakResponse of
-	not_found -> [];  %% bucket not found
-	_ ->
-	    ObjectList1 = [proplists:get_value(key, I) || I <- proplists:get_value(contents, RiakResponse)],
-	    Marker1 = proplists:get_value(next_marker, RiakResponse),
-	    case Marker1 of
-		undefined -> ObjectList0 ++ ObjectList1;
-		[] -> ObjectList0 ++ ObjectList1;
-		NextMarker ->
-		    NextPart = fetch_full_object_history(BucketId, GUID, ObjectList0 ++ ObjectList1, NextMarker),
-		    ObjectList0 ++ NextPart
 	    end
     end.

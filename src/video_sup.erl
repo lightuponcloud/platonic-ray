@@ -101,7 +101,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %%% Internal functions
-check_rate_limit(BucketId, #state{rate_limits = Limits} = State) ->
+check_rate_limit(BucketId, #state{rate_limits = Limits} = _State) ->
     Now = erlang:system_time(millisecond),
     {Tokens, LastRefill} = maps:get(BucketId, Limits, {?BUCKET_CAPACITY, Now}),
     TokensAvailable = min(?BUCKET_CAPACITY, Tokens + tokens_to_add(LastRefill, Now)),
@@ -119,28 +119,30 @@ tokens_to_add(LastRefill, Now) ->
     TimeDiff * ?RATE_LIMIT_PER_SECOND.
 
 process_queue(Items, Retries) ->
-    Results = pmap:pmap(fun({BucketId, ObjectKey, RetryCount}) ->
-        Key = <<BucketId/binary, "/", ObjectKey/binary>>,
-        case process_video(BucketId, ObjectKey) of
-            ok -> {ok, Key};
-            {error, Reason} when RetryCount < ?MAX_RETRIES ->
-                {retry, {BucketId, ObjectKey, RetryCount + 1}, Reason};
-            {error, Reason} ->
-                {error, {crash, Reason}}
-        end
-    end, Items, ?PMAP_WORKERS),
+    Results = pmap:pmap(
+	fun({BucketId, ObjectKey, RetryCount}) ->
+	    Key = <<BucketId/binary, "/", ObjectKey/binary>>,
+	    case process_video(BucketId, ObjectKey) of
+		ok -> {ok, Key};
+		{error, Reason} when RetryCount < ?MAX_RETRIES ->
+		    {retry, {BucketId, ObjectKey, RetryCount + 1}, Reason};
+		{error, Reason} ->
+		    {error, {crash, BucketId, ObjectKey, Reason}}
+	    end
+	end,
+	Items,
+	?PMAP_WORKERS),
 
     lists:foldl(fun
-        ({ok, _Key}, {QueueAcc, RetriesAcc}) ->
-            {QueueAcc, RetriesAcc};
-        ({retry, {BucketId, ObjectKey, RetryCount}, _Reason}, {QueueAcc, RetriesAcc}) ->
-            Key = <<BucketId/binary, "/", ObjectKey/binary>>,
-            {[{BucketId, ObjectKey, RetryCount} | QueueAcc], RetriesAcc#{Key => RetryCount}};
-        ({error, {crash, Reason}}, {QueueAcc, RetriesAcc}) ->
-            Key = <<BucketId/binary, "/", ObjectKey/binary>>,
-            ?ERROR("[video_sup] Failed processing ~p after retries: ~p", [Key, Reason]),
-            {QueueAcc, maps:remove(Key, RetriesAcc)}
-    end, {[], Retries}, Results).
+	({ok, _Key}, {QueueAcc, RetriesAcc}) -> {QueueAcc, RetriesAcc};
+	({retry, {BucketId, ObjectKey, RetryCount}, _Reason}, {QueueAcc, RetriesAcc}) ->
+	    Key = <<BucketId/binary, "/", ObjectKey/binary>>,
+	    {[{BucketId, ObjectKey, RetryCount} | QueueAcc], RetriesAcc#{Key => RetryCount}};
+	({error, {crash, BucketId, ObjectKey, Reason}}, {QueueAcc, RetriesAcc}) ->
+	    Key = <<BucketId/binary, "/", ObjectKey/binary>>,
+	    ?ERROR("[video_sup] Failed processing ~p after retries: ~p", [Key, Reason]),
+	    {QueueAcc, maps:remove(Key, RetriesAcc)}
+	end, {[], Retries}, Results).
 
 process_video(BucketId, ObjectKey) ->
     case download_file(BucketId, ObjectKey) of

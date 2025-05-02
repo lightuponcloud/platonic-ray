@@ -202,7 +202,8 @@ handle_info({timeout, _Ref, check_confirmations}, State) ->
                         true ->
                             NewEntry = Entry#message_entry{counter = Counter + 1},
                             light_ets:store_message(NewEntry),
-                            send_msg(Pid, Entry#message_entry.message);
+			    Pid ! {events_server, utils:to_binary(Entry#message_entry.message)},
+			    ?INFO("[events_server] Sent message to ~p", [Pid]);
                         false ->
                             light_ets:delete_message(AtomicId, UserId)
                     end
@@ -241,7 +242,8 @@ send_to_subscribers(Subscribers, BucketId, AtomicId, Msg) ->
         fun({UserId, Pid, SessionId, _}) ->
             case erlang:is_process_alive(Pid) of
                 true ->
-                    send_msg(Pid, Msg),
+		    Pid ! {events_server, utils:to_binary(Msg)},
+		    ?INFO("[events_server] Sent message to ~p", [Pid]),
                     MessageEntry = #message_entry{
                         counter = 1,
                         session_id = SessionId,
@@ -256,12 +258,3 @@ send_to_subscribers(Subscribers, BucketId, AtomicId, Msg) ->
                     ?WARN("[events_server] Subscriber ~p (pid ~p) is dead", [UserId, Pid])
             end
         end, Subscribers).
-
-send_msg(Pid, Msg) ->
-    try
-        Pid ! {events_server, utils:to_binary(Msg)},
-        ?INFO("[events_server] Sent message to ~p", [Pid])
-    catch
-        error:Reason ->
-            ?ERROR("[events_server] Failed to send message to ~p: ~p", [Pid, Reason])
-    end.

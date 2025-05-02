@@ -122,6 +122,18 @@
     content_type        = undefined
 }).
 
+%% Message entry, contains the counter ( number of attempts ),
+%% pid ( to send terminate signal to ) and the message itself.
+-record(message_entry, {
+    counter = 0 :: integer(),
+    session_id = undefined :: string() | undefined,
+    user_id = undefined :: string() | undefined,
+    bucket_id = undefined :: string() | undefined,
+    atomic_id = undefined :: string() | undefined,
+    pid = undefined :: pid() | undefined,
+    message = undefined :: binary() | undefined
+}).
+
 -define(AUTH_NAME, pbkdf2_sha256).
 
 -define(ADMIN_USER, #user{
