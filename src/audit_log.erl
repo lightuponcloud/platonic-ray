@@ -55,7 +55,7 @@
         Context :: list()) -> ok | {error, rate_limit_exceeded}.
 log_operation(BucketId, Prefix, OperationName, Status, ObjectKeys, Context)
         when erlang:is_list(BucketId) andalso (erlang:is_list(Prefix) orelse Prefix =:= undefined) andalso
-             erlang:is_atom(OperationName) andalso erlang:is_list(Status) andalso
+             erlang:is_atom(OperationName) andalso (erlang:is_list(Status) orelse erlang:is_integer(Status)) andalso
              erlang:is_list(ObjectKeys) ->
     Timestamp = calendar:now_to_universal_time(os:timestamp()),
     gen_server:cast(?MODULE, {log, BucketId, Prefix, OperationName, Status, ObjectKeys, Context, Timestamp}).

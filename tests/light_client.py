@@ -1,7 +1,7 @@
 """
 LightUpon.cloud client for making HTTP requests.
 Server source code is available by the following URL.
-https://github.com/lightuponcloud/platonicray
+https://github.com/lightuponcloud/dubstack
 """
 import os
 import hashlib
@@ -13,7 +13,7 @@ from urllib.parse import urlencode, quote
 import requests
 from base64 import b64encode, b64decode
 
-from .dvvset import DVVSet
+from dvvset import DVVSet
 
 
 class LightClient:
@@ -120,7 +120,7 @@ class LightClient:
         if not self.token and not self.api_key:
             raise AssertionError("Authorization information is missing")
 
-        signature = self._get_signed_url("POST", bucket_id, prefix)
+        signature = self.get_signed_url("POST", bucket_id, prefix)
         if signature:
             multipart_form_data.update({"signature": signature})
 
@@ -246,7 +246,7 @@ class LightClient:
             url = "{}{}".format(url, prefix)
 
         params = {}
-        signature = self._get_signed_url("GET", bucket_id, prefix)
+        signature = self.get_signed_url("GET", bucket_id, prefix)
         if signature:
             params.update({"signature": signature})
         if show_deleted:
@@ -289,7 +289,7 @@ class LightClient:
                 prefix = prefix[:-1]
             url = "{}{}".format(url, prefix)
 
-        signature = self._get_signed_url("DELETE", bucket_id, prefix)
+        signature = self.get_signed_url("DELETE", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
 
@@ -328,7 +328,7 @@ class LightClient:
                 prefix = prefix[:-1]
             url = "{}{}".format(url, prefix)
 
-        signature = self._get_signed_url("PATCH", bucket_id, prefix)
+        signature = self.get_signed_url("PATCH", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
 
@@ -361,7 +361,7 @@ class LightClient:
                 prefix = prefix[:-1]
             url = "{}{}".format(url, prefix)
 
-        signature = self._get_signed_url("POST", bucket_id, prefix)
+        signature = self.get_signed_url("POST", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
 
@@ -394,7 +394,7 @@ class LightClient:
                 prefix = prefix[:-1]
             url = "{}{}".format(url, prefix)
 
-        signature = self._get_signed_url("PATCH", bucket_id, prefix)
+        signature = self.get_signed_url("PATCH", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
 
@@ -432,11 +432,11 @@ class LightClient:
             "dst_prefix": dst_prefix
         }
         url = "{}riak/move/{}/".format(self.url, src_bucket_id)
-        signature = self._get_signed_url("POST", src_bucket_id, src_prefix)
+        signature = self.get_signed_url("POST", src_bucket_id, src_prefix)
         if signature:
             data.update({
                 "src_signature": signature,
-                "dst_signature": self._get_signed_url("POST", dst_bucket_id, dst_prefix)
+                "dst_signature": self.get_signed_url("POST", dst_bucket_id, dst_prefix)
             })
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
@@ -475,11 +475,11 @@ class LightClient:
             "dst_prefix": dst_prefix
         }
         url = "{}riak/copy/{}/".format(self.url, src_bucket_id)
-        signature = self._get_signed_url("POST", src_bucket_id, src_prefix)
+        signature = self.get_signed_url("POST", src_bucket_id, src_prefix)
         if signature:
             data.update({
                 "src_signature": signature,
-                "dst_signature": self._get_signed_url("POST", dst_bucket_id, dst_prefix)
+                "dst_signature": self.get_signed_url("POST", dst_bucket_id, dst_prefix)
             })
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
@@ -513,7 +513,7 @@ class LightClient:
             "prefix": prefix
         }
         url = "{}riak/rename/{}/".format(self.url, bucket_id)
-        signature = self._get_signed_url("POST", bucket_id, prefix)
+        signature = self.get_signed_url("POST", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
         if self.token:
@@ -536,7 +536,7 @@ class LightClient:
                 prefix = prefix[:-1]
             url = "{}{}".format(url, prefix)
 
-        signature = self._get_signed_url("GET", bucket_id, prefix)
+        signature = self.get_signed_url("GET", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
         if self.token:
@@ -549,7 +549,7 @@ class LightClient:
 
         headers = {"content-type": "application/json"}
         url = "{}riak/version/{}/".format(self.url, bucket_id)
-        signature = self._get_signed_url("HEAD", bucket_id, "")
+        signature = self.get_signed_url("HEAD", bucket_id, "")
         if signature:
             url = "{}?signature={}".format(url, signature)
         if self.token:
@@ -569,7 +569,7 @@ class LightClient:
             url = "{}{}".format(url, prefix)
 
         url = "{}?object_key={}".format(url, object_key)
-        signature = self._get_signed_url("HEAD", bucket_id, prefix, object_key=object_key)
+        signature = self.get_signed_url("HEAD", bucket_id, prefix, object_key=object_key)
         if signature:
             url = "{}&signature={}".format(url, signature)
 
@@ -583,14 +583,14 @@ class LightClient:
 
         headers = {"content-type": "application/json"}
         url = "{}riak/action-log/{}/".format(self.url, bucket_id)
-        signature = self._get_signed_url("GET", bucket_id, prefix)
+        signature = self.get_signed_url("GET", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
         return requests.get(url, headers=headers)
 
-    def _get_signed_url(self, method, bucket_id, prefix, object_key=None):
+    def get_signed_url(self, method, bucket_id, prefix, object_key=None):
         signature = None
         if self.api_key:
             to_sign = bucket_id
@@ -603,12 +603,14 @@ class LightClient:
 
     def calculate_url_signature(self, method, path, qs):
         canonical_request = "{}\n{}\n{}".format(method, quote(path), qs)
-        # print("canonical_request: {}".format(canonical_request))
+        if "watermark" in path:
+            print("canonical_request: {}".format(canonical_request))
 
         canonical_request_hash = hashlib.sha256(canonical_request.encode()).hexdigest()
         string_to_sign = "HMAC-SHA256\n{}/s3/\n{}".format(self.region, canonical_request_hash)
 
-        # print("string_to_sign: {}".format(string_to_sign))
+        if "watermark" in path:
+            print("string_to_sign: {}".format(string_to_sign))
 
         region_key = hmac.new("LightUp{}".format(self.api_key).encode(), self.region.encode(), hashlib.sha256).digest()
         signing_key = hmac.new(region_key, b"s3", hashlib.sha256).digest()

@@ -23,7 +23,7 @@ init([]) ->
 		    type => worker,
 		    modules => []},
 		  #{id => events_server,
-		    start => {events_server_sup, start_link, []},
+		    start => {events_server, start_link, []},
 		    restart => permanent,
 		    shutdown => 10000,
 		    type => worker,

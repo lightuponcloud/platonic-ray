@@ -257,18 +257,7 @@
 %% Default: ".luc.lock"
 %%
 -define(DB_VERSION_LOCK_FILENAME, ".luc.lock").
-%%
-%% Action logs are stored in separate SQLite db, in every pseudo-directory.
-%%
-%% Default: ".action_log"
-%%
--define(ACTION_LOG_FILENAME, ".action_log").
-%%
-%% SQLite DB lock object key. If that file present, other processes can't overwrite db.
-%%
-%% Default: ".luc.lock"
-%%
--define(ACTION_LOG_LOCK_FILENAME, ".action_log.lock").
+
 %%
 %% The number of seconds lock can exist.
 %%

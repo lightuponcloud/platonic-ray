@@ -204,6 +204,7 @@ md5(IOData) ->
 calculate_url_signature(Method, Path, Qs, SecretAPIKey)
     when (Method =:= <<"GET">>) orelse
 	 (Method =:= <<"POST">>) orelse
+	 (Method =:= <<"PATCH">>) orelse
 	 (Method =:= <<"HEAD">>) orelse
 	 (Method =:= <<"DELETE">>) orelse
 	 (Method =:= <<"OPTIONS">>) orelse

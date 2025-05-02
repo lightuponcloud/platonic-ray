@@ -252,14 +252,13 @@ add_action_log_record(State) ->
     Version0 = proplists:get_value(version, State),
     Version1 = base64:encode(jsx:encode(Version0)),
 
-    UnicodeObjectKey = unicode:characters_to_list(OrigName),
-    Summary = <<"Uploaded \"", UnicodeObjectKey/binary, "\" ( ", (utils:to_binary(TotalBytes)), " )">>,
+    Summary = <<"Uploaded \"", OrigName/binary, "\" ( ", (utils:to_binary(TotalBytes))/binary, " )">>,
     audit_log:log_operation(
 	BucketId,
 	Prefix,
 	upload,
 	200,
-	[ObjectKey],
+	[utils:to_binary(ObjectKey)],
 	[{status_code, 200},
 	 {request_id, null},
 	 {time_to_response_ns, null},

@@ -22,20 +22,6 @@ class UploadTest(unittest.TestCase):
 
     def test_small_download_success(self):
         dir_name = "test-dir"
-        prefix = "d182d0b5d181d182/" #dir_name.encode().hex()
-        response = self.client.download_zip(TEST_BUCKET_1, prefix)
-        self.assertEqual(response.status_code, 200)
-        with open("output/out.zip", "wb") as fd:
-            fd.write(response.content)
-
-        with zipfile.ZipFile("output/out.zip", 'r') as zip_ref:
-            zip_ref.extractall("output")
-        print(1)
-        return
-
-
-
-        dir_name = "test-dir"
         response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name)
         self.assertEqual(response.status_code, 204)
 

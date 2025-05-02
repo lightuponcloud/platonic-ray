@@ -18,7 +18,7 @@ start(_Type, _Args) ->
 	    {"/riak/download-zip/[...]", zip_stream_handler, []},
 	    {"/riak/thumbnail/[...]", img_scale_handler, []},
 	    {"/riak/video/[:bucket_id]/", video_handler, []},
-	    {"/riak/version/[:bucket_id]/", version_handler, []},
+	    {"/riak/version/[...]/", version_handler, []},
 
 	    {"/riak/upload/[:bucket_id]/", upload_handler, []},
 	    {"/riak/upload/[:bucket_id]/[:upload_id]/[:part_num]/", upload_handler, []},
@@ -56,11 +56,12 @@ start(_Type, _Args) ->
 	    dispatch => Dispatch
 	}}),
     {ok, _} = pg:start(?SCOPE_PG),
+
+    light_ets:start_link(),  %% used for logging, lowercase transformation, pubsub
     [img:start_link(I) || I <- lists:seq(0, ?IMAGE_WORKERS - 1)],  %% scales images
-    [video_transcoding:start_link(I) || I <- lists:seq(0, ?VIDEO_WORKERS - 1)],  %% transcodes videos
+    [video_sup:start_link(I) || I <- lists:seq(0, ?VIDEO_WORKERS - 1)],  %% transcodes videos to webm
     sqlite_server:start_link(),  %% Puts changes to SQLite DB
     copy_server:start_link(),    %% Performs time-consuming copy/move operations
-    light_ets:start_link(),  %% loads unicode characters to memory for lowercase translation
     cleaner:start_link(),        %% Removes expired tokens
     application:ensure_all_started(oauth2c),
     middleware_sup:start_link().

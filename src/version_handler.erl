@@ -192,7 +192,7 @@ response(Req0, <<"POST">>, BucketId, Prefix, ObjectKey, User, Meta, Version, T0)
 			Prefix,
 			restored,
 			200,
-			[ObjectKey],
+			[utils:to_binary(ObjectKey)],
 			[{status_code, 200},
 			 {request_id, null},
 			 {time_to_response_ns, utils:to_float(T1-T0)/1000},

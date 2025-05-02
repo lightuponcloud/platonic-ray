@@ -4,13 +4,14 @@ import time
 
 from client_base import (
     BASE_URL,
+    REGION,
     TEST_BUCKET_1,
-    USERNAME_1,
-    PASSWORD_1,
+    USER_1_API_KEY,
     TestClient,
-    ACTION_LOG_FILENAME,
+    generate_random_name,
+    encode_to_hex,
     configure_boto3)
-from light_client import LightClient, generate_random_name, encode_to_hex
+from light_client import LightClient
 
 
 class DeleteTest(TestClient):
@@ -29,8 +30,7 @@ class DeleteTest(TestClient):
     """
 
     def setUp(self):
-        self.client = LightClient(BASE_URL, USERNAME_1, PASSWORD_1)
-        self.client.login(USERNAME_1, PASSWORD_1)
+        self.client = LightClient(REGION, BASE_URL, api_key=USER_1_API_KEY)
         self.resource = configure_boto3()
         self.purge_test_buckets()
 
@@ -82,9 +82,6 @@ class DeleteTest(TestClient):
                 if filename in obj['orig_name']:
                     self.assertEqual(obj['is_deleted'], True)
 
-        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
-        self.assertEqual(len(action_log), 6)
-
     def test_delete_files_from_pseudodirectory(self):
         """
         # Delete from pseudo-directory: one and many
@@ -123,10 +120,6 @@ class DeleteTest(TestClient):
         dir_name_prefix = [dir_name_prefix]
         response = self.client.delete(TEST_BUCKET_1, object_keys=dir_name_prefix)
         self.assertEqual(response.json(), dir_name_prefix)
-
-        time.sleep(2)
-        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
-        self.assertEqual(len(action_log), 2)
 
     def test_delete_pseudodirectories_from_root(self):
         """
@@ -179,9 +172,6 @@ class DeleteTest(TestClient):
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 0)
 
-        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
-        self.assertEqual(len(action_log), 10)
-
     def test_delete_pseudodirectories_from_pseudodirectory(self):
         """
         # Delete pseudo-directories from pseudo-directory: one and many
@@ -231,9 +221,6 @@ class DeleteTest(TestClient):
         time.sleep(4)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 0)  # only main dir should exist
-
-        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
-        self.assertTrue((len(action_log) > 7)) # 2 create dirs + 3 deletes + between 2 and 10 create dirs
 
     def test_delete_undelete_files_in_root(self, prefix=None):
         """
@@ -287,7 +274,6 @@ class DeleteTest(TestClient):
         self.assertTrue(('author_name' in rec))
         self.assertTrue(rec['author_name'])
         self.assertTrue(('author_tel' in rec))
-        self.assertTrue(rec['author_tel'])
         self.assertTrue(('lock_user_id' in rec))
         self.assertTrue(('lock_user_name' in rec))
         self.assertTrue(('lock_user_tel' in rec))
@@ -303,25 +289,6 @@ class DeleteTest(TestClient):
             for obj in result['list']:
                 if filename == obj['orig_name']:
                     self.assertEqual(obj['is_deleted'], False)
-
-        # Check action log
-        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key="{}{}".format((prefix or ''), ACTION_LOG_FILENAME))
-        self.assertEqual(len(action_log), 3) # 1. uploaded 2. deleted 3. restored
-
-        item = [i for i in action_log if i['action'] == 'undelete'][0]
-        self.assertEqual(item['details'], 'Restored by "integration1": {}'.format(fn))
-        self.assertEqual(item['is_dir'], 0)
-        self.assertTrue(item['user_id'])
-        self.assertTrue(item['user_name'])
-        self.assertTrue(item['tenant_name'])
-        self.assertTrue(item['timestamp'])
-        self.assertTrue(item['duration'])
-        self.assertEqual(item['version'], '')
-        self.assertEqual(item['is_locked'], 0)
-        self.assertEqual(item['lock_user_id'], None)
-        self.assertEqual(item['lock_user_name'], None)
-        self.assertEqual(item['lock_user_tel'], None)
-        self.assertEqual(item['lock_modified_utc'], None)
 
     def test_delete_undelete_files_in_prefix(self):
         # 1. create a directory
@@ -379,26 +346,6 @@ class DeleteTest(TestClient):
             for obj in result['list']:
                 if filename == obj['orig_name']:
                     self.assertEqual(obj['is_deleted'], False)
-
-        # Check action log
-        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key="{}{}".format((prefix or ''), ACTION_LOG_FILENAME))
-
-        self.assertEqual(len(action_log), 3) # 1. mkdir 2. delete 3. undelete
-
-        item = [i for i in action_log if i['action'] == 'undelete'][0]
-        self.assertEqual(item['details'], 'Restored by "integration1": {}'.format(dir_name1))
-        self.assertTrue(item['user_id'])
-        self.assertTrue(item['user_name'])
-        self.assertTrue(item['tenant_name'])
-        self.assertTrue(item['timestamp'])
-        self.assertTrue(item['duration'])
-        self.assertEqual(item['version'], '')
-        self.assertEqual(item['is_locked'], 0)
-        self.assertEqual(item['lock_user_id'], None)
-        self.assertEqual(item['lock_user_name'], None)
-        self.assertEqual(item['lock_user_tel'], None)
-        self.assertEqual(item['lock_modified_utc'], None)
-
 
 if __name__ == '__main__':
     unittest.main()

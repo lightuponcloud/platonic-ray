@@ -7,9 +7,7 @@ import requests
 from client_base import (
     BASE_URL,
     TEST_BUCKET_1,
-    USERNAME_1,
-    PASSWORD_1,
-    ACTION_LOG_FILENAME,
+    USER_1_API_KEY,
     REGION,
     configure_boto3,
     TestClient)
@@ -21,7 +19,7 @@ class ListTest(TestClient):
     Make sure listing available to authenticated users OR by signature.
     """
     def setUp(self):
-        self.client = LightClient(BASE_URL, USERNAME_1, PASSWORD_1)
+        self.client = LightClient(REGION, BASE_URL, api_key=USER_1_API_KEY)
         self.resource = configure_boto3()
         self.purge_test_buckets()
 
@@ -39,9 +37,6 @@ class ListTest(TestClient):
         self.assertEqual(result[0]["orig_name"], fn)
         self.assertEqual(result[0]["is_dir"], 0)
 
-        action_log = self.check_sql(TEST_BUCKET_1, "SELECT * FROM actions", db_key=ACTION_LOG_FILENAME)
-        self.assertEqual(len(action_log), 1)
-
         # use admin API key to fetch tenants
         api_key = os.getenv("ADMIN_API_KEY")
 
@@ -54,7 +49,7 @@ class ListTest(TestClient):
         assert tenant
         api_key = tenant[0]['api_key']
 
-        signature = self.client.calculate_url_signature(REGION, "get", TEST_BUCKET_1, "", api_key)
+        signature = self.client.calculate_url_signature("get", TEST_BUCKET_1, "")
 
         url = "{}/riak/list/{}/?signature={}".format(BASE_URL, TEST_BUCKET_1, signature)
         response = requests.get(url, timeout=2)

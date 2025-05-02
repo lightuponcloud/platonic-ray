@@ -5,13 +5,13 @@ from client_base import (
     BASE_URL,
     TEST_BUCKET_1,
     TEST_BUCKET_3,
-    USERNAME_1,
-    PASSWORD_1,
+    USER_1_API_KEY,
+    generate_random_name,
+    encode_to_hex,
     USERNAME_2,
     PASSWORD_2,
-    ACTION_LOG_FILENAME,
     TestClient)
-from light_client import LightClient, generate_random_name, encode_to_hex
+from light_client import LightClient, 
 
 
 class LockTest(TestClient):
@@ -50,7 +50,7 @@ class LockTest(TestClient):
 
     def setUp(self):
         super(LockTest, self).setUp()
-        self.client = LightClient(BASE_URL, USERNAME_1, PASSWORD_1)
+        self.client = LightClient(REGION, BASE_URL, api_key=USER_1_API_KEY)
 
     def test_lock(self):
         """

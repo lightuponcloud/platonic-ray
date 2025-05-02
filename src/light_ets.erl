@@ -95,7 +95,7 @@ store_message(MessageEntry) when is_record(MessageEntry, message_entry) ->
 delete_message(AtomicId, UserId) when is_list(AtomicId), is_list(UserId) ->
     gen_server:cast(?MODULE, {delete_message, AtomicId, UserId}).
 
-get_messages_by_user(UserId) when is_list(UserId) ->
+get_messages_by_user(UserId) when is_list(UserId) orelse UserId =:= '_' ->
     gen_server:call(?MODULE, {get_messages_by_user, UserId}).
 
 %% Utility Functions
@@ -314,6 +314,9 @@ handle_call({get_subscribers_by_bucket, BucketId}, _From, #state{subscribers_ets
     Filtered = [S || S <- Subscribers, lists:member(BucketId, element(4, S))],
     {reply, Filtered, State};
 
+handle_call({get_messages_by_user, '_'}, _From, #state{messages_ets = Ets} = State) ->
+    Messages = ets:tab2list(Ets),
+    {reply, Messages, State};
 handle_call({get_messages_by_user, UserId}, _From, #state{messages_ets = Ets} = State) ->
     Messages = ets:match_object(Ets, {'$1', #message_entry{user_id = UserId, _ = '_'}}),
     {reply, Messages, State};

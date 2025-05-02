@@ -66,6 +66,5 @@ class AuthTest(TestClient):
 
         response = self.get_json(url, headers={"content-type": "application/json"}, status=405)
 
-
 if __name__ == "__main__":
     unittest.main()
