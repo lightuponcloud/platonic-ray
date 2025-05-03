@@ -32,7 +32,6 @@
     http_listen_port => integer(),
     locale => string(),
     admin_api_key => string() %% If set, admin key allows applications to perform CRUD operations on tenants and users.
-
 }.
 
 -record(general_settings, {

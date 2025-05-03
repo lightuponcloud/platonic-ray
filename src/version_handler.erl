@@ -99,32 +99,27 @@ init(Req0, _Opts) ->
 		%% prefix should go just after bucket id
 		erlang:binary_to_list(utils:join_binary_with_separator(lists:nthtail(1, PathInfo), <<"/">>))
 	end,
-    ParsedQs = cowboy_req:parse_qs(Req0),
-    PresentedSignature =
-	case proplists:get_value(<<"signature">>, ParsedQs) of
-	    undefined -> undefined;
-	    Signature -> unicode:characters_to_list(Signature)
-	end,
     Method = cowboy_req:method(Req0),
-    case download_handler:has_access(Req0, BucketId0, Prefix0, undefined, PresentedSignature) of
-	{error, Number} ->
-	    Req1 = cowboy_req:reply(403, #{
-		<<"content-type">> => <<"application/json">>,
-		<<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
-	    }, jsx:encode([{error, Number}]), Req0),
-	    {ok, Req1, []};
-	{BucketId1, Prefix1, _ObjectKey, User} ->
-	    case cowboy_req:method(Req0) of
-		<<"POST">> ->
-		    {ok, Body, Req1} = cowboy_req:read_body(Req0),
-		    case validate_post(Body, BucketId1, Prefix0) of
-			{error, Number} -> js_handler:bad_request(Req1, Number);
-			{Prefix1, ObjectKey, Version, Meta} ->
-			    response(Req1, <<"POST">>, BucketId1, Prefix1, ObjectKey, User, Meta, Version, T0)
-		    end;
-		Method -> response(Req0, Method, BucketId1, User, T0)
+    case utils:get_token(Req0) of
+	undefined -> js_handler:unauthorized(Req0, 28, stop);
+	Token ->
+	    case login_handler:check_token(Token) of
+		not_found -> js_handler:unauthorized(Req0, 28);
+		expired -> js_handler:unauthorized(Req0, 28);
+		User ->
+		    case cowboy_req:method(Req0) of
+			<<"POST">> ->
+			    {ok, Body, Req1} = cowboy_req:read_body(Req0),
+			    case validate_post(Body, BucketId0, Prefix0) of
+				{error, Number} -> js_handler:bad_request(Req1, Number);
+				{Prefix1, ObjectKey, Version, Meta} ->
+				    response(Req1, <<"POST">>, BucketId0, Prefix1, ObjectKey, User, Meta, Version, T0)
+			    end;
+			Method -> response(Req0, Method, BucketId0, User, T0)
+		    end
 	    end
     end.
+
 
 %% HEAD HTTP request returns DVV in JSON format
 response(Req0, <<"HEAD">>, BucketId, User, T0) ->

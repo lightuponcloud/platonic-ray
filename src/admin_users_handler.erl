@@ -85,7 +85,11 @@ user_to_proplist(User) ->
 	     {available_bytes, -1},  %% TODO: to store and display used and available bytes
 	     {bucket_id, erlang:list_to_binary(lists:concat([?BACKEND_PREFIX, "-", User#user.tenant_id, "-", G#group.id, "-", ?RESTRICTED_BUCKET_SUFFIX]))},
 	     {bucket_suffix, erlang:list_to_binary(?RESTRICTED_BUCKET_SUFFIX)}
-	    ] || G <- User#user.groups]}
+	    ] || G <- User#user.groups]},
+	{clients, [
+	    [{user_id, erlang:list_to_binary(C#client.user_id)},
+	     {api_key, erlang:list_to_binary(C#client.api_key)}
+	    ] || C <- User#user.clients]}
     ].
 
 %%
@@ -187,8 +191,13 @@ parse_user(RootElement) ->
     GetGroupAttrs = fun(N) ->
 	#group{id = erlcloud_xml:get_text("/group/id", N),
 	    name = erlcloud_xml:get_text("/group/name", N)} end,
+    GetClientAttrs = fun(N) ->
+	#client{user_id = erlcloud_xml:get_text("/client/user_id", N),
+		api_key = erlcloud_xml:get_text("/client/api_key", N)} end,
     Groups = [GetGroupAttrs(I) ||
 	I <- xmerl_xpath:string("/user/record/groups/group", RootElement)],
+    Clients = [GetClientAttrs(I) ||
+	I <- xmerl_xpath:string("/user/record/clients/client", RootElement)],
     Salt = erlcloud_xml:get_text("/user/record/salt", RootElement),
     #user{
 	id = UserId,
@@ -202,7 +211,8 @@ parse_user(RootElement) ->
 	hash_type = HashType,
 	enabled = IsEnabled,
 	staff = IsStaff,
-	groups = Groups
+	groups = Groups,
+	clients = Clients
     }.
 
 %%
@@ -345,6 +355,10 @@ new_user(Req0, User0) ->
 			    {id, [G#group.id]},
 			    {name, [G#group.name]}
 			]} || G <- User0#user.groups],
+	    Clients = [{client, [
+			    {user_id, [C#client.user_id]},
+			    {api_key, [C#client.api_key]}
+			]} || C <- User0#user.clients],
 	    Tel =
 		case User0#user.tel of
 		    undefined -> "";
@@ -363,7 +377,8 @@ new_user(Req0, User0) ->
 			{enabled, [utils:to_list(User0#user.enabled)]},
 			{staff, [utils:to_list(User0#user.staff)]},
 			{date_updated, Timestamp},
-			{groups, Groups}
+			{groups, Groups},
+			{clients, Clients}
 	    ]},
 	    RootElement0 = #xmlElement{name=user, content=[User1]},
 	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
@@ -405,6 +420,8 @@ edit_user(Req0, User) ->
     Timestamp = io_lib:format("~p", [utils:timestamp()]),
     Groups = [{group, [{id, [G#group.id]},
 		       {name, [G#group.name]}]} || G <- User#user.groups],
+    Clients = [{client, [{user_id, [C#client.user_id]},
+			 {api_key, [C#client.api_key]}]} || C <- User#user.clients],
     Tel =
 	case User#user.tel of
 	    undefined -> "";
@@ -424,7 +441,8 @@ edit_user(Req0, User) ->
 	    {enabled, [utils:to_list(User#user.enabled)]},
 	    {staff, [utils:to_list(User#user.staff)]},
 	    {date_updated, Timestamp},
-	    {groups, Groups}
+	    {groups, Groups},
+	    {clients, Clients}
 	]},
     RootElement0 = #xmlElement{name=user, content=[EditedUser]},
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
@@ -536,6 +554,8 @@ validate_group_ids(GroupIds0, TenantGroups) when erlang:is_binary(GroupIds0) ->
 	    end
     end.
 
+validate_clients(Clients0) when erlang:is_list(Clients0) -> [].
+
 %%
 %% Checks the user JSON
 %%
@@ -554,11 +574,12 @@ validate_post(Tenant, Body) ->
 	    Password0 = validate_password(proplists:get_value(<<"password">>, FieldValues)),
 	    UserName0 = validate_user_name(proplists:get_value(<<"name">>, FieldValues), required),
 	    Groups0 = validate_group_ids(proplists:get_value(<<"groups">>, FieldValues), Tenant#tenant.groups),
+	    Clients = validate_clients(proplists:get_value(<<"clients">>, FieldValues)),
 	    IsEnabled0 = admin_tenants_handler:validate_boolean(
 		proplists:get_value(<<"enabled">>, FieldValues), enabled, true),
 	    IsStaff0 = admin_tenants_handler:validate_boolean(
 		proplists:get_value(<<"staff">>, FieldValues), staff, false),
-	    Errors = [element(2, F) || F <- [Login0, Password0, UserName0, Groups0, IsEnabled0, IsStaff0],
+	    Errors = [element(2, F) || F <- [Login0, Password0, UserName0, Groups0, Clients, IsEnabled0, IsStaff0],
 			element(1, F) =:= error],
 	    case length(Errors) > 0 of
 		true -> {error, Errors};
@@ -578,7 +599,8 @@ validate_post(Tenant, Body) ->
 			hash_type = HashType,
 			enabled = IsEnabled0,
 			staff = IsStaff0,
-			groups = Groups0
+			groups = Groups0,
+			clients = Clients
 		    }
 	    end
     end.
@@ -602,12 +624,13 @@ validate_patch(User, Tenant, Body) ->
 	    Tel0 = validate_tel(proplists:get_value(<<"tel">>, FieldValues)),
 	    Password0 = validate_password(proplists:get_value(<<"password">>, FieldValues)),
 	    Groups0 = validate_group_ids(proplists:get_value(<<"groups">>, FieldValues), Tenant#tenant.groups),
+	    Clients = validate_clients(proplists:get_value(<<"clients">>, FieldValues)),
 	    IsEnabled0 = admin_tenants_handler:validate_boolean(
 		proplists:get_value(<<"enabled">>, FieldValues), enabled, User#user.enabled),
 	    IsStaff0 = admin_tenants_handler:validate_boolean(
 		proplists:get_value(<<"staff">>, FieldValues), staff, User#user.staff),
-
-	    Errors = [element(2, F) || F <- [Login0, Password0, UserName0, Groups0, IsEnabled0, IsStaff0],
+	    APIKey = crypto_utils:validate_guid(proplists:get_value(<<"api_key">>, FieldValues)),
+	    Errors = [element(2, F) || F <- [Login0, Password0, UserName0, Groups0, APIKey, IsEnabled0, IsStaff0],
 			element(1, F) =:= error],
 	    case length(Errors) > 0 of
 		true -> {error, Errors};
@@ -639,7 +662,8 @@ validate_patch(User, Tenant, Body) ->
 			hash_type = HashType1,
 			enabled = IsEnabled0,
 			staff = IsStaff0,
-			groups = Groups1
+			groups = Groups1,
+			clients = Clients
 		    }
 	    end
     end.

@@ -33,7 +33,7 @@ function parse_user_form_error(data){
     }
 }
 
-function submit_change(user_id, tenant_id){
+function submit_change(user_id, tenant_id, api_key){
     $('#id-dialog-loading-message-text').empty();
     $('#id-user-form .err').empty();
     $("#submit_change").attr("disabled","disabled");
@@ -68,7 +68,8 @@ function submit_change(user_id, tenant_id){
 	'name': name,
 	'groups': groups,
 	'enabled': enabled,
-	'staff': staff
+	'staff': staff,
+	'api_key': api_key
     };
     request(url, method, form_data, '{{ token }}', function(data, status, jqXHR){
 	    $("#submit_change").attr("disabled",false);
@@ -137,6 +138,7 @@ function edit_user(e, user_id){
  var groups="";
  var enabled;
  var staff;
+ var api_key="";
  if(user_id){
     login=$('input[name="login_'+user_id+'"]').val();
     tel=$('input[name="tel_'+user_id+'"]').val();
@@ -144,6 +146,7 @@ function edit_user(e, user_id){
     groups=$('input[name="groups_'+user_id+'"]').val().split(',');
     enabled=$('input[name="enabled_'+user_id+'"]').val();
     staff=$('input[name="staff_'+user_id+'"]').val();
+    api_key=$('input[name="api_key_'+user_id+'"]').val();
  }
 
  var groups_input='';
@@ -159,6 +162,7 @@ function edit_user(e, user_id){
     var group_name=group_names[i];
     groups_input+='<input type="checkbox" name="group_'+group_ids[i]+'" /> '+group_name+'<br/>';
  }
+ if(api_key=='') api_key=guid();
  var user_form = '<form method="POST" id="id-user-form" name="user_form" > \
 <h3><span id="id-dialog-block-header"></span></h3> \
 <div class="row"><label for="id_login">Login:</label><div><input name="login" id="id_login" value="'+login+'" class="custom-input-194x31" autofocus/> \
@@ -170,6 +174,8 @@ function edit_user(e, user_id){
 <div class="row"><label for="id_tel">Telephone:</label><div><input name="tel" id="id_tel" value="'+tel+'" class="custom-input-194x31" autofocus/></div></div> \
 <div class="row"><label for="id_groups">Groups:</label><div id="id_groups"><input type="checkbox" id="id-select-all-groups"/> <b>'+gettext("Select all")+'</b><br/>'+groups_input+' \
 <div style="margin-top:14px;"><span class="err" id="id_groups_errors"></span></div></div></div> \
+<div class="row"><label for="id_api_key">API Key:</label><div><input name="api_key_'+user_id+'" id="id_api_key" value="'+api_key+'" class="custom-input-194x31" readonly /> \
+<div style="margin-top:14px;"><span class="err" id="id_api_key_error"></span></div></div></div> \
 <input type="checkbox" id="id_enabled" name="enabled" '+(enabled=="true"?"checked=checked":"")+'> '+gettext("Enabled")+'<br/> \
 <br/><input type="checkbox" id="id_staff" name="staff" '+(staff=="true"?"checked=checked":"")+'> '+gettext("Staff")+'<br/> \
 <div><div style="margin-top:14px;"><span class="err" id="id_errors"></span></div> \
@@ -225,7 +231,8 @@ function edit_user(e, user_id){
  $('#submit_change').unbind().click(function(){
     var tenant_id;
     if(user_id) tenant_id=$('input[name="tenant_id_'+user_id+'"]').val();
-    submit_change(user_id, tenant_id);
+    var api_key=$('#id_api_key').val();
+    submit_change(user_id, tenant_id, api_key);
     return false;
  });
  return false;
@@ -279,16 +286,12 @@ $('body').on('click', 'a[id^=id-delete-user_]', function(e){
 {% if path_tenant %}
 function submit_tenant(e){
  var groups=$('input[name=tenant_group_names]').val();
- var api_key = '{% if path_tenant.api_key == "undefined" %}{% else %}{{ path_tenant.api_key }}{% endif %}';
- if(api_key=='') api_key=guid();
  var enabled = {{ path_tenant.enabled }};
  var tenant_form = '<form method="POST" id="id-tenant-form" name="tenant_form" > \
 <h3><span id="id-dialog-block-header"></span></h3><br/> \
 <div class="row"><label for="id_groups">Groups:</label><div><textarea name="groups" id="id_groups" rows="7" cols="22" style="width:auto !important;">'+groups+'</textarea> \
 <br/><span class="help_text">Comma-delimited list of groups.</span> \
 <div style="margin-top:14px;"><span class="err" id="id_groups_errors"></span></div></div></div> \
-<div class="row"><label for="id_api_key">API Key:</label><div><input name="api_key" id="id_api_key" value="'+api_key+'" class="custom-input-194x31" readonly /> \
-<div style="margin-top:14px;"><span class="err" id="id_api_key_error"></span></div></div></div> \
 <br/><input type="checkbox" id="id_enabled" name="enabled" '+(enabled==true?"checked=checked":"")+'> Enabled<br/> \
 <div><div style="margin-top:14px;"><span class="err" id="id_errors"></span></div> \
 <div class="row"><label for="submit_change"><span id="id-dialog-loading-message-text"></span></label><div> \
@@ -331,14 +334,12 @@ function submit_tenant(e){
     $("#submit_change").attr("disabled","disabled");
 
     var groups=$('#id_groups').val();
-    var api_key=$('#id_api_key').val();
     var enabled=false;
     if($('input[name="enabled"]').is(':checked')) enabled=true;
 
     if(isMobile.any() || $(window).width()<670){$("#shadow").append('<span>Two moments please...</span>').css('z-index','1003').show();}
     var form_data = {
 	'groups': groups,
-	'api_key': api_key,
 	'enabled': enabled,
     };
     request('{{ root_path }}admin/tenants/{{ path_tenant.id }}/', 'PATCH', form_data, '{{ token }}', function(data, status, jqXHR){

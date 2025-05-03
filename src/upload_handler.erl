@@ -363,11 +363,6 @@ handle_post(Req0, State) ->
 	<<"POST">> ->
 	    {FieldValues, Req1} = acc_multipart(Req0, []),
 	    FileName0 = validate_filename(filename:basename(proplists:get_value(filename, FieldValues))),
-	    PresentedSignature =
-		case proplists:get_value(signature, FieldValues) of
-		    undefined -> undefined;
-		    Signature -> unicode:characters_to_list(Signature)
-		end,
 	    BucketId =
 		case cowboy_req:binding(bucket_id, Req0) of
 		    undefined -> undefined;
@@ -405,24 +400,29 @@ handle_post(Req0, State) ->
 	    case lists:keyfind(error, 1, [FileName0, Prefix0, GUID, Version, DataSizeOk, TotalBytes, Md5, Etags]) of
 		{error, Number0} -> js_handler:bad_request(Req1, Number0);
 		false ->
-		    case download_handler:has_access(Req0, BucketId, Prefix0, undefined, PresentedSignature) of
-			{error, Number1} -> js_handler:bad_request(Req1, Number1);
-			{_BucketId, _Prefix, _ObjectKey, U} ->
-			    NewState = [
-				{user, U},
-				{bucket_id, BucketId},
-				{etags, Etags},
-				{prefix, Prefix0},
-				{file_name, FileName0},
-				{version, Version},
-				{md5, Md5},
-				{guid, GUID},
-				{upload_time, UploadTime},
-				{width, Width1},
-				{height, Height1}
-			    ] ++ State,
-			    %% If object is locked and current user is not owner of the lock, return lock info
-			    lock_check(Req0, NewState, Blob)
+		    case utils:get_token(Req0) of
+			undefined -> js_handler:unauthorized(Req0, 28, stop);
+			Token ->
+			    case login_handler:check_token(Token) of
+				not_found -> js_handler:unauthorized(Req0, 28);
+				expired -> js_handler:unauthorized(Req0, 28);
+				User ->
+				    NewState = [
+					{user, User},
+					{bucket_id, BucketId},
+					{etags, Etags},
+					{prefix, Prefix0},
+					{file_name, FileName0},
+					{version, Version},
+					{md5, Md5},
+					{guid, GUID},
+					{upload_time, UploadTime},
+					{width, Width1},
+					{height, Height1}
+				    ] ++ State,
+				    %% If object is locked and current user is not owner of the lock, return lock info
+				    lock_check(Req0, NewState, Blob)
+			    end
 		    end
 	    end;
 	_ -> js_handler:bad_request(Req0, 2)

@@ -7,9 +7,9 @@
 -type tenant() :: #{
     id          => string(),
     name        => string(),
-    api_key     => string(),
     enabled     => boolean(),
-    groups      => list()
+    groups      => list(),
+    api_key     => string()
 }.
 
 -type group() :: #{
@@ -27,7 +27,13 @@
     tel         => string(),
     enabled     => boolean(),
     staff       => boolean(),
-    groups      => list()
+    groups      => list(),
+    clients     => list()
+}.
+
+-type client() :: #{
+    api_key     => string(),
+    user_id     => string()
 }.
 
 %%
@@ -73,9 +79,9 @@
 -record(tenant, {
     id          = ""::string(),
     name        = ""::string(),
-    api_key     = ""::string(),
     enabled     = true::boolean(),
-    groups      = []::list()  %% Grous within that project
+    groups      = []::list(),  %% Grous within that project
+    api_key     = ""::string()
 }).
 
 -record(user, {
@@ -91,7 +97,13 @@
     hash_type      = ""::string(),
     enabled        = true::boolean(),
     staff          = false::boolean(),
-    groups         = []::list()  %% Groups user belongs to
+    groups         = []::list(),  %% Groups user belongs to
+    clients        = []::list()  %% API clients
+}).
+
+-record(client, {
+    api_key        = ""::string(),
+    user_id        = ""::string()
 }).
 
 -record(group, {

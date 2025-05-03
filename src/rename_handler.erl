@@ -494,6 +494,15 @@ allowed_methods(Req, State) ->
 %% ( called after 'allowed_methods()' )
 %%
 is_authorized(Req0, _State) ->
+    case utils:get_token(Req0) of
+	undefined -> js_handler:unauthorized(Req0, 28, stop);
+	Token -> login_handler:get_user_or_error(Req0, Token)
+    end.
+
+%%
+%% ( called after 'is_authorized()' )
+%%
+forbidden(Req0, User) ->
     PathInfo = cowboy_req:path_info(Req0),
     ParsedQs = cowboy_req:parse_qs(Req0),
     BucketId =
@@ -509,24 +518,9 @@ is_authorized(Req0, _State) ->
 		%% prefix should go just after bucket id
 		erlang:binary_to_list(utils:join_binary_with_separator(lists:nthtail(1, PathInfo), <<"/">>))
 	end,
-    PresentedSignature =
-	case proplists:get_value(<<"signature">>, ParsedQs) of
-	    undefined -> undefined;
-	    Signature -> unicode:characters_to_list(Signature)
-	end,
-    case download_handler:has_access(Req0, BucketId, Prefix, undefined, PresentedSignature) of
-	{error, Number} -> js_handler:unauthorized(Req0, Number, stop);
-	{BucketId, Prefix, _ObjectKey, User} ->
-	    {true, Req0, [
+    {false, Req0, [
+		{user, User},
 		{bucket_id, BucketId},
 		{prefix, Prefix},
-		{parsed_qs, ParsedQs},
-		{user, User}
-	    ]}
-    end.
-
-%%
-%% ( called after 'is_authorized()' )
-%%
-forbidden(Req0, State) ->
-    {false, Req0, State}.
+		{parsed_qs, ParsedQs}
+	    ]}.
