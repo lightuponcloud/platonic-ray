@@ -5,7 +5,6 @@ import zipfile
 from client_base import (
     BASE_URL,
     TEST_BUCKET_1,
-    ACTION_LOG_FILENAME,
     USER_1_API_KEY,
     REGION,
     configure_boto3)
