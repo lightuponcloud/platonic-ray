@@ -167,7 +167,11 @@ fetch_full_list_recursively(BucketId, Prefix0) ->
     Prefix1 =
 	case utils:ends_with(Prefix0, <<"/">>) of
 	    true -> Prefix0;
-	    false -> Prefix0 ++ "/"
+	    false ->
+		case Prefix0 of
+		    undefined -> false;
+		    _ -> Prefix0 ++ "/"
+		end
 	end,
     DirPath0 = utils:unhex_path(Prefix1),
     DirPath1 = unicode:characters_to_binary(lists:flatten(DirPath0)),
