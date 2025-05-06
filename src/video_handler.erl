@@ -78,7 +78,7 @@ to_response(Req0, State) ->
     T0 = utils:timestamp(),
     BucketId = proplists:get_value(bucket_id, State),
     ParsedQs = cowboy_req:parse_qs(Req0),
-    Prefix = list_handler:validate_prefix(BucketId, proplists:get_value(<<"prefix">>, ParsedQs)),
+    Prefix = object_handler:validate_prefix(BucketId, proplists:get_value(<<"prefix">>, ParsedQs)),
     ObjectKey0 =
 	case proplists:get_value(<<"object_key">>, ParsedQs) of
 	    undefined -> {error, 8};

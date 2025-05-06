@@ -40,12 +40,12 @@ content_types_accepted(Req, State) ->
 %% If object key ends with "/", it checks this prefix as well.
 %%
 validate_src_object_key(BucketId, Prefix0, SrcObjectKey0) ->
-    case list_handler:validate_prefix(BucketId, Prefix0) of
+    case object_handler:validate_prefix(BucketId, Prefix0) of
 	{error, Number0} -> {error, Number0};
 	Prefix1 ->
 	    case utils:ends_with(SrcObjectKey0, <<"/">>) of
 		true ->
-		    case list_handler:validate_prefix(BucketId,
+		    case object_handler:validate_prefix(BucketId,
 			    utils:prefixed_object_key(Prefix0, SrcObjectKey0)) of
 			{error, Number1} -> {error, Number1};
 			SrcObjectKey1 -> {Prefix1, SrcObjectKey1}
@@ -99,7 +99,7 @@ validate_src_dst_name(BucketId, Prefix, SrcObjectKey, DstName0, IndexContent)
 	PrefixedDstName ->
            case utils:ends_with(SrcObjectKey, <<"/">>) of
                true ->
-		    case list_handler:validate_prefix(BucketId, SrcObjectKey) of
+		    case object_handler:validate_prefix(BucketId, SrcObjectKey) of
 			{error, Number} -> {error, Number};
 			SrcPrefix -> {SrcPrefix, PrefixedDstName}
 		    end;
@@ -334,12 +334,12 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
     case ExistingObject0 of
 	undefined ->
 	    %% rename only if no such object with the same name exists
-	    case list_handler:is_locked_for_user(BucketId, Prefix0, SrcObjectKey0, User#user.id) of
+	    case object_handler:is_locked_for_user(BucketId, Prefix0, SrcObjectKey0, User#user.id) of
 		{error, not_found} -> not_found;
 		{error, Number} -> {error, Number};
 		{true, _} -> {error, 43};
 		{false, Metadata0} ->
-		    Meta = list_handler:parse_object_record(Metadata0, [{orig_name, utils:hex(OrigName0)}]),
+		    Meta = object_handler:parse_object_record(Metadata0, [{orig_name, utils:hex(OrigName0)}]),
 		    case s3_api:put_object(BucketId, Prefix0, ObjectKey0, <<>>, [{meta, Meta}]) of
 			{error, Reason3} ->
 			    lager:error("[rename_handler] Can't put object ~p/~p/~p: ~p",
@@ -382,7 +382,7 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 					 {environment, null},
 					 {compliance_metadata, [{orig_name, PreviousOrigName}, {summary, Summary}]}]
 				    ),
-				    Metadata1 = list_handler:parse_object_record(Metadata0, [
+				    Metadata1 = object_handler:parse_object_record(Metadata0, [
 					{orig_name, unicode:characters_to_binary(OrigName0)}]),
 				    {ObjectKey0, Metadata1, SQL}
 			    end

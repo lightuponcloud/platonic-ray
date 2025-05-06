@@ -24,11 +24,8 @@
 
 -include("log.hrl").
 -include("entities.hrl").
+-include("ets_tables.hrl").
 
--define(VIDEO_TRANSCODE_QUEUE, video_transcode_queue).
--define(SUBSCRIBERS_TABLE, subscribers).
--define(MESSAGES_TABLE, messages).
--define(BUCKET_NODES_TABLE, bucket_nodes).
 -define(MAX_QUEUE_SIZE, 10_000). % From video_transcoding
 -define(PMAP_WORKERS, 4).        % From video_transcoding
 
@@ -56,7 +53,7 @@ log_operation(Operation, Details) ->
 
 %% Get the size of the log queue from light_ets
 get_queue_size(QueueName) when is_atom(QueueName) ->
-    case ets:lookup(log_queue, QueueName) of
+    case ets:lookup(?LOG_QUEUE, QueueName) of
         [] -> 0;
         [{QueueName, Entries}] -> length(Entries)
     end.
@@ -174,7 +171,7 @@ load_unicode_mapping() ->
     AppDir = filename:dirname(EbinDir),
     FilePath = filename:join([AppDir, "priv", "UnicodeData.txt.gz"]),
     Fd = open_file(FilePath),
-    Ets = ets:new(unidata, [{write_concurrency, false}, {read_concurrency, true}]),
+    Ets = ets:new(?UNIDATA_TABLE, [{write_concurrency, false}, {read_concurrency, true}]),
     read_file({Fd, Ets}),
     file:close(Fd),
     Ets.
@@ -194,12 +191,12 @@ load_mime_types() ->
     AppDir = filename:dirname(EbinDir),
     MimeTypesFile = filename:join([AppDir, "priv", "mime.types"]),
     {ok, MimeTypes} = httpd_conf:load_mime_types(MimeTypesFile),
-    Ets = ets:new(mime_types, [{write_concurrency, false}, {read_concurrency, true}]),
+    Ets = ets:new(?MIME_TABLE, [{write_concurrency, false}, {read_concurrency, true}]),
     [ets:insert(Ets, I) || I <- MimeTypes],
     Ets.
 
 load_log_ets() ->
-    ets:new(log_queue, [named_table, {write_concurrency, true}, {read_concurrency, true}]).
+    ets:new(?LOG_QUEUE, [named_table, {write_concurrency, true}, {read_concurrency, true}]).
 
 load_transcode_ets() ->
     ets:new(?VIDEO_TRANSCODE_QUEUE, [
@@ -239,14 +236,11 @@ string_to_lower(Ets, String) ->
 
 %% Starts the server
 start_link() ->
-    Ets0 = load_unicode_mapping(),
-    Ets1 = load_mime_types(),
-    Ets2 = load_log_ets(),
-    Ets3 = load_transcode_ets(),
-    Ets4 = load_subscribers_ets(),
-    Ets5 = load_messages_ets(),
-    Ets6 = load_bucket_nodes_ets(),
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [Ets0, Ets1, Ets2, Ets3, Ets4, Ets5, Ets6], []).
+    {ok, Pid} = gen_server:start_link({local, ?MODULE}, ?MODULE, [], []),
+    % Wait for initialization to complete
+    pong = gen_server:call(?MODULE, ping),
+    {ok, Pid}.
+
 
 add_bucket_node(BucketId, Node) when is_list(BucketId), is_atom(Node) ->
     gen_server:cast(?MODULE, {add_bucket_node, BucketId, Node}).
@@ -255,16 +249,26 @@ get_nodes_by_bucket(BucketId) when is_list(BucketId) ->
     gen_server:call(?MODULE, {get_nodes_by_bucket, BucketId}).
 
 %%% gen_server callbacks
-init([UnidataEts, MimeEts, LogEts, TranscodeEts, SubscribersEts, MessagesEts, BucketNodesEts]) ->
+init([]) ->
+    Ets0 = load_unicode_mapping(),
+    Ets1 = load_mime_types(),
+    Ets2 = load_log_ets(),
+    Ets3 = load_transcode_ets(),
+    Ets4 = load_subscribers_ets(),
+    Ets5 = load_messages_ets(),
+    Ets6 = load_bucket_nodes_ets(),
     {ok, #state{
-        unidata_ets = UnidataEts,
-        mime_ets = MimeEts,
-        log_ets = LogEts,
-        transcode_ets = TranscodeEts,
-        subscribers_ets = SubscribersEts,
-        messages_ets = MessagesEts,
-        bucket_nodes_ets = BucketNodesEts
+        unidata_ets = Ets0,
+        mime_ets = Ets1,
+        log_ets = Ets2,
+        transcode_ets = Ets3,
+        subscribers_ets = Ets4,
+        messages_ets = Ets5,
+        bucket_nodes_ets = Ets6
     }}.
+
+handle_call(ping, _From, State) ->
+    {reply, pong, State};
 
 handle_call({to_lower, String}, _From, State) ->
     Ets = State#state.unidata_ets,
@@ -393,14 +397,14 @@ handle_cast(_Msg, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, State) ->
-    ets:delete(State#state.unidata_ets),
-    ets:delete(State#state.mime_ets),
-    ets:delete(State#state.log_ets),
-    ets:delete(State#state.transcode_ets),
-    ets:delete(State#state.subscribers_ets),
-    ets:delete(State#state.messages_ets),
-    ets:delete(State#state.bucket_nodes_ets),
+terminate(_Reason, _State) ->
+    lists:foreach(fun(I) ->
+	    case ets:info(I) of
+		undefined -> ok;
+		_ -> ets:delete(I)
+	    end
+	end, [?MIME_TABLE, ?UNIDATA_TABLE, ?LOG_QUEUE, ?VIDEO_TRANSCODE_QUEUE, ?SUBSCRIBERS_TABLE,
+	      ?MESSAGES_TABLE, ?BUCKET_NODES_TABLE]),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->

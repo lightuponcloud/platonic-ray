@@ -365,7 +365,7 @@ handle_post(Req0, State) ->
 	    {FieldValues, Req1} = acc_multipart(Req0, []),
 	    BucketId = proplists:get_value(bucket_id, State),
 	    Prefix0 =
-		case list_handler:validate_prefix(BucketId, proplists:get_value(prefix, FieldValues)) of
+		case object_handler:validate_prefix(BucketId, proplists:get_value(prefix, FieldValues)) of
 		    {error, _} -> undefined;
 		    P -> P
 		end,

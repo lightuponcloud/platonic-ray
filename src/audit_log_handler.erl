@@ -101,7 +101,7 @@ validate_day(_) -> {error, 55}.
 %%
 to_json(Req0, State) ->
     BucketId = proplists:get_value(bucket_id, State),
-    Prefix = list_handler:validate_prefix(BucketId, proplists:get_value(prefix, State)),
+    Prefix = object_handler:validate_prefix(BucketId, proplists:get_value(prefix, State)),
     Qs = proplists:get_value(parsed_qs, State),
     OperationName = validate_operation_name(proplists:get_value(<<"operation">>, Qs)),
     {Year, Month, Day} = validate_date(

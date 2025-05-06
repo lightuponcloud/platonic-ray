@@ -14,6 +14,7 @@ start(_Type, _Args) ->
     Dispatch = cowboy_router:compile([
 	{'_', [
 	    {"/riak/list/[...]", list_handler, []},
+	    {"/riak/object/[...]", object_handler, []},
 	    {"/riak/download/[...]", download_handler, []},
 	    {"/riak/download-zip/[...]", zip_stream_handler, []},
 	    {"/riak/thumbnail/[...]", img_scale_handler, []},
@@ -58,6 +59,7 @@ start(_Type, _Args) ->
     {ok, _} = pg:start(?SCOPE_PG),
 
     light_ets:start_link(),  %% used for logging, lowercase transformation, pubsub
+    audit_log:start_link(),
     [img:start_link(I) || I <- lists:seq(0, ?IMAGE_WORKERS - 1)],  %% scales images
     [video_sup:start_link(I) || I <- lists:seq(0, ?VIDEO_WORKERS - 1)],  %% transcodes videos to webm
     sqlite_server:start_link(),  %% Puts changes to SQLite DB

@@ -1,0 +1,7 @@
+-define(MIME_TABLE, mime_types).
+-define(UNIDATA_TABLE, unidata).
+-define(LOG_QUEUE, log_queue).
+-define(VIDEO_TRANSCODE_QUEUE, video_transcode_queue).
+-define(SUBSCRIBERS_TABLE, subscribers).
+-define(MESSAGES_TABLE, messages).
+-define(BUCKET_NODES_TABLE, bucket_nodes).

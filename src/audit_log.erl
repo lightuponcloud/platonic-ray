@@ -21,6 +21,7 @@
 -include("log.hrl").
 -include("storage.hrl").
 -include("entities.hrl").
+-include("ets_tables.hrl").
 
 %% In order to prevent memory pressure from very active tenants and to reduce load on object storage for quiet ones,
 %% we flush logs to S3 every 2 minutes OR 30 seconds if worker is busy
@@ -57,6 +58,7 @@ log_operation(BucketId, Prefix, OperationName, Status, ObjectKeys, Context)
         when erlang:is_list(BucketId) andalso (erlang:is_list(Prefix) orelse Prefix =:= undefined) andalso
              erlang:is_atom(OperationName) andalso (erlang:is_list(Status) orelse erlang:is_integer(Status)) andalso
              erlang:is_list(ObjectKeys) ->
+io:fwrite("log_operation~n"),
     Timestamp = calendar:now_to_universal_time(os:timestamp()),
     gen_server:cast(?MODULE, {log, BucketId, Prefix, OperationName, Status, ObjectKeys, Context, Timestamp}).
 
@@ -126,8 +128,7 @@ init([]) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call(_Request, _From, State) ->
-    Reply = ok,
-    {reply, Reply, State}.
+    {reply, ok, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -140,9 +141,11 @@ handle_call(_Request, _From, State) ->
 %%--------------------------------------------------------------------
 handle_cast({log, BucketId, Prefix, OperationName, Status, ObjectKeys, Context, Timestamp},
             #state{flushing = Flushing, rate_limits = RateLimits} = State) ->
+io:fwrite("log BucketId: ~p Prefix: ~p OperationName: ~p~n", [BucketId, Prefix, OperationName]),
     %% Rate limiting: Check if the bucket can log
     case check_rate_limit(BucketId, RateLimits) of
         {ok, NewRateLimits} ->
+io:fwrite("NewRateLimits: ~p~n", [NewRateLimits]),
             %% Log to light_ets
             light_ets:log_operation(
                 audit_log,
@@ -150,6 +153,7 @@ handle_cast({log, BucketId, Prefix, OperationName, Status, ObjectKeys, Context, 
             ),
             %% Check queue size and trigger flush if needed
             QueueSize = light_ets:get_queue_size(audit_log),
+io:fwrite("QueueSize: ~p~n", [QueueSize]),
             case QueueSize >= ?INTERNAL_LOG_FLUSH_THRESHOLD_COUNT of
                 true when not Flushing ->
                     %% Trigger immediate flush
@@ -178,6 +182,7 @@ handle_cast({log, BucketId, Prefix, OperationName, Status, ObjectKeys, Context, 
 %%--------------------------------------------------------------------
 handle_info(flush_audit_log, #state{flushing = true} = State) ->
     %% Already flushing, rely on short-interval retry or next periodic flush
+io:fwrite("flush_audit_log flushing = true~n"),
     {noreply, State};
 
 handle_info(flush_audit_log, #state{flushing = false, failed_queue = FailedQueue} = State) ->
@@ -249,14 +254,16 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Flush logs to S3
 flush_to_s3(FailedQueue) ->
+io:fwrite("flush_to_s3~n"),
     %% Retrieve logs from light_ets
-    LogQueue = case ets:lookup(log_queue, audit_log) of
+    LogQueue = case ets:lookup(?LOG_QUEUE, audit_log) of
         [] -> [];
         [{audit_log, Entries}] ->
             %% Clear the ETS table
-            ets:insert(log_queue, {audit_log, []}),
+            ets:insert(?LOG_QUEUE, {audit_log, []}),
             [{BucketId, Entries} || {_, {BucketId, _Prefix, _Op, _Status, _Keys, _Context, _Ts}} = _Entry <- Entries]
     end,
+io:fwrite("flush_to_s3: ~p~n", [LogQueue]),
     AllEntries = FailedQueue ++ LogQueue,
     case AllEntries of
         [] -> {ok, []};
@@ -267,6 +274,7 @@ flush_to_s3(FailedQueue) ->
                         case BucketEntries of
                             [] -> Acc;
                             _ ->
+io:fwrite("BucketEntries: ~p~n", [BucketEntries]),
                                 %% Group entries by prefix
                                 EntriesByPrefix = lists:foldl(
                                     fun({_, Prefix, OperationName, Status, ObjectKeys, Context, Timestamp}, Map) ->
@@ -276,6 +284,7 @@ flush_to_s3(FailedQueue) ->
                                                  Map)
                                     end, #{}, BucketEntries),
                                 %% Process each prefix
+io:fwrite("EntriesByPrefix: ~p~n", [EntriesByPrefix]),
                                 maps:fold(
                                     fun(Prefix, Entries, Acc2) ->
                                         case log_to_s3(BucketId, Prefix, Entries) of
@@ -364,7 +373,7 @@ log_to_s3(BucketId, Prefix, Entries) ->
     TenantId = string:to_lower(lists:nth(2, Bits)),
     LogPath = io_lib:format("~s/~s/buckets/~s/~4.10.0B/~2.10.0B/~2.10.0B_~s.jsonl.gz",
 	[?AUDIT_LOG_PREFIX, TenantId, utils:prefixed_object_key(BucketId, Prefix), Year, Month, Day, EventId]),
-
+io:fwrite("LogPath: ~p~n", [LogPath]),
     CompressedOutput = compress_data(Output),
     %% Write new object
     Response = s3_api:retry_s3_operation(

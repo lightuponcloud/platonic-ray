@@ -147,7 +147,7 @@ first_page(Req0, Settings, State) ->
 	end,
     ParsedQs = cowboy_req:parse_qs(Req0),
     Prefix0 =
-	case list_handler:validate_prefix(BucketId0, proplists:get_value(<<"prefix">>, ParsedQs)) of
+	case object_handler:validate_prefix(BucketId0, proplists:get_value(<<"prefix">>, ParsedQs)) of
 	    {error, _} -> not_found;
 	    Prefix1 -> Prefix1
 	end,

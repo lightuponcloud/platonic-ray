@@ -96,7 +96,7 @@ to_json(Req0, State) ->
 		case proplists:get_value(<<"prefix">>, ParsedQs) of
 		    undefined -> search(BucketId, Term);
 		    Prefix0 ->
-			case list_handler:validate_prefix(BucketId, Prefix0) of
+			case object_handler:validate_prefix(BucketId, Prefix0) of
 			    {error, _} -> [];
 			    Prefix1 -> search(BucketId, Prefix1, Term)
 			end

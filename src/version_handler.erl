@@ -129,7 +129,7 @@ response(Req0, <<"HEAD">>, BucketId, User, T0) ->
 	    first_version(Req0, User#user.id);
 	not_found -> first_version(Req0, User#user.id);
 	Meta ->
-	    DbMeta = list_handler:parse_object_record(Meta, []),
+	    DbMeta = object_handler:parse_object_record(Meta, []),
 	    Version = proplists:get_value("version", DbMeta),
 	    T1 = erlang:round(utils:timestamp()/1000),
 	    Req1 = cowboy_req:reply(200, #{
@@ -280,7 +280,7 @@ validate_object_key(BucketId, Prefix, ObjectKey, Version)
 			    OrigName = proplists:get_value("x-amz-meta-orig-filename", Metadata0),
 			    Bytes = proplists:get_value("x-amz-meta-bytes", Metadata0),
 			    Md5 = proplists:get_value(etag, Metadata0),
-			    Meta = list_handler:parse_object_record(Metadata1, [
+			    Meta = object_handler:parse_object_record(Metadata1, [
 				{orig_name, OrigName},
 				{bytes, Bytes},
 				{is_deleted, "false"},

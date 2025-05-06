@@ -476,11 +476,6 @@ $.stack = function(options){
     get_bucket_id: function(){
 	return RiakAPI.options.bucketName;
     },
-    get_action_log: function(prefix){
-      var params = {};
-      if(prefix) params['prefix'] = prefix;
-      RiakAPI.stack_rpc(params);
-    },
     get_changelog: function(object_key){
       var params = {};
       if(object_key) params['object_key'] = object_key;

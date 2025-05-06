@@ -135,8 +135,8 @@ validate_copy_parameters(State0) ->
     DstPrefix0 = proplists:get_value(dst_prefix, State0),
     SrcObjectKeys0 = proplists:get_value(src_object_keys, State0),
 
-    SrcPrefix1 = list_handler:validate_prefix(SrcBucketId, SrcPrefix0),
-    DstPrefix1 = list_handler:validate_prefix(DstBucketId, DstPrefix0),
+    SrcPrefix1 = object_handler:validate_prefix(SrcBucketId, SrcPrefix0),
+    DstPrefix1 = object_handler:validate_prefix(DstBucketId, DstPrefix0),
     Error = lists:keyfind(error, 1, [SrcPrefix1, DstPrefix1]),
     case Error of
 	{error, Number0} -> {error, Number0};

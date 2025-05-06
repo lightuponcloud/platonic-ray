@@ -405,7 +405,7 @@ function refreshMenu(){
 	document.location = $(this).attr('href'); //'/'+surl;
     }else if(op=='menu-delete'){
 	var msg='file';
-        var rpc_url = root_uri+'list/'+bucket_id+'/';
+        var rpc_url = root_uri+'object/'+bucket_id+'/';
 	if(hex_prefix) rpc_url += hex_prefix;
 	if($('#'+lid).hasClass('dir')) msg='directory';
 	$('#id-dialog-obj-rm-msg').empty().append(msg+' <br/><b>'+orig_name+'</b>?');
@@ -761,7 +761,7 @@ function lock_action(e, object_key){
  var bucket_id = $("body").attr("data-bucket-id");
  var root_uri=$('body').attr('data-root-uri');
  var hex_prefix=$("body").attr("data-hex-prefix");
- var rpc_url = root_uri+'list/'+bucket_id+'/';
+ var rpc_url = root_uri+'object/'+bucket_id+'/';
  if(hex_prefix) rpc_url += hex_prefix;
  var stack = $.stack({
        'errorElementID': "id-status",
@@ -918,7 +918,7 @@ function submit_dirname(hex_prefix){
  if(!vresult){
     return;
  }
- var rpc_url = root_uri+'list/'+bucket_id+'/';
+ var rpc_url = root_uri+'object/'+bucket_id+'/';
  if(hex_prefix) rpc_url += hex_prefix;
  var stack = $.stack({'errorElementID': 'id-status', 'rpc_url': rpc_url, 'onSuccess': function(data){
       $("#shadow").empty().css('z-index', 9).hide();

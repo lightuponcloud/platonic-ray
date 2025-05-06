@@ -368,7 +368,7 @@ handle_post(Req0, State) ->
 		    undefined -> undefined;
 		    BV -> erlang:binary_to_list(BV)
 		end,
-	    Prefix0 = list_handler:validate_prefix(BucketId, proplists:get_value(prefix, FieldValues)),
+	    Prefix0 = object_handler:validate_prefix(BucketId, proplists:get_value(prefix, FieldValues)),
 	    GUID = crypto_utils:validate_guid(proplists:get_value(guid, FieldValues)),
 	    UploadTime = erlang:round(utils:timestamp()/1000),
 	    Version =
@@ -541,7 +541,7 @@ check_upload_id(UploadId, State0) ->
 	{error, _} -> {error, 5};
 	not_found -> {error, 5};
 	Meta ->
-	    UploadObjectMeta = list_handler:parse_object_record(Meta, []),
+	    UploadObjectMeta = object_handler:parse_object_record(Meta, []),
 	    BucketId = proplists:get_value(bucket_id, State0),
 	    Prefix = proplists:get_value(prefix, State0),
 	    GUID = proplists:get_value(guid, State0),
@@ -614,7 +614,7 @@ create_upload_id(undefined, State0) ->
 	end,
     User = proplists:get_value(user, State0),
     TotalBytes = proplists:get_value(total_bytes, State0),
-    Meta1 = list_handler:parse_object_record([], Meta0 ++ [
+    Meta1 = object_handler:parse_object_record([], Meta0 ++ [
 	{orig_name, utils:hex(FileName)},
 	{version, Version1},
 	{upload_time, UploadTime},
@@ -1063,7 +1063,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
     LockedUserTel1 = hex_or_undefined(LockedUserTel0),
     EncodedVersion = erlang:binary_to_list(base64:encode(jsx:encode(Version))),
     %% Put link to the real object at the specified prefix
-    Meta = list_handler:parse_object_record([], [
+    Meta = object_handler:parse_object_record([], [
 	    {orig_name, utils:hex(OrigName0)},
 	    {version, EncodedVersion},
 	    {upload_time, UploadTime},
