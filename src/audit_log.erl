@@ -320,6 +320,11 @@ log_to_s3(BucketId, Prefix, Entries) ->
 		    undefined -> null;
 		    UID -> utils:to_binary(UID)
 		end,
+	    UserName =
+		case proplists:get_value(user_name, Context) of
+		    undefined -> null;
+		    Name -> utils:to_binary(Name)
+		end,
             Entry = [
                 {event_id, EventId},
                 {version, utils:to_binary(Version)},
@@ -337,6 +342,7 @@ log_to_s3(BucketId, Prefix, Entries) ->
                 {object_keys, IncludedObjectKeys},
                 {object_count, length(ObjectKeys)},
                 {user_id, UserId},
+                {user_name, UserName},
                 {actor, proplists:get_value(actor, Context, null)},
                 {environment, proplists:get_value(environment, Context, null)},
                 {compliance_metadata, proplists:get_value(compliance_metadata, Context, null)}
