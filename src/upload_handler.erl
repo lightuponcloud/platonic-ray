@@ -268,7 +268,7 @@ add_action_log_record(State) ->
 	 {environment, null},
 	 {compliance_metadata, [
 	    {orig_name, OrigName},
-	    {guid, GUID},
+	    {guid, utils:to_binary(GUID)},
 	    {summary, Summary},
 	    {version, Version1},
 	    {upload_time, UploadTime1}

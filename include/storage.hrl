@@ -154,7 +154,7 @@
 %%
 %% Default: "~audit"
 %%
--define(AUDIT_LOG_PREFIX, "~audit").
+-define(AUDIT_LOG_PREFIX, "audit").
 %%
 %% Locked object suffix.
 %% Temporary object created with .lock extension by default.

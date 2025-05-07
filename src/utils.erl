@@ -79,28 +79,45 @@ prefixed_object_key([], ObjectKey) -> ObjectKey;
 prefixed_object_key(".", ObjectKey) -> ObjectKey;
 prefixed_object_key(<<>>, ObjectKey) -> ObjectKey;
 prefixed_object_key(BucketId, undefined) -> BucketId;
+
+%% Handle list of path components
+prefixed_object_key(List, ObjectKey) when erlang:is_list(List), erlang:length(List) > 0, erlang:is_list(hd(List)) ->
+    FirstComponent = hd(List),
+    Result = lists:foldl(
+        fun(Component, Acc) ->
+            prefixed_object_key(Acc, Component)
+        end,
+        FirstComponent,
+        tl(List)
+    ),
+    prefixed_object_key(Result, ObjectKey);
+
 prefixed_object_key(Prefix, ObjectKey0) when erlang:is_binary(Prefix), erlang:is_binary(ObjectKey0) ->
     ObjectKey1 =
-	case starts_with(ObjectKey0, <<"/">>) of
-	    true ->
-		<< _:1/binary, N0/binary >> = ObjectKey0,
-		N0;
-	    false -> ObjectKey0
-	end,
+        case starts_with(ObjectKey0, <<"/">>) of
+            true ->
+                << _:1/binary, N0/binary >> = ObjectKey0,
+                N0;
+            false -> ObjectKey0
+        end,
     case ends_with(Prefix, <<"/">>) of
-	true -> << Prefix/binary, ObjectKey1/binary >>;
-	false -> << Prefix/binary, <<"/">>/binary, ObjectKey1/binary >>
+        true -> << Prefix/binary, ObjectKey1/binary >>;
+        false -> << Prefix/binary, <<"/">>/binary, ObjectKey1/binary >>
     end;
 prefixed_object_key(Prefix, ObjectKey0) when erlang:is_list(Prefix), erlang:is_list(ObjectKey0) ->
+    FlatPrefix = lists:flatten(Prefix),
+    FlatObject = lists:flatten(ObjectKey0),
+
     ObjectKey1 =
-	case string:sub_string(ObjectKey0, 1, 1) =:= "/" of
-	    true -> string:sub_string(ObjectKey0, 2, length(ObjectKey0));
-	    false -> ObjectKey0
-	end,
+        case length(FlatObject) > 0 andalso string:sub_string(FlatObject, 1, 1) =:= "/" of
+            true -> string:sub_string(FlatObject, 2, length(FlatObject));
+            false -> FlatObject
+        end,
+
     %% Concatenate prefix and object key
-    case string:sub_string(Prefix, length(Prefix), length(Prefix)) =:= "/" of
-	true -> string:concat(Prefix, ObjectKey1);
-	_ -> string:concat(Prefix ++ "/", ObjectKey1)
+    case length(FlatPrefix) > 0 andalso string:sub_string(FlatPrefix, length(FlatPrefix), length(FlatPrefix)) =:= "/" of
+        true -> string:concat(FlatPrefix, ObjectKey1);
+        false -> string:concat(string:concat(FlatPrefix, "/"), ObjectKey1)
     end.
 
 

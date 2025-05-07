@@ -21,7 +21,6 @@
 -include("log.hrl").
 -include("storage.hrl").
 -include("entities.hrl").
--include("ets_tables.hrl").
 
 %% In order to prevent memory pressure from very active tenants and to reduce load on object storage for quiet ones,
 %% we flush logs to S3 every 2 minutes OR 30 seconds if worker is busy
@@ -58,7 +57,6 @@ log_operation(BucketId, Prefix, OperationName, Status, ObjectKeys, Context)
         when erlang:is_list(BucketId) andalso (erlang:is_list(Prefix) orelse Prefix =:= undefined) andalso
              erlang:is_atom(OperationName) andalso (erlang:is_list(Status) orelse erlang:is_integer(Status)) andalso
              erlang:is_list(ObjectKeys) ->
-io:fwrite("log_operation~n"),
     Timestamp = calendar:now_to_universal_time(os:timestamp()),
     gen_server:cast(?MODULE, {log, BucketId, Prefix, OperationName, Status, ObjectKeys, Context, Timestamp}).
 
@@ -141,11 +139,9 @@ handle_call(_Request, _From, State) ->
 %%--------------------------------------------------------------------
 handle_cast({log, BucketId, Prefix, OperationName, Status, ObjectKeys, Context, Timestamp},
             #state{flushing = Flushing, rate_limits = RateLimits} = State) ->
-io:fwrite("log BucketId: ~p Prefix: ~p OperationName: ~p~n", [BucketId, Prefix, OperationName]),
     %% Rate limiting: Check if the bucket can log
     case check_rate_limit(BucketId, RateLimits) of
         {ok, NewRateLimits} ->
-io:fwrite("NewRateLimits: ~p~n", [NewRateLimits]),
             %% Log to light_ets
             light_ets:log_operation(
                 audit_log,
@@ -153,7 +149,6 @@ io:fwrite("NewRateLimits: ~p~n", [NewRateLimits]),
             ),
             %% Check queue size and trigger flush if needed
             QueueSize = light_ets:get_queue_size(audit_log),
-io:fwrite("QueueSize: ~p~n", [QueueSize]),
             case QueueSize >= ?INTERNAL_LOG_FLUSH_THRESHOLD_COUNT of
                 true when not Flushing ->
                     %% Trigger immediate flush
@@ -182,7 +177,6 @@ io:fwrite("QueueSize: ~p~n", [QueueSize]),
 %%--------------------------------------------------------------------
 handle_info(flush_audit_log, #state{flushing = true} = State) ->
     %% Already flushing, rely on short-interval retry or next periodic flush
-io:fwrite("flush_audit_log flushing = true~n"),
     {noreply, State};
 
 handle_info(flush_audit_log, #state{flushing = false, failed_queue = FailedQueue} = State) ->
@@ -254,52 +248,60 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Flush logs to S3
 flush_to_s3(FailedQueue) ->
-io:fwrite("flush_to_s3~n"),
     %% Retrieve logs from light_ets
-    LogQueue = case ets:lookup(?LOG_QUEUE, audit_log) of
-        [] -> [];
-        [{audit_log, Entries}] ->
-            %% Clear the ETS table
-            ets:insert(?LOG_QUEUE, {audit_log, []}),
-            [{BucketId, Entries} || {_, {BucketId, _Prefix, _Op, _Status, _Keys, _Context, _Ts}} = _Entry <- Entries]
-    end,
-io:fwrite("flush_to_s3: ~p~n", [LogQueue]),
+    LogQueue = lists:foldl(
+        fun({_Id, {BucketId, _Prefix, _OperationName, _Status, _ObjectKeys, _Context, _Timestamp} = Entry}, Acc) ->
+            case proplists:get_value(BucketId, Acc) of
+                undefined ->
+                    [{BucketId, [Entry]} | Acc];
+                Entries ->
+                    %% Remove old and add updated
+                    NewAcc = proplists:delete(BucketId, Acc),
+                    [{BucketId, [Entry | Entries]} | NewAcc]
+            end
+        end,
+        [],
+        light_ets:flush_logs()
+    ),
     AllEntries = FailedQueue ++ LogQueue,
     case AllEntries of
         [] -> {ok, []};
         _ ->
-            try
-                Failed = lists:foldl(
-                    fun({BucketId, BucketEntries}, Acc) ->
-                        case BucketEntries of
-                            [] -> Acc;
+            Failed = lists:foldl(
+                fun({BucketId, BucketEntries}, Acc) ->
+                    case BucketEntries of
+                        [] -> Acc;
                             _ ->
 io:fwrite("BucketEntries: ~p~n", [BucketEntries]),
-                                %% Group entries by prefix
-                                EntriesByPrefix = lists:foldl(
-                                    fun({_, Prefix, OperationName, Status, ObjectKeys, Context, Timestamp}, Map) ->
-                                        PrefixEntries = maps:get(Prefix, Map, []),
-                                        maps:put(Prefix,
-                                                 PrefixEntries ++ [{OperationName, Status, ObjectKeys, Context, Timestamp}],
-                                                 Map)
-                                    end, #{}, BucketEntries),
+                            %% Group entries by prefix
+                            EntriesByPrefix = lists:foldl(
+                                fun({_, Prefix0, OperationName, Status, ObjectKeys, Context, Timestamp}, Map) ->
+				    Prefix1 =
+					case utils:ends_with(Prefix0, <<"/">>) of
+					    true -> Prefix0;
+					    false ->
+						case Prefix0 of
+						    undefined -> false;
+						    _ -> Prefix0 ++ "/"
+						end
+					end,
+                                    PrefixEntries = maps:get(Prefix1, Map, []),
+                                    maps:put(Prefix1,
+                                             PrefixEntries ++ [{OperationName, Status, ObjectKeys, Context, Timestamp}],
+                                             Map)
+                                end, #{}, BucketEntries),
                                 %% Process each prefix
 io:fwrite("EntriesByPrefix: ~p~n", [EntriesByPrefix]),
-                                maps:fold(
-                                    fun(Prefix, Entries, Acc2) ->
-                                        case log_to_s3(BucketId, Prefix, Entries) of
-                                            ok -> Acc2;
-                                            {error, _} -> [{BucketId, Entries} | Acc2]
-                                        end
-                                    end, Acc, EntriesByPrefix)
-                        end
-                    end, [], AllEntries),
-                {ok, Failed}
-            catch
-                Class:Reason ->
-                    lager:error("[audit_log] Flush failed: ~p:~p", [Class, Reason]),
-                    {error, AllEntries}
-            end
+                            maps:fold(
+                                fun(Prefix, Entries, Acc2) ->
+                                    case log_to_s3(BucketId, Prefix, Entries) of
+                                        ok -> Acc2;
+                                        {error, _} -> [{BucketId, Entries} | Acc2]
+                                    end
+                                end, Acc, EntriesByPrefix)
+                    end
+                end, [], AllEntries),
+            {ok, Failed}
     end.
 
 
@@ -315,6 +317,11 @@ log_to_s3(BucketId, Prefix, Entries) ->
                 false -> null
             end,
             DateTime = utils:to_binary(crypto_utils:iso_8601_basic_time(Timestamp)),
+	    UserId =
+		case proplists:get_value(user_id, Context) of
+		    undefined -> null;
+		    UID -> utils:to_binary(UID)
+		end,
             Entry = [
                 {event_id, EventId},
                 {version, utils:to_binary(Version)},
@@ -331,14 +338,15 @@ log_to_s3(BucketId, Prefix, Entries) ->
                 ]},
                 {object_keys, IncludedObjectKeys},
                 {object_count, length(ObjectKeys)},
-                {user_id, proplists:get_value(user_id, Context, null)},
+                {user_id, UserId},
                 {actor, proplists:get_value(actor, Context, null)},
                 {environment, proplists:get_value(environment, Context, null)},
                 {compliance_metadata, proplists:get_value(compliance_metadata, Context, null)}
             ],
             ManifestPath = case length(ObjectKeys) >= 100 of
                 true ->
-                    Path = utils:to_binary(io_lib:format("~s.json", [EventId])),
+		    ManifestPrefix = utils:prefixed_object_key(?AUDIT_LOG_PREFIX, "manifests"),
+		    ManifestName = lists:flatten(io_lib:format("~s.json", [EventId])),
                     Manifest = [
                         {operation_id, EventId},
                         {operation_name, OperationName},
@@ -349,18 +357,16 @@ log_to_s3(BucketId, Prefix, Entries) ->
                     Options = [{meta, [{"md5", crypto_utils:md5(ManifestJSON)}]}],
                     case s3_api:retry_s3_operation(
                         fun() ->
-                            s3_api:put_object(?SECURITY_BUCKET_NAME, ?AUDIT_LOG_PREFIX ++ "/manifests",
-                                              io_lib:format("~s.json", [EventId]), ManifestJSON, Options)
+                            s3_api:put_object(?SECURITY_BUCKET_NAME, ManifestPrefix, ManifestName, ManifestJSON, Options)
                         end,
                         ?S3_RETRY_COUNT,
                         ?S3_BASE_DELAY_MS
                     ) of
                         {error, Reason} ->
                             lager:error("[audit_log] Can't save manifest ~p/~p/~p: ~p",
-                                        [?SECURITY_BUCKET_NAME, ?AUDIT_LOG_PREFIX ++ "/manifests",
-                                         io_lib:format("~s.json", [EventId]), Reason]),
+                                        [?SECURITY_BUCKET_NAME, ManifestPrefix, ManifestName, Reason]),
                             null;
-                        _ -> Path
+                        _ -> utils:to_binary(utils:prefixed_object_key(ManifestPrefix, ManifestName))
                     end;
                 false -> null
             end,
@@ -371,16 +377,24 @@ log_to_s3(BucketId, Prefix, Entries) ->
     {{Year, Month, Day}, {_H, _M, _S}} = calendar:now_to_universal_time(os:timestamp()),
     Bits = string:tokens(BucketId, "-"),
     TenantId = string:to_lower(lists:nth(2, Bits)),
-    LogPath = io_lib:format("~s/~s/buckets/~s/~4.10.0B/~2.10.0B/~2.10.0B_~s.jsonl.gz",
-	[?AUDIT_LOG_PREFIX, TenantId, utils:prefixed_object_key(BucketId, Prefix), Year, Month, Day, EventId]),
-io:fwrite("LogPath: ~p~n", [LogPath]),
+    LogPrefix = [
+	 ?AUDIT_LOG_PREFIX,
+	 TenantId,
+	 "buckets",
+	 BucketId,
+	 Prefix,
+	 lists:flatten(io_lib:format("~4.10.0B", [Year])),
+	 lists:flatten(io_lib:format("~2.10.0B", [Month]))
+    ],
+    LogName = lists:flatten(io_lib:format("~2.10.0B_~s.jsonl.gz", [Day, EventId])),
     CompressedOutput = compress_data(Output),
     %% Write new object
     Response = s3_api:retry_s3_operation(
         fun() ->
             s3_api:put_object(
                 ?SECURITY_BUCKET_NAME,
-                LogPath,
+		LogPrefix,
+		LogName,
                 CompressedOutput,
                 [{meta, [{"md5", crypto_utils:md5(Output)}]}]
             )
@@ -390,7 +404,7 @@ io:fwrite("LogPath: ~p~n", [LogPath]),
     ),
     case Response of
         {error, Reason} ->
-            lager:error("[audit_log] Can't put object ~p/~p: ~p", [?SECURITY_BUCKET_NAME, LogPath, Reason]),
+            lager:error("[audit_log] Can't put object ~p/~p/~p: ~p", [?SECURITY_BUCKET_NAME, LogPrefix, LogName, Reason]),
             {error, Reason};
         _ -> ok
     end.

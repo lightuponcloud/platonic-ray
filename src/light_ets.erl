@@ -19,13 +19,18 @@
 -export([get_queue_size/1, enqueue_transcode/2, dequeue_transcode/1, requeue_transcode/1,
          get_transcode_queue_size/0, add_subscriber/4, remove_subscriber/1, get_subscribers/0,
          get_subscribers_by_bucket/1, store_message/1, delete_message/2, get_messages_by_user/1,
-         add_bucket_node/2, get_nodes_by_bucket/1
-]).
+         add_bucket_node/2, get_nodes_by_bucket/1, flush_logs/0]).
 
 -include("log.hrl").
 -include("entities.hrl").
--include("ets_tables.hrl").
 
+-define(MIME_TABLE, mime_types).
+-define(UNIDATA_TABLE, unidata).
+-define(LOG_QUEUE, log_queue).
+-define(VIDEO_TRANSCODE_QUEUE, video_transcode_queue).
+-define(SUBSCRIBERS_TABLE, subscribers).
+-define(MESSAGES_TABLE, messages).
+-define(BUCKET_NODES_TABLE, bucket_nodes).
 -define(MAX_QUEUE_SIZE, 10_000). % From video_transcoding
 -define(PMAP_WORKERS, 4).        % From video_transcoding
 
@@ -248,6 +253,9 @@ add_bucket_node(BucketId, Node) when is_list(BucketId), is_atom(Node) ->
 get_nodes_by_bucket(BucketId) when is_list(BucketId) ->
     gen_server:call(?MODULE, {get_nodes_by_bucket, BucketId}).
 
+flush_logs() ->
+    gen_server:call(?MODULE, flush_logs).
+
 %%% gen_server callbacks
 init([]) ->
     Ets0 = load_unicode_mapping(),
@@ -329,19 +337,28 @@ handle_call({get_nodes_by_bucket, BucketId}, _From, #state{bucket_nodes_ets = Et
     Nodes = lists:usort([Node || {_, Node} <- ets:lookup(Ets, BucketId)]),
     {reply, Nodes, State};
 
+handle_call(flush_logs, _From, State) ->
+    case ets:lookup(?LOG_QUEUE, audit_log) of
+	[] -> {reply, [], State};
+	[{audit_log, Entries}] ->
+	    %% Clear the ETS table
+	    ets:insert(?LOG_QUEUE, {audit_log, []}),
+	    {reply, Entries, State}
+    end;
+
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({log, Operation, Details}, State) ->
-    LogEts = State#state.log_ets,
     Key = erlang:unique_integer([monotonic, positive]),
-    CurrentEntries = case ets:lookup(LogEts, Operation) of
+    CurrentEntries = case ets:lookup(?LOG_QUEUE, Operation) of
         [] -> [];
         [{Operation, Entries}] -> Entries
     end,
     NewEntry = {Key, Details},
-    ets:insert(LogEts, {Operation, [NewEntry | CurrentEntries]}),
+    ets:insert(?LOG_QUEUE, {Operation, [NewEntry | CurrentEntries]}),
     {noreply, State};
+
 
 handle_cast({enqueue_transcode, BucketId, ObjectKey}, #state{transcode_ets = Ets} = State) ->
     case ets:info(Ets, size) >= ?MAX_QUEUE_SIZE of
@@ -350,7 +367,7 @@ handle_cast({enqueue_transcode, BucketId, ObjectKey}, #state{transcode_ets = Ets
             {noreply, State};
         false ->
             Seq = erlang:unique_integer([monotonic, positive]),
-            ets:insert(Ets, {Seq, {BucketId, ObjectKey, 0}}),
+            ets:insert(?VIDEO_TRANSCODE_QUEUE, {Seq, {BucketId, ObjectKey, 0}}),
             {noreply, State}
     end;
 
@@ -361,12 +378,12 @@ handle_cast({requeue_transcode, Task}, #state{transcode_ets = Ets} = State) ->
             {noreply, State};
         false ->
             Seq = erlang:unique_integer([monotonic, positive]),
-            ets:insert(Ets, {Seq, Task}),
+            ets:insert(?VIDEO_TRANSCODE_QUEUE, {Seq, Task}),
             {noreply, State}
     end;
 
-handle_cast({add_subscriber, UserId, Pid, SessionId, BucketIdList}, #state{subscribers_ets = Ets} = State) ->
-    ets:insert(Ets, {UserId, Pid, SessionId, BucketIdList}),
+handle_cast({add_subscriber, UserId, Pid, SessionId, BucketIdList}, State) ->
+    ets:insert(?SUBSCRIBERS_TABLE, {UserId, Pid, SessionId, BucketIdList}),
     ?INFO("[light_ets] Added subscriber ~p", [UserId]),
     {noreply, State};
 
@@ -375,9 +392,9 @@ handle_cast({remove_subscriber, SessionId}, #state{subscribers_ets = Ets} = Stat
     ?INFO("[light_ets] Removed subscriber with session ~p", [SessionId]),
     {noreply, State};
 
-handle_cast({store_message, MessageEntry}, #state{messages_ets = Ets} = State) ->
+handle_cast({store_message, MessageEntry}, State) ->
     Key = {MessageEntry#message_entry.atomic_id, MessageEntry#message_entry.user_id},
-    ets:insert(Ets, {Key, MessageEntry}),
+    ets:insert(?MESSAGES_TABLE, {Key, MessageEntry}),
     ?INFO("[light_ets] Stored message ~p for user ~p", [MessageEntry#message_entry.atomic_id, MessageEntry#message_entry.user_id]),
     {noreply, State};
 
@@ -386,8 +403,8 @@ handle_cast({delete_message, AtomicId, UserId}, #state{messages_ets = Ets} = Sta
     ?INFO("[light_ets] Deleted message ~p for user ~p", [AtomicId, UserId]),
     {noreply, State};
 
-handle_cast({add_bucket_node, BucketId, Node}, #state{bucket_nodes_ets = Ets} = State) ->
-    ets:insert(Ets, {BucketId, Node}),
+handle_cast({add_bucket_node, BucketId, Node}, State) ->
+    ets:insert(?BUCKET_NODES_TABLE, {BucketId, Node}),
     ?INFO("[light_ets] Added node ~p for bucket ~p", [Node, BucketId]),
     {noreply, State};
 
