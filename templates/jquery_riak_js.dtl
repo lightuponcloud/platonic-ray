@@ -513,6 +513,9 @@ $.stack = function(options){
     },
     getUserId: function(){
       return '{{ user_id }}';
+    },
+    get_audit_log: function(prefix){
+      RiakAPI.stack_rpc({});
     }
  };
  return {
@@ -525,7 +528,7 @@ $.stack = function(options){
     get_riak_url: RiakAPI.get_riak_url,
     get_bucket_id: RiakAPI.get_bucket_id,
     get_object_metadata: RiakAPI.get_object_metadata,
-    get_action_log: RiakAPI.get_action_log,
+    get_audit_log: RiakAPI.get_audit_log,
     get_changelog: RiakAPI.get_changelog,
     lock: RiakAPI.lock,
     unlock: RiakAPI.unlock,

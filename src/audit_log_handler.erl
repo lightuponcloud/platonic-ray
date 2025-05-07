@@ -4,34 +4,85 @@
 -module(audit_log_handler).
 -behavior(cowboy_handler).
 
--export([init/2, content_types_provided/2, to_json/2, allowed_methods/2,
-	 forbidden/2, resource_exists/2, previously_existed/2]).
+-export([init/2]).
 
 -include("storage.hrl").
 -include("entities.hrl").
 
 %% Filter specification
 -record(filter, {
-    year :: undefined | integer(), % e.g., 2025
-    month :: undefined | integer(), % e.g., 4
-    day :: undefined | integer() % e.g., 24
+    day :: undefined | integer(), % e.g., 24
+    event_id :: undefined | list()
 }).
 
-
-init(Req, Opts) ->
-    {cowboy_rest, Req, Opts}.
-
 %%
-%% Called first
+%% Returns list of actions in pseudo-directory. If object_key specified, returns object history.
 %%
-allowed_methods(Req, State) ->
-    {[<<"GET">>, <<"POST">>], Req, State}.
+init(Req0, _Opts) ->
+    T0 = utils:timestamp(), %% measure time of request
+    cowboy_req:cast({set_options, #{idle_timeout => infinity}}, Req0),
 
+    PathInfo = cowboy_req:path_info(Req0),
+    ParsedQs = cowboy_req:parse_qs(Req0),
+    BucketId =
+	case lists:nth(1, PathInfo) of
+	    undefined -> undefined;
+	    <<>> -> undefined;
+	    BV -> erlang:binary_to_list(BV)
+	end,
+    Prefix =
+	case length(PathInfo) < 2 of
+	    true -> undefined;
+	    false ->
+		%% prefix should go just after bucket id
+		P = utils:join_binary_with_separator(lists:nthtail(1, PathInfo), <<"/">>),
+		object_handler:validate_prefix(BucketId, P)
+	end,
+    OperationName = validate_operation_name(proplists:get_value(<<"operation">>, ParsedQs)),
+    EventId =
+	case proplists:get_value(<<"event_id">>, ParsedQs) of
+	    undefined -> undefined;
+	    GUID -> crypto_utils:validate_guid(GUID)
+	end,
+    {Year, Month, Day} = validate_date(
+	proplists:get_value(<<"year">>, ParsedQs, undefined),
+	proplists:get_value(<<"month">>, ParsedQs, undefined),
+	proplists:get_value(<<"day">>, ParsedQs, undefined)
+    ),
+    case lists:keyfind(error, 1, [Prefix, OperationName, Year, Month, Day]) of
+	{error, Number0} -> js_handler:bad_request(Req0, Number0);
+	false ->
+	    Bits = string:tokens(BucketId, "-"),
+	    TenantId = string:to_lower(lists:nth(2, Bits)),
+	    LogPrefix0 = [
+		 ?AUDIT_LOG_PREFIX,
+		 TenantId,
+		 "buckets",
+		 BucketId,
+		 Prefix
+	    ],
+	    LogPrefix1 =
+		case Year of
+		    undefined -> LogPrefix0;
+		    _ ->
+			case Month of
+			    undefined ->
+				utils:prefixed_object_key(LogPrefix0, lists:flatten(io_lib:format("~4.10.0B", [Year])));
+			    _ ->
+				LogPrefix2 = lists:flatten(LogPrefix0 ++ [io_lib:format("~4.10.0B", [Year])]),
+				utils:prefixed_object_key(LogPrefix2, lists:flatten(io_lib:format("~2.10.0B", [Month])))
+			end
+		end,
+	    Filters = #filter{
+		day = Day,
+		event_id = EventId
+	    },
+	    case utils:get_token(Req0) of
+		undefined -> js_handler:unauthorized(Req0, 28, stop);
+		_Token -> stream_logs(Req0, BucketId, LogPrefix1, Filters, OperationName, T0)
+	    end
+    end.
 
-content_types_provided(Req, State) ->
-    {[
-	{{<<"application">>, <<"json">>, '*'}, to_json}
-    ], Req, State}.
 
 validate_operation_name(OpName) ->
     case OpName of
@@ -96,81 +147,41 @@ validate_day(Day) when is_binary(Day) ->
     end;
 validate_day(_) -> {error, 55}.
 
-%%
-%% Returns list of actions in pseudo-directory. If object_key specified, returns object history.
-%%
-to_json(Req0, State) ->
-    BucketId = proplists:get_value(bucket_id, State),
-    Prefix = object_handler:validate_prefix(BucketId, proplists:get_value(prefix, State)),
-    Qs = proplists:get_value(parsed_qs, State),
-    OperationName = validate_operation_name(proplists:get_value(<<"operation">>, Qs)),
-    {Year, Month, Day} = validate_date(
-	proplists:get_value(<<"year">>, Qs, undefined),
-	proplists:get_value(<<"month">>, Qs, undefined),
-	proplists:get_value(<<"day">>, Qs, undefined)
-    ),
-
-    case lists:keyfind(error, 1, [Prefix, OperationName, Year, Month, Day]) of
-	{error, Number0} -> js_handler:bad_request(Req0, Number0);
-	false ->
-	    Bits = string:tokens(BucketId, "-"),
-	    TenantId = string:to_lower(lists:nth(2, Bits)),
-	    RealPrefix = io_lib:format("~s/~s/buckets/~s",
-		[?AUDIT_LOG_PREFIX, TenantId, utils:prefixed_object_key(BucketId, Prefix)]),
-	    Filters = #filter{
-		year = Year,
-		month = Month,
-		day = Day
-	    },
-	    stream_logs(Req0, BucketId, RealPrefix, Filters, OperationName)
-    end.
 
 % Filter objects by date and bucket_id
 filter_objects(Objects, Filters) ->
     lists:filter(fun(Object) -> matches_filters(Object, Filters) end, Objects).
 
 % Check if an object matches the filters
-matches_filters(ObjectKey, #filter{year = FY, month = FM, day = FD}) ->
+matches_filters(ObjectKey, #filter{event_id = EventId, day = FD}) ->
     case parse_key(ObjectKey) of
-        {ok, Year, Month, Day} -> matches_date(Year, Month, Day, FY, FM, FD);
+	{ok, Day, EventId} -> (FD =:= undefined orelse FD =:= Day);
         error -> false
     end.
 
 %% Parse object key to extract date
 parse_key(Key) ->
-    Filename = filename:basename(Key),
+    Filename = filename:rootname(filename:rootname(filename:basename(Key))),
     case binary:split(Filename, <<"_">>) of
-        [DatePart, _UUID] ->
-            case binary:split(DatePart, <<"/">>, [global]) of
-                [Y, M, D] ->
-                    try
-                        Year = binary_to_integer(Y),
-                        Month = binary_to_integer(M),
-                        Day = binary_to_integer(D),
-                        {ok, Year, Month, Day}
-                    catch
-                        _:_ -> error
-                    end;
-                _ -> error
+        [Day, EventId] ->
+            try
+                {ok, erlang:binary_to_integer(Day), EventId}
+            catch
+                _:_ -> error
             end;
         _ -> error
     end.
 
-%% Match date filters (undefined means no filter)
-matches_date(Year, Month, Day, FY, FM, FD) ->
-    (FY =:= undefined orelse FY =:= Year) andalso
-    (FM =:= undefined orelse FM =:= Month) andalso
-    (FD =:= undefined orelse FD =:= Day).
-
 %%
 %% Downloads JSONL logs and streams them to client after filtering.
 %%
-stream_logs(Req0, BucketId0, Prefix, Filters, OperationName) when OperationName =:= undefined ->
+stream_logs(Req0, BucketId0, Prefix, Filters, OperationName, T0) when OperationName =:= undefined ->
     BucketId1 = utils:to_binary(BucketId0),
     ContentDisposition = << <<"attachment;filename=\"">>/binary, BucketId1/binary, <<"\"">>/binary >>,
     Headers0 = #{
 	<<"content-type">> => << "application/json" >>,
-	<<"content-disposition">> => ContentDisposition
+	<<"content-disposition">> => ContentDisposition,
+	<<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
     },
     Req1 = cowboy_req:stream_reply(200, Headers0, Req0),
 
@@ -186,50 +197,6 @@ stream_logs(Req0, BucketId0, Prefix, Filters, OperationName) when OperationName 
 		    cowboy_req:stream_body(BinBodyPart, nofin, Req1)
 	    end
 	end, FilteredObjects),
-    cowboy_req:stream_body(<<>>, fin, Req1).
 
-%%
-%% Checks if provided token is correct.
-%% ( called after 'allowed_methods()' )
-%%
-forbidden(Req0, _State) ->
-    PathInfo = cowboy_req:path_info(Req0),
-    ParsedQs = cowboy_req:parse_qs(Req0),
-    BucketId =
-	case lists:nth(1, PathInfo) of
-	    undefined -> undefined;
-	    <<>> -> undefined;
-	    BV -> erlang:binary_to_list(BV)
-	end,
-    Prefix =
-	case length(PathInfo) < 2 of
-	    true -> undefined;
-	    false ->
-		%% prefix should go just after bucket id
-		erlang:binary_to_list(utils:join_binary_with_separator(lists:nthtail(1, PathInfo), <<"/">>))
-	end,
-    PresentedSignature =
-	case proplists:get_value(<<"signature">>, ParsedQs) of
-	    undefined -> undefined;
-	    Signature -> unicode:characters_to_list(Signature)
-	end,
-    case download_handler:has_access(Req0, BucketId, Prefix, undefined, PresentedSignature) of
-	{error, Number} -> js_handler:unauthorized(Req0, Number, stop);
-	{BucketId, Prefix, _ObjectKey, User} ->
-	    {false, Req0, [
-		{bucket_id, BucketId},
-		{prefix, Prefix},
-		{parsed_qs, ParsedQs},
-		{user, User}
-	    ]}
-    end.
-
-%%
-%% Validates request parameters
-%% ( called after 'content_types_provided()' )
-%%
-resource_exists(Req0, State) ->
-    {true, Req0, State}.
-
-previously_existed(Req0, _State) ->
-    {false, Req0, []}.
+    cowboy_req:stream_body(<<>>, fin, Req1),
+    {ok, Req1, []}.

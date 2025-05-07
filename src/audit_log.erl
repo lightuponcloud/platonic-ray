@@ -272,7 +272,6 @@ flush_to_s3(FailedQueue) ->
                     case BucketEntries of
                         [] -> Acc;
                             _ ->
-io:fwrite("BucketEntries: ~p~n", [BucketEntries]),
                             %% Group entries by prefix
                             EntriesByPrefix = lists:foldl(
                                 fun({_, Prefix0, OperationName, Status, ObjectKeys, Context, Timestamp}, Map) ->
@@ -290,8 +289,7 @@ io:fwrite("BucketEntries: ~p~n", [BucketEntries]),
                                              PrefixEntries ++ [{OperationName, Status, ObjectKeys, Context, Timestamp}],
                                              Map)
                                 end, #{}, BucketEntries),
-                                %% Process each prefix
-io:fwrite("EntriesByPrefix: ~p~n", [EntriesByPrefix]),
+                            %% Process each prefix
                             maps:fold(
                                 fun(Prefix, Entries, Acc2) ->
                                     case log_to_s3(BucketId, Prefix, Entries) of

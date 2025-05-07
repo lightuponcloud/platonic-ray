@@ -737,8 +737,8 @@ function submit_restore(bucket_id, hex_prefix, object_key, last_modified_utc){
     disable_menu_item('menu-changelog');
 
     var root_uri=$('body').attr('data-root-uri');
-    var rpc_url = root_uri+'action-log/'+bucket_id+'/';
-    if(hex_prefix) rpc_url += hex_prefix;
+    var rpc_url = root_uri+'audit-log/'+bucket_id;
+    if(hex_prefix) rpc_url += '/'+hex_prefix;
     var stack = $.stack({'errorElementID': 'id-status', 'rpc_url': rpc_url, 'onSuccess': function(data){
 	$('#id-status').empty();
 	$("#shadow").empty().css('z-index', 9).hide();
@@ -778,8 +778,8 @@ function changelog_dialog(e, object_key, orig_name){
  var bucket_id = $("body").attr("data-bucket-id");
  var root_uri=$('body').attr('data-root-uri');
  var hex_prefix=$("body").attr("data-hex-prefix");
- var rpc_url = root_uri+'action-log/'+bucket_id+'/';
- if(hex_prefix) rpc_url += hex_prefix+'?object_key='+object_key;
+ var rpc_url = root_uri+'audit-log/'+bucket_id;
+ if(hex_prefix) rpc_url += '/'+hex_prefix+'?object_key='+object_key;
  $("#dialog").dialog({
   title: '"'+object_key+'" changelog',
   autoOpen: false,
@@ -1224,8 +1224,8 @@ $('span.pushbutton').on('click', '#id-action-log', function(){
  var root_uri = $('body').attr('data-root-uri');
 
  var readable_prefix=unhex(hex_prefix);
- var rpc_url = root_uri+'action-log/'+bucket_id+'/';
- if(hex_prefix) rpc_url += hex_prefix;
+ var rpc_url = root_uri+'audit-log/'+bucket_id;
+ if(hex_prefix) rpc_url += '/'+hex_prefix;
  $("#dialog").dialog({
   title: 'History for Directory "'+(readable_prefix==""?"/":readable_prefix)+'"',
   autoOpen: false,
@@ -1257,7 +1257,7 @@ $('span.pushbutton').on('click', '#id-action-log', function(){
            $('#id-dialog-loading-message-text').hide();
         }
     });
-    stack.get_action_log(hex_prefix);
+    stack.get_audit_log(hex_prefix);
     if($(window).width()<670){
      $("#dialog").dialog("option", "width", 300);
      $("#dialog").dialog("option", "position", { my: "center", at: "center", of: window});
