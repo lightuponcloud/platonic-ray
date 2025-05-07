@@ -261,7 +261,7 @@ add_action_log_record(State) ->
 	[utils:to_binary(ObjectKey)],
 	[{status_code, 200},
 	 {request_id, null},
-	 {time_to_response_ns, null},
+	 {time_to_response, null},
 	 {user_id, User#user.id},
 	 {user_name, utils:unhex(erlang:list_to_binary(User#user.name))},
 	 {actor, user},

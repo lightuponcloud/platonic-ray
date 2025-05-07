@@ -801,15 +801,30 @@ function changelog_dialog(e, object_key, orig_name){
             $('#id-dialog-loading-message-text').hide();
 	    return;
 	   }
+	   var lines = data.trim().split('\n');
+	   const jsonObjects = lines.map(line => {
+             try {
+                return JSON.parse(line);
+             } catch (e) {
+                console.error("Invalid JSON line:", line);
+                return null;
+             }
+           }).filter(obj => obj !== null);
            $('#id-dialog-changelog-records').append('<div class="dry-data-container"><table class="dry-data-table" cellpadding="0" cellspacing="0"><thead><tr class="first-row"><th class="first-col" style="width:33%;">Date</th><th class="last-col" style="width:33%;">User</th><th class="last-col" style="width:33%;">&nbsp;</th></tr></thead><tbody id="id-dialog-changelog-records-tbody"></tbody></table></div>');
-           for(var i=0;i!=data.length;i++){
-               var author=data[i].author_name;
-	       var tel=data[i].author_tel;
-               var dt=data[i].last_modified_utc;
-               var d=new Date(dt*1000);
+           for(var i=0;i!=jsonObjects.length;i++){
+               var author=jsonObjects[i].user_name;
+	       var tel="";
+               var dt=jsonObjects[i].timestamp;
+	       var d = new Date(
+		  dt.slice(0, 4) + "-" +
+		  dt.slice(4, 6) + "-" +
+		  dt.slice(6, 8) + "T" +
+		  dt.slice(9, 11) + ":" +
+		  dt.slice(11, 13) + ":" +
+		  dt.slice(13, 15) + "Z"
+	       );
                var modified=pad(d.getDate(), 2)+'.'+pad(d.getMonth()+1,2)+'.'+d.getFullYear()+' '+pad(d.getHours(),2) + ":" + pad(d.getMinutes(), 2);
-	       var button='<span class="pushbutton"><button type="button" class="form-short-small-button2" id="id-restore_'+dt+'">Restore</button></span>';
-               $('#id-dialog-changelog-records-tbody').append('<tr><td>'+modified+'</td><td>'+author+(tel==undefined?"":"<br/>Tel: "+tel)+'</td><td>'+button+'</td></tr>');
+               $('#id-dialog-changelog-records-tbody').append('<tr><td>'+modified+'</td><td>'+author+'</td><td></td></tr>');
            };
            $('#id-dialog-loading-message-text').hide();
 	   $('button[id^=id-restore_]').unbind('click').click(function(e){
@@ -1243,16 +1258,22 @@ $('span.pushbutton').on('click', '#id-action-log', function(){
        'rpc_url': rpc_url,
        'onSuccess': function(data, status){
            $('#id-dialog-action-log-records').append('<div class="dry-data-container"><table class="dry-data-table" cellpadding="0" cellspacing="0"><thead><tr class="first-row"><th class="first-col" style="width:45%;">Event</th><th>&nbsp;</th><th class="last-col" style="width:20%;">User</th><th class="last-col" style="width:20%;">Date</th></tr></thead><tbody id="id-dialog-action-log-records-tbody"></tbody></table></div>');
+
            for(var i=0;i!=data.length;i++){
-               var details=data[i].details;
-               var user_name=data[i].user_name;
+               var author=data[i].user_name;
                var dt=data[i].timestamp;
-               var d=new Date(dt*1000);
-               var action_name = "";
-	       var object_key=data[i].object_key;
-               if(data[i].action=="delete") action_name = "Restore";
+	       var d = new Date(
+		  dt.slice(0, 4) + "-" +
+		  dt.slice(4, 6) + "-" +
+		  dt.slice(6, 8) + "T" +
+		  dt.slice(9, 11) + ":" +
+		  dt.slice(11, 13) + ":" +
+		  dt.slice(13, 15) + "Z"
+	       );
+               var details=data[i].compliance_metadata.summary;
+               var user_name=data[i].user_name;
                var modified=pad(d.getDate(), 2)+'.'+pad(d.getMonth()+1,2)+'.'+d.getFullYear()+' '+pad(d.getHours(),2) + ":" + pad(d.getMinutes(), 2);
-               $('#id-dialog-action-log-records-tbody').append('<tr><td>'+details+'</td><td><a id="id-action_'+i+'" href="#">'+action_name+'</a><input type="hidden" name="object_key" value="'+object_key+'"/></td><td>'+user_name+'</td><td>'+modified+'</td></tr>');
+               $('#id-dialog-action-log-records-tbody').append('<tr><td>'+details+'</td><td>'+(data[i].operation.time_to_response==undefined?'':data[i].operation.time_to_response+'s')+'</td><td>'+user_name+'</td><td>'+modified+'</td></tr>');
            };
            $('#id-dialog-loading-message-text').hide();
         }

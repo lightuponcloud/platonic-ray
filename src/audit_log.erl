@@ -332,7 +332,7 @@ log_to_s3(BucketId, Prefix, Entries) ->
                     {status, Status},
                     {status_code, proplists:get_value(status_code, Context, 200)},
                     {request_id, proplists:get_value(request_id, Context, null)},
-                    {time_to_response_ns, proplists:get_value(time_to_response_ns, Context, null)}
+                    {time_to_response, proplists:get_value(time_to_response, Context, null)}
                 ]},
                 {object_keys, IncludedObjectKeys},
                 {object_count, length(ObjectKeys)},

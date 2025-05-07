@@ -190,8 +190,9 @@ response(Req0, <<"POST">>, BucketId, Prefix, ObjectKey, User, Meta, Version, T0)
 			[utils:to_binary(ObjectKey)],
 			[{status_code, 200},
 			 {request_id, null},
-			 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+			 {time_to_response, utils:to_float(T1-T0)/1000},
 			 {user_id, User#user.id},
+			 {user_name, utils:unhex(erlang:list_to_binary(User#user.name))},
 			 {actor, user},
 			 {environment, null},
 			 {compliance_metadata, [{orig_name, OrigName}, {summary, Summary}]}]

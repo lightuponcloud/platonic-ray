@@ -163,7 +163,7 @@
         <div class="row"><a href="#"><span id="menu-copy"><span>Copy</span></span></a></div>
         <div class="row"><a href="#"><span id="menu-move"><span>Move</span></span></a></div>
         <div class="row"><a href="#"><span id="menu-rename"><span>Rename</span></span></a></div>
-        <div class="row"><a href="#"><span id="menu-changelog"><span>Changelog</span></span></a></div>
+        <!--div class="row"><a href="#"><span id="menu-changelog"><span>Changelog</span></span></a></div-->
         <!--div class="row"><a href="#"><span id="menu-lock"><span>Lock</span></span></a></div-->
     </div>
 </div>

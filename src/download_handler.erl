@@ -270,8 +270,9 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 				[OrigName],
 				[{status_code, 200},
 				 {request_id, null},
-				 {time_to_response_ns, utils:to_float(T1-T0)/1000},
+				 {time_to_response, utils:to_float(T1-T0)/1000},
 				 {user_id, User#user.id},
+				 {user_name, utils:unhex(erlang:list_to_binary(User#user.name))},
 				 {actor, user},
 				 {environment, null},
 				 {compliance_metadata, [{orig_name, OrigName}]}]

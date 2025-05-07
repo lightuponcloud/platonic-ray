@@ -58,18 +58,17 @@ init(Req0, _Opts) ->
 		 ?AUDIT_LOG_PREFIX,
 		 TenantId,
 		 "buckets",
-		 BucketId,
-		 Prefix
+		 BucketId
 	    ],
 	    LogPrefix1 =
 		case Year of
-		    undefined -> LogPrefix0;
+		    undefined -> utils:prefixed_object_key(LogPrefix0, Prefix);
 		    _ ->
 			case Month of
 			    undefined ->
-				utils:prefixed_object_key(LogPrefix0, lists:flatten(io_lib:format("~4.10.0B", [Year])));
+				utils:prefixed_object_key(LogPrefix0 ++ [Prefix], lists:flatten(io_lib:format("~4.10.0B", [Year])));
 			    _ ->
-				LogPrefix2 = lists:flatten(LogPrefix0 ++ [io_lib:format("~4.10.0B", [Year])]),
+				LogPrefix2 = lists:flatten(LogPrefix0 ++ [Prefix, io_lib:format("~4.10.0B", [Year])]),
 				utils:prefixed_object_key(LogPrefix2, lists:flatten(io_lib:format("~2.10.0B", [Month])))
 			end
 		end,
@@ -148,24 +147,20 @@ validate_day(Day) when is_binary(Day) ->
 validate_day(_) -> {error, 55}.
 
 
-% Filter objects by date and bucket_id
-filter_objects(Objects, Filters) ->
-    lists:filter(fun(Object) -> matches_filters(Object, Filters) end, Objects).
-
 % Check if an object matches the filters
 matches_filters(ObjectKey, #filter{event_id = EventId, day = FD}) ->
     case parse_key(ObjectKey) of
-	{ok, Day, EventId} -> (FD =:= undefined orelse FD =:= Day);
+	{ok, Day, GUID} -> (FD =:= undefined orelse FD =:= Day orelse GUID =:= EventId);
         error -> false
     end.
 
 %% Parse object key to extract date
 parse_key(Key) ->
     Filename = filename:rootname(filename:rootname(filename:basename(Key))),
-    case binary:split(Filename, <<"_">>) of
+    case string:tokens(Filename, "_") of
         [Day, EventId] ->
             try
-                {ok, erlang:binary_to_integer(Day), EventId}
+                {ok, utils:to_integer(Day), EventId}
             catch
                 _:_ -> error
             end;
@@ -177,24 +172,30 @@ parse_key(Key) ->
 %%
 stream_logs(Req0, BucketId0, Prefix, Filters, OperationName, T0) when OperationName =:= undefined ->
     BucketId1 = utils:to_binary(BucketId0),
-    ContentDisposition = << <<"attachment;filename=\"">>/binary, BucketId1/binary, <<"\"">>/binary >>,
+    ContentDisposition = << <<"attachment;filename=\"">>/binary, BucketId1/binary, <<".jsonl\"">>/binary >>,
     Headers0 = #{
 	<<"content-type">> => << "application/json" >>,
 	<<"content-disposition">> => ContentDisposition,
 	<<"start-time">> => io_lib:format("~.2f", [utils:to_float(T0)/1000])
     },
     Req1 = cowboy_req:stream_reply(200, Headers0, Req0),
-
     List0 = s3_api:recursively_list_pseudo_dir(?SECURITY_BUCKET_NAME, Prefix),
-    FilteredObjects = filter_objects(List0, Filters),
+    FilteredObjects =
+	lists:filter(fun(I) -> matches_filters(I, Filters) end, List0),
     lists:foreach(
 	fun(ObjectKey) ->
-	    case s3_api:get_object(BucketId0, ObjectKey) of
+	    case s3_api:get_object(?SECURITY_BUCKET_NAME, ObjectKey) of
 		{error, _Reason} -> ok;
 		not_found -> ok;
-		{ok, Response} ->
-		    BinBodyPart = proplists:get_value(content, Response),
-		    cowboy_req:stream_body(BinBodyPart, nofin, Req1)
+		Response ->
+		    try
+			BinBodyPart = audit_log:decompress_data(proplists:get_value(content, Response)),
+			cowboy_req:stream_body(BinBodyPart, nofin, Req1)
+		    catch
+			_:Reason ->
+			    lager:error("[audit_log_handler] failed to decompress ~p/~p: ~p",
+					[?SECURITY_BUCKET_NAME, ObjectKey, Reason])
+		    end
 	    end
 	end, FilteredObjects),
 
