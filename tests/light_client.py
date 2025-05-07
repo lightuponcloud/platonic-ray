@@ -105,6 +105,13 @@ class LightClient:
             "accept": "application/json",
             "content-range": ct_range
         }
+
+        if not self.token and not self.api_key:
+            raise AssertionError("Authorization information is missing")
+
+        if self.token:
+            headers.update({"authorization": "Token {}".format(self.token)})
+
         if offset + chunk_size == file_size:
             # last chunk
             etags = ",".join(["{},{}".format(i + 1, md5_list[i]) for i in range(len(md5_list))])
@@ -117,10 +124,7 @@ class LightClient:
         else:
             r_url = "{}riak/upload/{}/{}/{}/".format(self.url, bucket_id, upload_id, part_num)
 
-        if not self.token and not self.api_key:
-            raise AssertionError("Authorization information is missing")
-
-        signature = self.get_signed_url("POST", bucket_id, prefix)
+        signature = self.get_url_signature("POST", bucket_id, prefix)
         if signature:
             multipart_form_data.update({"signature": signature})
 
@@ -141,7 +145,13 @@ class LightClient:
                 return {"guid": guid, "upload_id": upload_id, "end_byte": end_byte,
                         "md5_list": md5_list, "part_num": part_num}
         if response.status_code != 200:
-            return {"error": response.content, "status_code": response.status_code}
+            try:
+                content = json.loads(response.content)
+                if "error" in content:
+                    content = content["error"]
+            except json.decoder.JSONDecodeError:
+                content = response.content
+            return {"error": content, "status_code": response.status_code}
         response_json = response.json()
 
         upload_id = response_json["upload_id"]
@@ -163,7 +173,7 @@ class LightClient:
                     content = content["error"]
             except json.decoder.JSONDecodeError:
                 content = response.content
-            return {"error": content, "status": response.status_code}
+            return {"error": content, "status_code": response.status_code}
         response_json = response.json()
         end_byte = response_json["end_byte"]
         if offset + chunk_size == file_size:
@@ -246,7 +256,7 @@ class LightClient:
             url = "{}{}".format(url, prefix)
 
         params = {}
-        signature = self.get_signed_url("GET", bucket_id, prefix)
+        signature = self.get_url_signature("GET", bucket_id, prefix)
         if signature:
             params.update({"signature": signature})
         if show_deleted:
@@ -259,7 +269,7 @@ class LightClient:
 
     def delete(self, bucket_id, object_keys: list, prefix: str = None):
         """
-        DELETE /riak/list/[:bucket_id]
+        DELETE /riak/object/[:bucket_id]
         Used to delete files and pseudo-directories.
         Marks objects as deleted. In case of pseudo-directoies, it renames them and makrs them as deleted.
 
@@ -283,13 +293,13 @@ class LightClient:
         data = {"object_keys": object_keys, "prefix": prefix}
         headers = {"accept": "application/json"}
 
-        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        url = "{}riak/object/{}/".format(self.url, bucket_id)
         if prefix:
             if prefix.endswith("/"):
                 prefix = prefix[:-1]
             url = "{}{}".format(url, prefix)
 
-        signature = self.get_signed_url("DELETE", bucket_id, prefix)
+        signature = self.get_url_signature("DELETE", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
 
@@ -299,7 +309,7 @@ class LightClient:
 
     def undelete(self, bucket_id, object_keys: list, prefix: str = None):
         """
-        DELETE /riak/list/[:bucket_id]
+        DELETE /riak/object/[:bucket_id]
         Used to restore files and pseudo-directories.
 
         Parameters
@@ -322,13 +332,13 @@ class LightClient:
         data = {"object_keys": object_keys, "prefix": prefix, "op": "undelete"}
         headers = {"accept": "application/json"}
 
-        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        url = "{}riak/object/{}/".format(self.url, bucket_id)
         if prefix:
             if prefix.endswith("/"):
                 prefix = prefix[:-1]
             url = "{}{}".format(url, prefix)
 
-        signature = self.get_signed_url("PATCH", bucket_id, prefix)
+        signature = self.get_url_signature("PATCH", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
 
@@ -338,7 +348,7 @@ class LightClient:
 
     def create_pseudo_directory(self, bucket_id, name: str, prefix: str = ""):
         """
-        POST /riak/list/[:bucket_id]
+        POST /riak/object/[:bucket_id]
         Uses this API endpoint to create pseudo-directory, that is stored as Hex-encoded value of UTF8 string.
 
         Parameters
@@ -355,13 +365,13 @@ class LightClient:
 
         headers = {"content-type": "application/json"}
         data = {"prefix": prefix, "directory_name": name}
-        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        url = "{}riak/object/{}/".format(self.url, bucket_id)
         if prefix:
             if prefix.endswith("/"):
                 prefix = prefix[:-1]
             url = "{}{}".format(url, prefix)
 
-        signature = self.get_signed_url("POST", bucket_id, prefix)
+        signature = self.get_url_signature("POST", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
 
@@ -388,13 +398,13 @@ class LightClient:
             "prefix": prefix,
             "objects": object_keys
         }
-        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        url = "{}riak/object/{}/".format(self.url, bucket_id)
         if prefix:
             if prefix.endswith("/"):
                 prefix = prefix[:-1]
             url = "{}{}".format(url, prefix)
 
-        signature = self.get_signed_url("PATCH", bucket_id, prefix)
+        signature = self.get_url_signature("PATCH", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
 
@@ -432,11 +442,11 @@ class LightClient:
             "dst_prefix": dst_prefix
         }
         url = "{}riak/move/{}/".format(self.url, src_bucket_id)
-        signature = self.get_signed_url("POST", src_bucket_id, src_prefix)
+        signature = self.get_url_signature("POST", src_bucket_id, src_prefix)
         if signature:
             data.update({
                 "src_signature": signature,
-                "dst_signature": self.get_signed_url("POST", dst_bucket_id, dst_prefix)
+                "dst_signature": self.get_url_signature("POST", dst_bucket_id, dst_prefix)
             })
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
@@ -475,11 +485,11 @@ class LightClient:
             "dst_prefix": dst_prefix
         }
         url = "{}riak/copy/{}/".format(self.url, src_bucket_id)
-        signature = self.get_signed_url("POST", src_bucket_id, src_prefix)
+        signature = self.get_url_signature("POST", src_bucket_id, src_prefix)
         if signature:
             data.update({
                 "src_signature": signature,
-                "dst_signature": self.get_signed_url("POST", dst_bucket_id, dst_prefix)
+                "dst_signature": self.get_url_signature("POST", dst_bucket_id, dst_prefix)
             })
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
@@ -513,7 +523,7 @@ class LightClient:
             "prefix": prefix
         }
         url = "{}riak/rename/{}/".format(self.url, bucket_id)
-        signature = self.get_signed_url("POST", bucket_id, prefix)
+        signature = self.get_url_signature("POST", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
         if self.token:
@@ -536,7 +546,7 @@ class LightClient:
                 prefix = prefix[:-1]
             url = "{}{}".format(url, prefix)
 
-        signature = self.get_signed_url("GET", bucket_id, prefix)
+        signature = self.get_url_signature("GET", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
         if self.token:
@@ -549,7 +559,7 @@ class LightClient:
 
         headers = {"content-type": "application/json"}
         url = "{}riak/version/{}/".format(self.url, bucket_id)
-        signature = self.get_signed_url("HEAD", bucket_id, "")
+        signature = self.get_url_signature("HEAD", bucket_id, "")
         if signature:
             url = "{}?signature={}".format(url, signature)
         if self.token:
@@ -569,7 +579,7 @@ class LightClient:
             url = "{}{}".format(url, prefix)
 
         url = "{}?object_key={}".format(url, object_key)
-        signature = self.get_signed_url("HEAD", bucket_id, prefix, object_key=object_key)
+        signature = self.get_url_signature("HEAD", bucket_id, prefix, object_key=object_key)
         if signature:
             url = "{}&signature={}".format(url, signature)
 
@@ -583,14 +593,14 @@ class LightClient:
 
         headers = {"content-type": "application/json"}
         url = "{}riak/action-log/{}/".format(self.url, bucket_id)
-        signature = self.get_signed_url("GET", bucket_id, prefix)
+        signature = self.get_url_signature("GET", bucket_id, prefix)
         if signature:
             url = "{}?signature={}".format(url, signature)
         if self.token:
             headers.update({"authorization": "Token {}".format(self.token)})
         return requests.get(url, headers=headers)
 
-    def get_signed_url(self, method, bucket_id, prefix, object_key=None):
+    def get_url_signature(self, method, bucket_id, prefix, object_key=None):
         signature = None
         if self.api_key:
             to_sign = bucket_id

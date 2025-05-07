@@ -280,7 +280,7 @@ flush_to_s3(FailedQueue) ->
 					    true -> Prefix0;
 					    false ->
 						case Prefix0 of
-						    undefined -> false;
+						    undefined -> undefined;
 						    _ -> Prefix0 ++ "/"
 						end
 					end,

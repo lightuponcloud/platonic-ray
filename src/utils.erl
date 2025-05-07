@@ -7,12 +7,12 @@
 -export([is_valid_bucket_id/2, is_restricted_bucket_id/1,
 	 is_valid_object_key/1, is_bucket_belongs_to_group/3, is_bucket_belongs_to_tenant/2,
 	 is_true/1, is_false/1, has_duplicates/1, ends_with/2, starts_with/2,
-	 even/1, validate_utf8/2, is_valid_hex_prefix/1, is_hidden_object/1,
+	 even/1, validate_utf8/1, is_valid_hex_prefix/1, is_hidden_object/1,
 	 is_hidden_prefix/1, get_token/1]).
 
 %% Conversions
 -export([to_integer/1, to_integer/2, to_float/1, to_float/2, to_number/1, to_list/1,
-	 to_binary/1, to_binary/2, to_atom/1, to_boolean/1, bytes_to_string/1]).
+	 to_binary/1, to_binary/2, to_boolean/1, bytes_to_string/1]).
 
 %% Ancillary
 -export([slugify_object_key/1, prefixed_object_key/2, alphanumeric/1,
@@ -31,7 +31,7 @@
 %%
 %% Extracts letters and digits from binary.
 %%
--spec alphanumeric(binary()|list()) -> list().
+-spec alphanumeric(binary() | string()) -> binary().
 
 alphanumeric(String) when erlang:is_list(String) ->
     alphanumeric(erlang:list_to_binary(String));
@@ -79,6 +79,11 @@ prefixed_object_key([], ObjectKey) -> ObjectKey;
 prefixed_object_key(".", ObjectKey) -> ObjectKey;
 prefixed_object_key(<<>>, ObjectKey) -> ObjectKey;
 prefixed_object_key(BucketId, undefined) -> BucketId;
+prefixed_object_key(BucketId, <<"/">>) -> BucketId;
+prefixed_object_key(BucketId, null) -> BucketId;
+prefixed_object_key(BucketId, []) -> BucketId;
+prefixed_object_key(BucketId, <<".">>) -> BucketId;
+prefixed_object_key(BucketId, <<>>) -> BucketId;
 
 %% Handle list of path components
 prefixed_object_key(List, ObjectKey) when erlang:is_list(List), erlang:length(List) > 0, erlang:is_list(hd(List)) ->
@@ -172,14 +177,15 @@ to_integer(X, nonstrict)
 to_integer(X, S)
   when erlang:is_binary(X) ->
     to_integer(erlang:binary_to_list(X), S);
-to_integer(X, S)
-  when erlang:is_list(X) ->
-    try erlang:list_to_integer(X) of
-        Result ->
-            Result
-    catch
-        error:badarg when S =:= nonstrict ->
-            erlang:round(erlang:list_to_float(X))
+to_integer(X, S) when erlang:is_list(X) ->
+    case string:to_integer(X) of
+        {Int, []} when erlang:is_integer(Int) -> Int;
+        _ when S =:= nonstrict ->
+            case string:to_float(X) of
+                {Float, []} -> erlang:round(Float);
+                _ -> erlang:error(badarg)
+            end;
+        _ -> erlang:error(badarg)
     end;
 to_integer(X, _)
   when erlang:is_integer(X) ->
@@ -263,10 +269,31 @@ to_binary(X) when erlang:is_list(X) ->
 to_binary(X) when erlang:is_binary(X) ->
     X.
 
-to_binary(PositiveNumber, Decimals) when erlang:is_integer(PositiveNumber) andalso erlang:is_integer(Decimals) ->
-    to_binary(erlang:float(PositiveNumber), Decimals);
-to_binary(PositiveNumber, Decimals) when erlang:is_float(PositiveNumber) andalso erlang:is_integer(Decimals) ->
-    erlang:float_to_binary(PositiveNumber, [{decimals, Decimals}]).
+%% @private Converts number to binary with specified precision
+-spec to_binary(number(), integer()) -> binary().
+to_binary(Number, Precision) when Precision >= 0 ->
+    % Use ~.Nf formatting for specified precision
+    erlang:list_to_binary(io_lib:format("~.*f", [Precision, Number]));
+to_binary(Number, _) when erlang:is_integer(Number) ->
+    integer_to_binary(Number);
+to_binary(Number, _) when erlang:is_float(Number) ->
+    % Use default representation for floats
+    Bin = erlang:float_to_binary(Number, [{decimals, 10}, compact]),
+    % Remove trailing zeros after decimal point
+    remove_trailing_zeros(Bin).
+
+%% @private Removes trailing zeros from float binary representation
+-spec remove_trailing_zeros(binary()) -> binary().
+remove_trailing_zeros(Bin) ->
+    case binary:match(Bin, <<".">>) of
+        nomatch -> Bin;
+        _ ->
+            case binary:last(Bin) of
+                $0 -> remove_trailing_zeros(binary:part(Bin, 0, byte_size(Bin) - 1));
+                $. -> binary:part(Bin, 0, byte_size(Bin) - 1);
+                _ -> Bin
+            end
+    end.
 
 -spec to_boolean(binary() | string() | atom()) ->
                         boolean().
@@ -291,46 +318,73 @@ is_false("false") -> true;
 is_false(false) -> true;
 is_false(_) -> false.
 
-%% @doc
-%% Automation conversion a term to an existing atom. badarg is
-%% returned if the atom doesn't exist.  the safer version, won't let
-%% you leak atoms
--spec to_atom(atom() | list() | binary() | integer() | float()) ->
-                     atom().
-to_atom(X) when erlang:is_atom(X) ->
-    X;
-to_atom(X) when erlang:is_list(X) ->
-    erlang:list_to_atom(X);
-to_atom(X) ->
-    to_atom(to_list(X)).
-
 %% This function returns 0 on success, 1 on error, and 2..8 on incomplete data.
-validate_utf8(<<>>, State) -> State;
-validate_utf8(<< C, Rest/bits >>, 0) when C < 128 -> validate_utf8(Rest, 0);
-validate_utf8(<< C, Rest/bits >>, 2) when C >= 128, C < 144 -> validate_utf8(Rest, 0);
-validate_utf8(<< C, Rest/bits >>, 3) when C >= 128, C < 144 -> validate_utf8(Rest, 2);
-validate_utf8(<< C, Rest/bits >>, 5) when C >= 128, C < 144 -> validate_utf8(Rest, 2);
-validate_utf8(<< C, Rest/bits >>, 7) when C >= 128, C < 144 -> validate_utf8(Rest, 3);
-validate_utf8(<< C, Rest/bits >>, 8) when C >= 128, C < 144 -> validate_utf8(Rest, 3);
-validate_utf8(<< C, Rest/bits >>, 2) when C >= 144, C < 160 -> validate_utf8(Rest, 0);
-validate_utf8(<< C, Rest/bits >>, 3) when C >= 144, C < 160 -> validate_utf8(Rest, 2);
-validate_utf8(<< C, Rest/bits >>, 5) when C >= 144, C < 160 -> validate_utf8(Rest, 2);
-validate_utf8(<< C, Rest/bits >>, 6) when C >= 144, C < 160 -> validate_utf8(Rest, 3);
-validate_utf8(<< C, Rest/bits >>, 7) when C >= 144, C < 160 -> validate_utf8(Rest, 3);
-validate_utf8(<< C, Rest/bits >>, 2) when C >= 160, C < 192 -> validate_utf8(Rest, 0);
-validate_utf8(<< C, Rest/bits >>, 3) when C >= 160, C < 192 -> validate_utf8(Rest, 2);
-validate_utf8(<< C, Rest/bits >>, 4) when C >= 160, C < 192 -> validate_utf8(Rest, 2);
-validate_utf8(<< C, Rest/bits >>, 6) when C >= 160, C < 192 -> validate_utf8(Rest, 3);
-validate_utf8(<< C, Rest/bits >>, 7) when C >= 160, C < 192 -> validate_utf8(Rest, 3);
-validate_utf8(<< C, Rest/bits >>, 0) when C >= 194, C < 224 -> validate_utf8(Rest, 2);
-validate_utf8(<< 224, Rest/bits >>, 0) -> validate_utf8(Rest, 4);
-validate_utf8(<< C, Rest/bits >>, 0) when C >= 225, C < 237 -> validate_utf8(Rest, 3);
-validate_utf8(<< 237, Rest/bits >>, 0) -> validate_utf8(Rest, 5);
-validate_utf8(<< C, Rest/bits >>, 0) when C =:= 238; C =:= 239 -> validate_utf8(Rest, 3);
-validate_utf8(<< 240, Rest/bits >>, 0) -> validate_utf8(Rest, 6);
-validate_utf8(<< C, Rest/bits >>, 0) when C =:= 241; C =:= 242; C =:= 243 -> validate_utf8(Rest, 7);
-validate_utf8(<< 244, Rest/bits >>, 0) -> validate_utf8(Rest, 8);
-validate_utf8(_, _) -> 1.
+%% Tail-recursive UTF-8 binary validator
+
+%% Main entry point with fast path validation
+validate_utf8(Bin) when is_binary(Bin) ->
+    %% Try fast path first
+    case unicode:characters_to_binary(Bin) of
+        {error, _, _} -> 1;  %% Invalid UTF-8
+        {incomplete, _, _} -> 1;  %% Incomplete UTF-8 sequence
+        _ -> 
+            %% Perform detailed validation with state machine
+            validate_utf8(Bin, 0, [])
+    end.
+
+%% Tail-recursive implementation with state and accumulator
+validate_utf8(<<>>, 0, _Acc) -> 0;  %% Valid if we end in state 0
+validate_utf8(<<>>, _State, _Acc) -> 1;  %% Invalid if we end in any other state
+validate_utf8(<< C, Rest/binary >>, 0, Acc) when C < 128 ->
+    %% ASCII character
+    validate_utf8(Rest, 0, [C | Acc]);
+validate_utf8(<< C, Rest/binary >>, 0, Acc) when C >= 194, C < 224 ->
+    %% 2-byte sequence start
+    validate_utf8(Rest, 2, [C | Acc]);
+validate_utf8(<< 224, Rest/binary >>, 0, Acc) ->
+    %% 3-byte sequence start (with special handling for 0xE0)
+    validate_utf8(Rest, 4, [224 | Acc]);
+validate_utf8(<< C, Rest/binary >>, 0, Acc) when C >= 225, C < 237 ->
+    %% Standard 3-byte sequence start
+    validate_utf8(Rest, 3, [C | Acc]);
+validate_utf8(<< 237, Rest/binary >>, 0, Acc) ->
+    %% 3-byte sequence start (with special handling for 0xED)
+    validate_utf8(Rest, 5, [237 | Acc]);
+validate_utf8(<< C, Rest/binary >>, 0, Acc) when C =:= 238; C =:= 239 ->
+    %% Standard 3-byte sequence start
+    validate_utf8(Rest, 3, [C | Acc]);
+validate_utf8(<< 240, Rest/binary >>, 0, Acc) ->
+    %% 4-byte sequence start (with special handling for 0xF0)
+    validate_utf8(Rest, 6, [240 | Acc]);
+validate_utf8(<< C, Rest/binary >>, 0, Acc) when C =:= 241; C =:= 242; C =:= 243 ->
+    %% Standard 4-byte sequence start
+    validate_utf8(Rest, 7, [C | Acc]);
+validate_utf8(<< 244, Rest/binary >>, 0, Acc) ->
+    %% 4-byte sequence start (with special handling for 0xF4)
+    validate_utf8(Rest, 8, [244 | Acc]);
+validate_utf8(<< C, Rest/binary >>, 2, Acc) when C >= 128, C < 192 ->
+    %% Valid continuation byte for state 2
+    validate_utf8(Rest, 0, [C | Acc]);
+validate_utf8(<< C, Rest/binary >>, 3, Acc) when C >= 128, C < 192 ->
+    %% Valid continuation byte for state 3
+    validate_utf8(Rest, 2, [C | Acc]);
+validate_utf8(<< C, Rest/binary >>, 4, Acc) when C >= 160, C < 192 ->
+    %% Valid continuation byte for state 4 (special case for 0xE0)
+    validate_utf8(Rest, 2, [C | Acc]);
+validate_utf8(<< C, Rest/binary >>, 5, Acc) when C >= 128, C < 160 ->
+    %% Valid continuation byte for state 5 (special case for 0xED)
+    validate_utf8(Rest, 2, [C | Acc]);
+validate_utf8(<< C, Rest/binary >>, 6, Acc) when C >= 144, C < 192 ->
+    %% Valid continuation byte for state 6 (special case for 0xF0)
+    validate_utf8(Rest, 3, [C | Acc]);
+validate_utf8(<< C, Rest/binary >>, 7, Acc) when C >= 128, C < 192 ->
+    %% Valid continuation byte for state 7
+    validate_utf8(Rest, 3, [C | Acc]);
+validate_utf8(<< C, Rest/binary >>, 8, Acc) when C >= 128, C < 144 ->
+    %% Valid continuation byte for state 8 (special case for 0xF4)
+    validate_utf8(Rest, 3, [C | Acc]);
+validate_utf8(_, _, _) -> 1.  %% Any other case is invalid
+
 
 %% This function returns 0 on success, 1 on error.
 %% Usage: case even(byte_size(Str)) of true -> validate_hex();..
@@ -353,7 +407,7 @@ validate_hex(_, _) -> 1.
 is_valid_bucket_id(undefined, _TenantId) -> false;
 is_valid_bucket_id(BucketId, TenantId) when erlang:is_list(BucketId) ->
     Bits = string:tokens(BucketId, "-"),
-    case length(BucketId) =< 63 of
+    case length(BucketId) =< ?MAX_BUCKET_LENGTH of
 	false -> false;
 	true ->
 	    case length(Bits) of
@@ -425,9 +479,13 @@ is_bucket_belongs_to_group(BucketId, TenantId, GroupName)
     when erlang:is_list(BucketId), erlang:is_list(TenantId),
 	 erlang:is_list(GroupName) ->
     Bits = string:tokens(BucketId, "-"),
-    BucketTenantId = string:to_lower(lists:nth(2, Bits)),
-    BucketGroupName = string:to_lower(lists:nth(3, Bits)),
-    BucketGroupName =:= GroupName andalso BucketTenantId =:= TenantId;
+    case length(Bits) >= 4 of
+        true ->
+            BucketTenantId = string:to_lower(lists:nth(2, Bits)),
+            BucketGroupName = string:to_lower(lists:nth(3, Bits)),
+            BucketGroupName =:= GroupName andalso BucketTenantId =:= TenantId;
+        false -> false
+    end;
 is_bucket_belongs_to_group(_,_,_) -> false.
 
 is_bucket_belongs_to_tenant(BucketId, TenantId)
@@ -459,7 +517,7 @@ is_valid_object_key(<< _, Rest/bits >>, 0) -> is_valid_object_key(Rest, 0).
 
 is_valid_object_key(<<>>) -> false;
 is_valid_object_key(Prefix) when erlang:is_binary(Prefix) ->
-    (size(Prefix) =< 254) andalso (validate_utf8(Prefix, 0) =:= 0) andalso (is_valid_object_key(Prefix, 0) =:= 0);
+    (size(Prefix) =< 254) andalso (validate_utf8(Prefix) =:= 0) andalso (is_valid_object_key(Prefix, 0) =:= 0);
 is_valid_object_key(_) -> false.
 
 digit(0) -> $0;
@@ -716,51 +774,99 @@ get_server_version(App) ->
     proplists:get_value(version, Config).
 
 
--spec split_thousands(binary()) -> [<<_:24>>].
+
+
+%% @doc Formats a number with thousand separators
+%% Validates input is a number and handles negative numbers properly
+%% Returns formatted string or throws badarg for invalid inputs
+-spec format_bytes(number()) -> binary().
+format_bytes(Number) ->
+    format_bytes(Number, #{}).
+
+%% @doc Formats a number with thousand separators with options
+%% Options map can include:
+%%   - separator: binary() - custom thousand separator (default: <<",">>)
+%%   - decimal_point: binary() - custom decimal point (default: <<".">>)
+%%   - precision: integer() - decimal precision (default: determined by input)
+-spec format_bytes(number(), map()) -> binary().
+format_bytes(Number, Options) when (is_integer(Number) orelse is_float(Number)) ->
+    % Extract options with defaults
+    Separator = maps:get(separator, Options, <<",">>),
+    DecimalPoint = maps:get(decimal_point, Options, <<".">>),
+    
+    % Handle sign separately
+    {Sign, PositiveNumber} = case Number < 0 of
+        true -> {<<"-">>, erlang:abs(Number)};
+        false -> {<<>>, Number}
+    end,
+    
+    % Convert to binary representation
+    BinNum = case is_map_key(precision, Options) of
+        true ->
+            Precision = maps:get(precision, Options),
+            to_binary(PositiveNumber, Precision);
+        false ->
+            to_binary(PositiveNumber, -1)  % Use default precision
+    end,
+    
+    % Split integer and decimal parts
+    {IntegerPart, DecimalPart} = case binary:split(BinNum, <<".">>, [global]) of
+        [I, D] -> {I, D};
+        [I] -> {I, <<>>}
+    end,
+    
+    % Format the integer part with thousand separators
+    FormattedIntegerPart = format_integer_part(IntegerPart, Separator),
+    
+    % Combine parts
+    FullNumber = case DecimalPart of
+        <<>> ->
+            FormattedIntegerPart;
+        _ ->
+            <<FormattedIntegerPart/binary, DecimalPoint/binary, DecimalPart/binary>>
+    end,
+    
+    % Apply sign
+    <<Sign/binary, FullNumber/binary>>;
+
+format_bytes(_, _) ->
+    erlang:error(badarg).
+
+%% @private Formats the integer part with thousand separators
+-spec format_integer_part(binary(), binary()) -> binary().
+format_integer_part(IntegerPart, Separator) ->
+    HeadSize = byte_size(IntegerPart) rem 3,
+    case HeadSize of
+        0 when byte_size(IntegerPart) =:= 0 ->
+            <<"0">>;  % Handle "0" or "0.xxx" case
+        0 ->
+            % Integer part is already divisible by 3, start splitting from beginning
+            ThousandParts = split_thousands(IntegerPart),
+	    join_binary_with_separator(ThousandParts, Separator);
+        _ ->
+            % Extract head and rest
+            <<Head:HeadSize/binary, Rest/binary>> = IntegerPart,
+            ThousandParts = split_thousands(Rest),
+            AllParts = [Head | ThousandParts],
+	    join_binary_with_separator(AllParts, Separator)
+    end.
+
+%% @private Splits binary into chunks of 3 characters
+-spec split_thousands(binary()) -> [binary()].
+split_thousands(<<>>) -> [];
 split_thousands(Bin) ->
     split_thousands(Bin, []).
 
--spec split_thousands(binary(), [<<_:24>>]) -> [<<_:24>>].
-split_thousands(<<>>, List) ->
-    lists:reverse(List);
-split_thousands(<<B:3/binary, Rest/binary>>, List) ->
-    split_thousands(Rest, [B | List]).
-
-
--spec format_bytes(integer()) -> string().
-
-format_bytes(Number) when erlang:is_integer(Number) orelse erlang:is_float(Number) ->
-    PositiveNumber = case Number < 0 of
-        false -> Number;
-        true  -> erlang:abs(Number)
-    end,
-    BinNum = utils:to_binary(PositiveNumber, 1),
-    {IntegerPart, DecimalPart} = case binary:split(BinNum, <<".">>, [global]) of
-        [I, D] -> {I, D}; % ex: <<"12.345">> -> [<<"12">>, <<"345">>]
-        [I] -> {I, <<>>} % ex: <<"12345">> -> [<<"12345">>] (when Precision < 1)
-    end,
-    HeadSize = erlang:byte_size(IntegerPart) rem 3,
-    <<Head:HeadSize/binary, IntRest/binary>> = IntegerPart, % ex: <<"12", "345678">> = <<"12345678">>
-    ThousandParts = split_thousands(IntRest), % ex: <<"345678">> -> [<<"345">>, <<678>>]
-    AllIntegerParts = case HeadSize > 0 of
-        true  -> [Head|ThousandParts];
-        false -> ThousandParts
-    end,
-    % Join with thousands separator
-    FormattedIntegerPart = utils:join_binary_with_separator(AllIntegerParts, <<",">>),
-    PositiveFormattedNumber = case DecimalPart of
-        <<>> ->
-            FormattedIntegerPart;
-        _    ->
-            DecimalPoint = <<".">>,
-            <<FormattedIntegerPart/binary, DecimalPoint/binary, DecimalPart/binary>>
-    end,
-    % Insert "-" before number if negative
-    FormattedNumber1 = case Number < 0 of
-        false -> PositiveFormattedNumber;
-        true  -> <<"-", PositiveFormattedNumber/binary>>
-    end,
-    FormattedNumber1.
+split_thousands(<<>>, Acc) ->
+    lists:reverse(Acc);
+split_thousands(Bin, Acc) ->
+    case byte_size(Bin) of
+        Size when Size =< 3 ->
+            lists:reverse([Bin | Acc]);
+        _ ->
+            <<Chunk:3/binary, Rest/binary>> = Bin,
+            split_thousands(Rest, [Chunk | Acc])
+    end.
 
 
 bytes_to_string(Size) ->

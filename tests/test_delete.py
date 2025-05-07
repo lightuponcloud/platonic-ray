@@ -5,6 +5,8 @@ import time
 from client_base import (
     BASE_URL,
     REGION,
+    USERNAME_1,
+    PASSWORD_1,
     TEST_BUCKET_1,
     USER_1_API_KEY,
     TestClient,
@@ -30,7 +32,7 @@ class DeleteTest(TestClient):
     """
 
     def setUp(self):
-        self.client = LightClient(REGION, BASE_URL, api_key=USER_1_API_KEY)
+        self.client = LightClient(REGION, BASE_URL, username=USERNAME_1, password=PASSWORD_1)
         self.resource = configure_boto3()
         self.purge_test_buckets()
 
@@ -101,6 +103,7 @@ class DeleteTest(TestClient):
 
         # 2.1 delete file from pseudo-directory and check for is_deleted: True
         response = self.client.delete(TEST_BUCKET_1, object_keys=object_key, prefix=dir_name_prefix)
+        import pdb;pdb.set_trace()
         self.assertEqual(response.json(), object_key)
 
         result = self.client.get_list(TEST_BUCKET_1).json()

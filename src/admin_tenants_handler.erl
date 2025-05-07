@@ -398,10 +398,10 @@ validate_boolean(Flag0, Field, Default)
     case byte_size(Flag0) > 5 of
 	true -> {error, {Field, <<"Incorrect boolean value.">>}};
 	false ->
-	    Flag1 = utils:to_atom(Flag0),
-	    case Flag1 =:= true orelse Flag1 =:= false of
-		true -> Flag1;
-		false -> {error, <<"Incorrect boolean value">>}
+	    case Flag0 of
+		<<"true">> -> true;
+		<<"false">> -> false;
+		_ -> {error, <<"Incorrect boolean value">>}
 	    end
     end.
 

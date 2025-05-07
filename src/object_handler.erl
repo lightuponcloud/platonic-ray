@@ -16,7 +16,7 @@
 -module(object_handler).
 -behavior(cowboy_handler).
 
--export([init/2, content_types_accepted/2,
+-export([init/2, content_types_accepted/2, content_types_provided/2, to_json/2,
     allowed_methods/2, forbidden/2, is_authorized/2,
     resource_exists/2, previously_existed/2, patch_resource/2,
     validate_post/2, create_pseudo_directory/2, handle_post/2,
@@ -47,6 +47,15 @@ content_types_accepted(Req, State) ->
 	<<"POST">> ->
 	    {[{{<<"application">>, <<"json">>, '*'}, handle_post}], Req, State}
     end.
+
+content_types_provided(Req, State) ->
+    {[
+	{{<<"application">>, <<"json">>, '*'}, to_json}
+    ], Req, State}.
+
+to_json(Req, State) ->
+    %% Provide a JSON response if needed
+    {<<"{\"message\": \"ok\"}">>, Req, State}.
 
 %%
 %% Checks if provided token is correct.
@@ -135,8 +144,7 @@ parse_object_record(Metadata, Options) ->
 %%   "prefix": "74657374/"
 %% }
 %%
-validate_patch(Body, State) ->
-    BucketId = proplists:get_value(bucket_id, State),
+validate_patch(BucketId, Body) ->
     case jsx:is_json(Body) of
 	{error, badarg} -> {error, 21};
 	false -> {error, 21};
@@ -166,14 +174,20 @@ validate_patch(Body, State) ->
 %% PATCH request is used to mark objects as locked/unlocked/not deleted.
 %%
 patch_resource(Req0, State) ->
+    PathInfo = cowboy_req:path_info(Req0),
+    BucketId =
+	case lists:nth(1, PathInfo) of
+	    undefined -> undefined;
+	    <<>> -> undefined;
+	    BV0 -> erlang:binary_to_list(BV0)
+	end,
     case proplists:get_value(user, State) of
 	undefined -> js_handler:unauthorized(Req0, 28);
 	User ->
 	    {ok, Body, Req1} = cowboy_req:read_body(Req0),
-	    case validate_patch(Body, State) of
+	    case validate_patch(BucketId, Body) of
 		{error, Number} -> js_handler:bad_request(Req1, Number);
 		{Prefix, ObjectsList, Operation} ->
-		    BucketId = proplists:get_value(bucket_id, State),
 		    patch_operation(Req0, Operation, BucketId, Prefix, User, ObjectsList)
 	    end
     end.
@@ -660,11 +674,20 @@ create_pseudo_directory(Req0, State) when erlang:is_list(State) ->
 %% Creates pseudo directory.
 %%
 handle_post(Req0, State0) ->
-    BucketId = proplists:get_value(bucket_id, State0),
-    case s3_api:head_bucket(BucketId) of
-	not_found -> s3_api:create_bucket(BucketId);
-	_ -> ok
-    end,
+    PathInfo = cowboy_req:path_info(Req0),
+    BucketId =
+	case lists:nth(1, PathInfo) of
+	    undefined -> undefined;
+	    <<>> -> undefined;
+	    BV0 ->
+		BV1 = erlang:binary_to_list(BV0),
+		case s3_api:head_bucket(BV1) of
+		    not_found ->
+			s3_api:create_bucket(BV1),
+			BV1;
+		    _ -> BV1
+		end
+	end,
     {ok, Body, Req1} = cowboy_req:read_body(Req0),
     case validate_post(Body, BucketId) of
 	{error, Number} -> js_handler:bad_request(Req1, Number);
@@ -684,8 +707,14 @@ handle_post(Req0, State0) ->
 %%
 %% Checks if valid bucket id and JSON request provided.
 %%
-basic_delete_validations(Req0, State) ->
-    BucketId = proplists:get_value(bucket_id, State),
+basic_delete_validations(Req0) ->
+    PathInfo = cowboy_req:path_info(Req0),
+    BucketId =
+	case lists:nth(1, PathInfo) of
+	    undefined -> undefined;
+	    <<>> -> undefined;
+	    BV0 -> erlang:binary_to_list(BV0)
+	end,
     case s3_api:head_bucket(BucketId) of
 	not_found -> {error, 7};
 	_ ->
@@ -711,7 +740,7 @@ validate_delete(Req0, State) ->
     case proplists:get_value(user, State) of
 	undefined -> js_handler:unauthorized(Req0, 28);
 	_ ->
-	    case basic_delete_validations(Req0, State) of
+	    case basic_delete_validations(Req0) of
 		{error, Number} -> {error, Number};
 		{Req1, BucketId, Prefix, ObjectKeys0} ->
 		    List0 = indexing:get_index(BucketId, Prefix),
@@ -898,7 +927,6 @@ delete_objects(BucketId, Prefix, ObjectKeys0, Timestamp, User) ->
 		    [element(1, I) || I <- ObjectKeys1]
 	    end
     end.
-
 
 delete_resource(Req0, State) ->
     case validate_delete(Req0, State) of

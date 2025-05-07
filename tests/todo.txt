@@ -1,5 +1,0 @@
-One signature per tenant issue
- two users have one signature, no way to check who can update lock !
-
-1. make sure users from different tenants can't read / write other buckets
-

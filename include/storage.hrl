@@ -78,6 +78,10 @@
 %%
 -define(FILE_UPLOAD_CHUNK_SIZE, 2000000).  % 2 MB
 %%
+%% Maximum length of bucket. In Riak CS it would be 63
+%%
+-define(MAX_BUCKET_LENGTH, 63).
+%%
 %% Ther's convention within that project to use the
 %% following bucket names
 %% the-projectname-groupname-res
