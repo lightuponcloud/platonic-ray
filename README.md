@@ -91,6 +91,17 @@ You will need the following dependencies.
 
 * libmagickwand-dev
 
+When dependencies installed, do the following
+
+wget https://s3.amazonaws.com/rebar3/rebar3
+chmod +x rebar3
+
+rebar3 clean
+rebar3 compile
+rebar3 release
+
+export C_INCLUDE_PATH=/usr/include/ImageMagick-6:/usr/include/x86_64-linux-gnu/ImageMagick-6
+export LIBRARY_PATH=/usr/include/ImageMagick-6
 
 #### 1. Build Riak CS
 

@@ -29,7 +29,7 @@ from light_client import LightClient
 class UploadTest(TestClient):
 
     def setUp(self):
-        self.client = LightClient(BASE_URL, USERNAME_1, PASSWORD_1)
+        self.client = LightClient(REGION, BASE_URL, username=USERNAME_1, password=PASSWORD_1)
         self.user_id = self.client.user_id
         self.token = self.client.token
         self.resource = configure_boto3()

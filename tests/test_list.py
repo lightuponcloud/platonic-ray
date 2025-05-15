@@ -53,7 +53,6 @@ class ListTest(TestClient):
         url = "{}/riak/list/{}/?signature={}".format(BASE_URL, TEST_BUCKET_1, signature)
 
         response = requests.get(url, timeout=2)
-        import pdb;pdb.set_trace()
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(('list' in data))

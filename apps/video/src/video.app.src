@@ -1,0 +1,13 @@
+{application, video, [
+    {description, "Video processing application"},
+    {vsn, "0.2.0"},
+    {registered, [video_sup]},
+    {mod, {video_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        common_lib
+    ]},
+    {env, []},
+    {modules, [video_app, video_sup, video]}
+]}.

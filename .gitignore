@@ -5,13 +5,10 @@ _build
 ebin/*.beam
 ebin/*.app
 .eunit/
-.erlang.mk/
 .rebar/
 rebar
 deps/
 _rel/
-middleware.d
-erlang.mk
 erl_crash.dump
 .edts
 eunit.coverage.xml

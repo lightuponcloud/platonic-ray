@@ -1,0 +1,28 @@
+{application, platonicray,
+ [
+  {description, "File synchronization server"},
+  {vsn, "0.2.0"},
+  {registered, [platonicray_sup]},
+  {mod, {platonicray_app, []}},
+  {applications,
+   [kernel,
+    stdlib,
+    common_lib,
+    cowboy,    % Web server
+    cowlib,    % Cowboy library dependencies
+    ranch,     % Socket acceptor for Cowboy
+    crypto,    % Needed for security features
+    ssl,       % Needed for secure connections
+    inets,     % Common dependency for web apps
+    jsx,       % JSON parsing
+    lager,     % Logging
+    erlydtl,   % Template handling
+    img,       % Image processing application
+    video,     % Video processing application
+    sqlite3    % Database
+   ]},
+  {env,[]},
+  {modules, []},
+  {licenses, ["Apache-2.0"]},
+  {links, []}
+ ]}.

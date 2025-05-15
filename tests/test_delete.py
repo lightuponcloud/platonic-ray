@@ -103,7 +103,6 @@ class DeleteTest(TestClient):
 
         # 2.1 delete file from pseudo-directory and check for is_deleted: True
         response = self.client.delete(TEST_BUCKET_1, object_keys=object_key, prefix=dir_name_prefix)
-        import pdb;pdb.set_trace()
         self.assertEqual(response.json(), object_key)
 
         result = self.client.get_list(TEST_BUCKET_1).json()

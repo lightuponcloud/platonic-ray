@@ -9,10 +9,6 @@ COPY priv /middleware/priv
 COPY rel /middleware/rel
 COPY src /middleware/src
 COPY templates /middleware/templates
-COPY Makefile /middleware/Makefile
-COPY erlang.mk /middleware/erlang.mk
-COPY relx.config /middleware/relx.config
-
 
 ENV C_INCLUDE_PATH=/usr/lib:/usr/lib/erlang/usr/include:/usr/include/ImageMagick-6
 ENV LIBRARY_PATH=/usr/lib:/usr/lib/erlang/usr/include:/usr/include/ImageMagick-6

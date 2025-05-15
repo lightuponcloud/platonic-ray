@@ -1,0 +1,15 @@
+{application, common_lib,
+ [
+  {description, "Common library for shared code and includes"},
+  {vsn, "0.2.0"},
+  {registered, []},
+  {mod, {common_lib_app, []}},
+  {applications,
+   [kernel,
+    stdlib
+   ]},
+  {env,[]},
+  {modules, []},
+  {licenses, ["Apache-2.0"]},
+  {links, []}
+ ]}.

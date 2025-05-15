@@ -1,0 +1,13 @@
+{application, img, [
+    {description, "Image processing port application"},
+    {vsn, "0.2.0"},
+    {registered, [img_sup]},
+    {mod, {img_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        common_lib
+    ]},
+    {env, []},
+    {modules, [img_app, img_sup, img]}
+]}.
