@@ -18,7 +18,7 @@ Core Features
 2. **Thumbnails & watermarks**
 
     Need a quick preview? Thumbnails generate on demand via a dedicated process—fast and efficient. 
-    Toss a watermark.png in your bucket, and it’s automatically stamped on every thumbnail. 
+    Add a watermark.png in your bucket, and it’s automatically applied on every thumbnail. 
     Perfect for photographers and designers who need to protect their intellectual property while maintaining efficient workflows.
 
 3. **File & directory sharing**
@@ -39,7 +39,7 @@ Core Features
 
 7. **API**
 
-    Embed file sharing into your own apps with our easy-to-use API (see API reference (API.md)). Customize it for your workflow—think private file-sharing portals, automated backups, or integrating with your existing tools.
+    Embed file sharing into your own apps with our easy-to-use API. Customize it for your workflow—think private file-sharing portals, automated backups, or integrating with your existing tools.
 
     [See API reference](API.md)
 
@@ -47,13 +47,13 @@ Core Features
 
 ## Why It’s a Big Deal
 
-**Private File Sharing**: Host your own disaster-proof storage on-premises and scale as needed—highly available, no middleman.
+- **Private File Sharing**: Host your own disaster-proof storage on-premises and scale as needed—highly available, no middleman.
 
-**Team Collaboration**: Share massive files, lock what you’re working on, track every change, and search everything with full-text support. LAN sync keeps it blazing fast locally.
+- **Team Collaboration**: Share massive files, lock what you’re working on, track every change, and search everything with full-text support. LAN sync keeps it blazing fast locally.
 
-**Media Workflows**: Upload HD videos or live streams in a snap, replicate data to multiple clusters (CDN, analytics, transcoding)—all at once.
+- **Media Workflows**: Upload HD videos or live streams in a snap, replicate data to multiple clusters (CDN, analytics, transcoding)—all at once.
 
-**Multi-Datacenter Power**: Spread your data across locations for compliance (GDPR, CCPA), lower latency, and better performance.
+- **Multi-Datacenter Power**: Spread your data across locations for compliance (GDPR, CCPA), lower latency, and better performance.
 
 
 
@@ -74,7 +74,7 @@ tough, and true to its promise of clarity. Here’s why it matters to you:
 
 [See "How to install on AWS"](cdk/README.md)
 
-**Architecture is simple**:
+**Architecture Overview**:
 ![Platonic Ray Application](cdk/aws_architecture.png)
 
 
@@ -83,25 +83,14 @@ tough, and true to its promise of clarity. Here’s why it matters to you:
 
 You will need the following dependencies.
 
-* Erlang >= 23, < 25
+* Erlang >= 23
 
-* coreutils ( ``"/usr/bin/head"``, ``/bin/mktemp`` commands )
+* coreutils ( ``"/usr/bin/head"``, ``"/bin/mktemp"`` commands )
 
 * imagemagick-6.q16
 
 * libmagickwand-dev
 
-When dependencies installed, do the following
-
-wget https://s3.amazonaws.com/rebar3/rebar3
-chmod +x rebar3
-
-rebar3 clean
-rebar3 compile
-rebar3 release
-
-export C_INCLUDE_PATH=/usr/include/ImageMagick-6:/usr/include/x86_64-linux-gnu/ImageMagick-6
-export LIBRARY_PATH=/usr/include/ImageMagick-6
 
 #### 1. Build Riak CS
 
@@ -109,33 +98,38 @@ export LIBRARY_PATH=/usr/include/ImageMagick-6
 
 #### 2. Build Platonic Ray
 
-Clone this repository and execute the following commands.
+Clone this repository, install dependencies and execute the following commands.
+
 ```sh
-make fetch-deps
-make deps
-make
+wget https://s3.amazonaws.com/rebar3/rebar3
+chmod +x rebar3
+
+rebar3 clean
+rebar3 compile
+rebar3 release
 ```
 
-In order to use specific version of Erlang, you should set environment variables 
+In order to use specific version of Erlang, you should set environment variables in ``apps/img/rebar.config``
 *C_INCLUDE_PATH* and *LIBRARY_PATH*. For example:
+
 ```sh
-export C_INCLUDE_PATH=/usr/lib/erlang/usr/include:/usr/include/ImageMagick-6:/usr/include/x86_64-linux-gnu/ImageMagick-6
-export LIBRARY_PATH=/usr/lib/erlang/usr/lib:/usr/include/ImageMagick-6
+    {"C_INCLUDE_PATH", "/usr/include/ImageMagick-6:/usr/include/x86_64-linux-gnu/ImageMagick-6"},
+    {"LIBRARY_PATH", "/usr/include/ImageMagick-6"},
 ```
 
-The following imagemagic packages are required:
+The following ImageMagic packages are required:
 imagemagick-6.q16 libmagickcore-6-arch-config libmagickwand-6.q16-dev
 
 #### 3. Edit configuration files
 
 You need to change ``api_config`` in ``include/storage.hrl``.
-Locate ``riak-cs.conf`` in Riak CS directory. Copy ``admin.key`` value from ``riak-cs.conf``
+Locate ``riak-cs.conf`` in Riak CS directory, copy ``admin.key`` value from ``riak-cs.conf``
 and paste it to ``access_key_id`` in ``riak_api_config``.
 
 Then locate ``riak.conf`` in Riak directory and place value of ``riak_control.auth.user.admin.password``
 to ``include/riak.hrl``, to the ``secret_access_key`` option.
 
-In order to add first user, authentication should be temporary disabled.
+In order to add first user, authentication should be temporarily disabled.
 
 Then start PlatonicRay by executing ``make run``.
 
@@ -147,8 +141,10 @@ Otherwise login won't work.
 You can login now using credentials of staff user that you have just created.
 Staff user has permission to add other users.
 
+# License
 
+[Apache 2.0](LICENSE)
 
 # Contributing
 
-Please feel free to send me bug reports, possible securrity issues, feature requests or questions.
+Please feel free to send me bug reports, possible security issues, feature requests or questions.
