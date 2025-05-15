@@ -147,4 +147,6 @@ Staff user has permission to add other users.
 
 # Contributing
 
+[Contributing to Platonic Ray](CONTRIBUTING.md)
+
 Please feel free to send me bug reports, possible security issues, feature requests or questions.
