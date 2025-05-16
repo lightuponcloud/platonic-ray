@@ -1,9 +1,3 @@
-/*
-* This is image processing program, that
-* - creates thumbnails
-* - applies watermarks
-*
-*/
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -78,20 +72,6 @@ static int encode_error(transform_se *se, ei_x_buff *result, char *atom_name) {
     return 0;
 }
 
-static int encode_ping_response(transform_se *se, ei_x_buff *result, char *atom_name) {
-    char ping_key[6] = "ping\0";
-    if (!se->tag || se->tag_size == 0) {
-        return encode_error(se, result, "missing_tag_error");
-    }
-    if (ei_x_new_with_version(result) || ei_x_encode_tuple_header(result, 2)
-        || ei_x_encode_binary(result, se->tag, se->tag_size)
-        || ei_x_encode_tuple_header(result, 2)
-        || ei_x_encode_atom(result, ping_key)
-        || ei_x_encode_atom(result, atom_name))
-        return -1;
-    return 0;
-}
-
 /*
     ``se`` -- source data
     ``result`` -- should contain status
@@ -117,6 +97,7 @@ int process_image(transform_se *se, ei_x_buff *result){
     free(se->tag);
     return encode_stat;
   }
+      fprintf(stderr, "mark 0\n");
   if(se->just_get_size == 1){
     width = MagickGetImageWidth(magick_wand);
     height = MagickGetImageHeight(magick_wand);
@@ -133,12 +114,14 @@ int process_image(transform_se *se, ei_x_buff *result){
     free(se->tag);
     return encode_stat;
   } else if(se->watermark_size > 0){
+      fprintf(stderr, "mark 1 %zu\n", se->watermark_size);
     // apply watermark
     MagickWand *magick_wand_watermark;
 
     magick_wand_watermark = NewMagickWand();
     status = MagickReadImageBlob(magick_wand_watermark, se->watermark, se->watermark_size);
     if (status == MagickFalse){
+      fprintf(stderr, "mark 2\n");
       encode_stat = encode_error(se, result, "watermark_blob_imagemagick_error");
       (void)DestroyMagickWand(magick_wand);
       (void)DestroyMagickWand(magick_wand_watermark);
@@ -146,9 +129,11 @@ int process_image(transform_se *se, ei_x_buff *result){
       free(se->tag);
       return encode_stat;
     }
+      fprintf(stderr, "mark 5\n");
 
     status = MagickEvaluateImageChannel(magick_wand_watermark, AlphaChannel, MultiplyEvaluateOperator, 0.4);
     if (status == MagickFalse){
+      fprintf(stderr, "mark 3\n");
       encode_stat = encode_error(se, result, "alpha_imagemagick_error");
       (void)DestroyMagickWand(magick_wand);
       (void)DestroyMagickWand(magick_wand_watermark);
@@ -156,52 +141,11 @@ int process_image(transform_se *se, ei_x_buff *result){
       free(se->tag);
       return encode_stat;
     }
+      fprintf(stderr, "mark 6\n");
 
-    width = MagickGetImageWidth(magick_wand);
-    height = MagickGetImageHeight(magick_wand);
-
-    size_t wm_width = MagickGetImageWidth(magick_wand_watermark);
-    size_t wm_height = MagickGetImageHeight(magick_wand_watermark);
-
-    size_t wm_scale_width = (width/5)*2;
-    size_t wm_scale_height = (height/5)*2;
-    size_t wm_src_ratio = wm_width / wm_height;
-    size_t wm_cal_ratio = wm_scale_width / wm_scale_height;
-
-    if(wm_cal_ratio > wm_src_ratio){
-	status = MagickResizeImage(magick_wand_watermark, wm_scale_width, (wm_scale_width * wm_height / wm_width), TriangleFilter, 1.0);
-        if (status == MagickFalse){
-          encode_stat = encode_error(se, result, "imagemagick_resize_error");
-          (void)DestroyMagickWand(magick_wand);
-          (void)DestroyMagickWand(magick_wand_watermark);
-          free(se->from);
-          free(se->tag);
-          return encode_stat;
-        }
-    } else if(wm_cal_ratio < wm_src_ratio){
-	status = MagickResizeImage(magick_wand_watermark, wm_scale_height * wm_width / wm_height, wm_scale_height, TriangleFilter, 1.0);
-        if (status == MagickFalse){
-          encode_stat = encode_error(se, result, "imagemagick_resize_error");
-          (void)DestroyMagickWand(magick_wand);
-          (void)DestroyMagickWand(magick_wand_watermark);
-          free(se->from);
-          free(se->tag);
-          return encode_stat;
-        }
-      } else {
-	status = MagickResizeImage(magick_wand_watermark, wm_scale_width, wm_scale_height, TriangleFilter, 1.0);
-        if (status == MagickFalse){
-          encode_stat = encode_error(se, result, "imagemagick_resize_error");
-          (void)DestroyMagickWand(magick_wand);
-          (void)DestroyMagickWand(magick_wand_watermark);
-          free(se->from);
-          free(se->tag);
-          return encode_stat;
-        }
-    }
-
-    status = MagickCompositeImage(magick_wand, magick_wand_watermark, DissolveCompositeOp, width/5, height/5);
+    status = MagickCompositeImage(magick_wand, magick_wand_watermark, DissolveCompositeOp, 896, 671);
     if (status == MagickFalse){
+      fprintf(stderr, "mark 4\n");
       encode_stat = encode_error(se, result, "composite_imagemagick_error");
       (void)DestroyMagickWand(magick_wand);
       (void)DestroyMagickWand(magick_wand_watermark);
@@ -209,6 +153,7 @@ int process_image(transform_se *se, ei_x_buff *result){
       free(se->tag);
       return encode_stat;
     }
+      fprintf(stderr, "mark 7\n");
     (void)DestroyMagickWand(magick_wand_watermark);
   } else {
     if(se->scale_width > 0 && se->scale_height > 0){
@@ -217,41 +162,7 @@ int process_image(transform_se *se, ei_x_buff *result){
       width = MagickGetImageWidth(magick_wand);
       height = MagickGetImageHeight(magick_wand);
 
-      if(strcmp(se->to, "webp") == 0) {
-        status = MagickSetImageFormat(magick_wand, "WEBP");
-        if (status == MagickFalse) {
-          encode_stat = encode_error(se, result, "webp_format_imagemagick_error");
-          (void)DestroyMagickWand(magick_wand);
-          free(se->from);
-          free(se->tag);
-          return encode_stat;
-        }
-	status = MagickSetImageCompressionQuality(magick_wand, 85);
-	if (status == MagickFalse) {
-	    encode_stat = encode_error(se, result, "imagemagick_webp_compress_error");
-	    (void)DestroyMagickWand(magick_wand);
-	    free(se->from);
-	    free(se->tag);
-	    return encode_stat;
-	}
-      } else if(strcmp(se->to, "jpeg") == 0) {
-        status = MagickSetImageFormat(magick_wand, "JPEG");
-        if (status == MagickFalse) {
-          encode_stat = encode_error(se, result, "jpeg_format_imagemagick_error");
-          (void)DestroyMagickWand(magick_wand);
-          free(se->from);
-          free(se->tag);
-          return encode_stat;
-        }
-        status = MagickSetImageCompressionQuality(magick_wand, 95); // Higher quality for JPEG
-        if (status == MagickFalse) {
-          encode_stat = encode_error(se, result, "imagemagick_jpeg_compress_error");
-          (void)DestroyMagickWand(magick_wand);
-          free(se->from);
-          free(se->tag);
-          return encode_stat;
-        }
-      }
+      MagickSetImageFormat(magick_wand, "JPEG");
       double src_ratio = (double)width / (double)height;
       double cal_ratio = (double)se->scale_width / (double)se->scale_height;
 
@@ -412,9 +323,9 @@ int parse_transform(unsigned char * buf, int offset, int arity, transform_se *se
 	    encode_stat = encode_error(se, &result, "atom_decode_error");
 	    break;
 	}
-	if(strlen(last_atom) > 4 && strcmp(last_atom, "webp") != 0 && strcmp(last_atom, "jpeg") != 0) {
-	  encode_stat = encode_error(se, &result, "unk_dst_format");
-	  break;
+	if(strlen(last_atom)>4){
+	    encode_stat = encode_error(se, &result, "unk_dst_format");
+	    break;
 	}
     } else if(strncmp("watermark", last_atom, strlen(last_atom)) == 0){
 	(void)ei_get_type((char *) buf, &offset, &type, (int *) &(se->watermark_size));
@@ -438,13 +349,6 @@ int parse_transform(unsigned char * buf, int offset, int arity, transform_se *se
 	(void)ei_decode_boolean((const char *) buf, &offset, &(se->crop));
     } else if(strncmp("just_get_size", last_atom, strlen(last_atom)) == 0){
 	(void)ei_decode_boolean((const char *) buf, &offset, &(se->just_get_size));
-    } else if (strncmp("ping", last_atom, strlen(last_atom)) == 0) {
-        if (ei_decode_atom((const char *) buf, &offset, last_atom)) {
-            encode_stat = encode_error(se, &result, "atom_decode_error");
-            break;
-        }
-        encode_stat = encode_ping_response(se, &result, "ping");
-        break; // Exit loop after handling ping
     } else if(strncmp("tag", last_atom, strlen(last_atom)) == 0){
 	(void)ei_get_type((char *) buf, &offset, &type, (int *) &(se->tag_size));
 	if(ERL_BINARY_EXT != type){

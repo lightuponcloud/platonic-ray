@@ -78,20 +78,6 @@ static int encode_error(transform_se *se, ei_x_buff *result, char *atom_name) {
     return 0;
 }
 
-static int encode_ping_response(transform_se *se, ei_x_buff *result, char *atom_name) {
-    char ping_key[6] = "ping\0";
-    if (!se->tag || se->tag_size == 0) {
-        return encode_error(se, result, "missing_tag_error");
-    }
-    if (ei_x_new_with_version(result) || ei_x_encode_tuple_header(result, 2)
-        || ei_x_encode_binary(result, se->tag, se->tag_size)
-        || ei_x_encode_tuple_header(result, 2)
-        || ei_x_encode_atom(result, ping_key)
-        || ei_x_encode_atom(result, atom_name))
-        return -1;
-    return 0;
-}
-
 /*
     ``se`` -- source data
     ``result`` -- should contain status
@@ -438,13 +424,6 @@ int parse_transform(unsigned char * buf, int offset, int arity, transform_se *se
 	(void)ei_decode_boolean((const char *) buf, &offset, &(se->crop));
     } else if(strncmp("just_get_size", last_atom, strlen(last_atom)) == 0){
 	(void)ei_decode_boolean((const char *) buf, &offset, &(se->just_get_size));
-    } else if (strncmp("ping", last_atom, strlen(last_atom)) == 0) {
-        if (ei_decode_atom((const char *) buf, &offset, last_atom)) {
-            encode_stat = encode_error(se, &result, "atom_decode_error");
-            break;
-        }
-        encode_stat = encode_ping_response(se, &result, "ping");
-        break; // Exit loop after handling ping
     } else if(strncmp("tag", last_atom, strlen(last_atom)) == 0){
 	(void)ei_get_type((char *) buf, &offset, &type, (int *) &(se->tag_size));
 	if(ERL_BINARY_EXT != type){
