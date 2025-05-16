@@ -123,13 +123,16 @@ prepare_object_record(Record0, DeletedObjects) ->
 	{content_type, unicode:characters_to_binary(ContentType)},
 	{md5, unicode:characters_to_binary(Md5)}
     ],
-    Width = proplists:get_value("x-amz-meta-width", Metadata),
-    Height = proplists:get_value("x-amz-meta-height", Metadata),
-    case Width =/= undefined of
-	true ->
-	    Result ++ [{width, erlang:list_to_integer(Width)},
-		       {height, erlang:list_to_integer(Height)}];
-	false -> Result
+    WidthStr = proplists:get_value("x-amz-meta-width", Metadata),
+    HeightStr = proplists:get_value("x-amz-meta-height", Metadata),
+    Width = try list_to_integer(WidthStr) catch _:_ -> undefined end,
+    Height = try list_to_integer(HeightStr) catch _:_ -> undefined end,
+
+    case {Width, Height} of
+        {W, H} when is_integer(W), is_integer(H) ->
+            Result ++ [{width, W}, {height, H}];
+        _ ->
+            Result
     end.
 
 %%

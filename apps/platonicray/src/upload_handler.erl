@@ -1104,7 +1104,8 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 			    {error, _} ->
 				[{"width", proplists:get_value(width, State0)},
 				 {"height", proplists:get_value(height, State0)}];
-			    {Width, Height} -> [{"width", Width}, {"height", Height}]
+			    {Width, Height} ->
+				[{"width", Width}, {"height", Height}]
 			end
 		end
 	end,

@@ -452,6 +452,18 @@ int parse_transform(unsigned char * buf, int offset, int arity, transform_se *se
 	    return -1;
 	memset(se->tag, 0, se->tag_size);
 	if (OK != ei_decode_binary((const char *) buf, &offset, se->tag, (long *) &(se->tag_size))){
+
+FILE *debug_file = fopen("/tmp/debug", "a");  // "a" = append mode
+if (debug_file != NULL) {
+    fprintf(debug_file, "Tag size: %d\n", se->tag_size);
+    fprintf(debug_file, "Tag data (hex): ");
+    for (int i = 0; i < se->tag_size; i++) {
+        fprintf(debug_file, "%02x", ((unsigned char*)se->tag)[i]);
+    }
+    fprintf(debug_file, "\n");
+    fclose(debug_file);
+}
+
 	    encode_stat = encode_error(se, &result, "tag_binary_decode_error");
 	    break;
 	}

@@ -26,12 +26,11 @@
                 last_pong = undefined :: undefined | erlang:timestamp(),
                 ping_retries = 0 :: non_neg_integer()}).
 -define(IMG_PORT, img_port).
--define(IMAGE_WORKERS, 5).  %% The number of imagemagick workers for scaling images
+-define(IMAGE_WORKERS, 4).  %% The number of imagemagick workers for scaling images
 
 %% Starts N servers for image/video thumbnails
 start_link(PortNumber) ->
-    Name = list_to_atom(
-	lists:flatten(io_lib:format("img_port_~p", [PortNumber]))),
+    Name = erlang:list_to_atom("img_port_" ++ erlang:integer_to_list(PortNumber)),
     gen_server:start_link({local, Name}, ?MODULE, [PortNumber], []).
 
 init([PortNumber]) ->
@@ -41,28 +40,22 @@ init([PortNumber]) ->
     {ok, #state{port = Port, os_pid = OSPid, num = PortNumber}}.
 
 port_action(scale, Term) when erlang:is_list(Term) ->
-    Tag = erlang:term_to_binary(self()),
     Timeout = get_timeout(Term),
-    Data = erlang:term_to_binary(Term++[{tag, Tag}]),
-    PortNum = rand:uniform(?IMAGE_WORKERS) - 1,
-    PortName = erlang:list_to_atom(lists:flatten(io_lib:format("img_port_~p", [PortNum]))),
-    gen_server:call(PortName, {command, Data, Timeout});
+    PortNum = rand:uniform(?IMAGE_WORKERS),
+    PortName = erlang:list_to_atom("img_port_" ++ erlang:integer_to_list(PortNum)),
+    gen_server:call(PortName, {command, Term, Timeout});
 
 port_action(get_size, Term) when erlang:is_list(Term) ->
-    Tag = erlang:term_to_binary(self()),
     Timeout = get_timeout(Term),
-    Data = erlang:term_to_binary(Term++[{tag, Tag}]),
-    PortNum = rand:uniform(?IMAGE_WORKERS) - 1,
-    PortName = erlang:list_to_atom(lists:flatten(io_lib:format("img_port_~p", [PortNum]))),
-    gen_server:call(PortName, {command, Data, Timeout}).
+    PortNum = rand:uniform(?IMAGE_WORKERS),
+    PortName = erlang:list_to_atom("img_port_" ++ erlang:integer_to_list(PortNum)),
+    gen_server:call(PortName, {command, Term, Timeout}).
 
 port_action(ping) ->
-    Tag = erlang:term_to_binary(self()),
     Timeout = 3000,
-    Data = erlang:term_to_binary([{ping, port}, {tag, Tag}]),
-    PortNum = rand:uniform(?IMAGE_WORKERS) - 1,
-    PortName = erlang:list_to_atom(lists:flatten(io_lib:format("img_port_~p", [PortNum]))),
-    gen_server:call(PortName, {command, Data, Timeout}).
+    PortNum = rand:uniform(?IMAGE_WORKERS),
+    PortName = erlang:list_to_atom("img_port_" ++ erlang:integer_to_list(PortNum)),
+    gen_server:call(PortName, {command, [{ping, port}], Timeout}).
 
 -spec get_timeout(proplists:proplist()) -> pos_integer().
 
@@ -129,6 +122,7 @@ handle_info({Port, {data, Term0}}, #state{port = Port} = State) ->
                 {noreply, State#state{last_pong = os:timestamp(), ping_retries = 0}};
             {Tag, Term1} ->
                 Pid = erlang:binary_to_term(Tag),
+io:fwrite("Pid: ~p Term1: ~p~n", [Pid, Term1]),
                 case erlang:is_process_alive(Pid) of
                     true ->
                         Pid ! {Port, Term1},
@@ -209,9 +203,18 @@ handle_info(Info, State) ->
     ?ERROR("[img] got unexpected info: ~p", [Info]),
     {noreply, State}.
 
-handle_call({command, Data, Timeout}, _From, #state{port = Port} = State) ->
-    Reply = send_image_command(Port, Data, Timeout),
-    {reply, Reply, State};
+handle_call({command, Term, Timeout}, _From, #state{port = Port} = State) ->
+    Tag = erlang:term_to_binary(self()),
+    Data = erlang:term_to_binary(Term++[{tag, Tag}]),
+    case send_image_command(Port, Data, Timeout) of
+	{data, Binary} ->
+	    {_Tag, Reply} = erlang:binary_to_term(Binary),
+	    {reply, Reply, State};
+	{error, Reason} ->
+	    ?ERROR("[img] port returned error: ~p", [Reason]),
+	    {reply, {error, Reason}, State};
+	{_Tag, {ping, _Pong}} -> ok
+    end;
 
 handle_call(_Request, _From, State) ->
     {reply, {error, unsupported}, State}.

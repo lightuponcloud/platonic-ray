@@ -208,7 +208,7 @@ load_mime_types() ->
     Ets.
 
 load_log_ets() ->
-    ets:new(?LOG_QUEUE, [named_table, private, {write_concurrency, true}, {read_concurrency, true}]).
+    ets:new(?LOG_QUEUE, [named_table, public, {write_concurrency, true}, {read_concurrency, true}]).
 
 load_transcode_ets() ->
     ets:new(?VIDEO_TRANSCODE_QUEUE, [
