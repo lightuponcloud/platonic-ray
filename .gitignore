@@ -12,8 +12,6 @@ _rel/
 erl_crash.dump
 .edts
 eunit.coverage.xml
-c_src/img.d
-c_src/img
 *[#]*[#]
 *[#]*
 *.o
@@ -29,3 +27,5 @@ tests/.pytest_cache
 .env
 tests/.venv
 tests/output
+apps/img/priv/img
+apps/img/priv/img.d
