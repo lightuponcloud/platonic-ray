@@ -24,9 +24,12 @@
                 num :: pos_integer(),
                 monitored = false :: boolean(),
                 last_pong = undefined :: undefined | erlang:timestamp(),
-                ping_retries = 0 :: non_neg_integer()}).
+                ping_retries = 0 :: non_neg_integer()
+                ping_timer = undefined}).
 -define(IMG_PORT, img_port).
--define(IMAGE_WORKERS, 4).  %% The number of imagemagick workers for scaling images
+-define(INTERNAL_IMAGE_WORKERS, 4).  %% The number of imagemagick workers for scaling images
+-define(INTERNAL_IMAGE_POPRT_PING_INTERVAL, 30000).  % 30 seconds ( this is retry timeout )
+-define(MAX_PING_RETRIES, 3).        % Maximum number of ping retry attempts
 
 %% Starts N servers for image/video thumbnails
 start_link(PortNumber) ->
@@ -34,28 +37,23 @@ start_link(PortNumber) ->
     gen_server:start_link({local, Name}, ?MODULE, [PortNumber], []).
 
 init([PortNumber]) ->
-    {Port, OSPid} = start_port(PortNumber, 3),  % retries
+    {Port, OSPid} = start_port(PortNumber, 3),  % Retries
     process_flag(trap_exit, true),
-    %erlang:send_after(10000, self(), ping), % Schedule first ping after 10s
-    {ok, #state{port = Port, os_pid = OSPid, num = PortNumber}}.
+    {ok, Tref} = timer:send_interval(?INTERNAL_IMAGE_POPRT_PING_INTERVAL, ping),
+    {ok, #state{port = Port, os_pid = OSPid, num = PortNumber, ping_timer=Tref}}.
 
 port_action(scale, Term) when erlang:is_list(Term) ->
     Timeout = get_timeout(Term),
-    PortNum = rand:uniform(?IMAGE_WORKERS),
+    PortNum = rand:uniform(?INTERNAL_IMAGE_WORKERS),
     PortName = erlang:list_to_atom("img_port_" ++ erlang:integer_to_list(PortNum)),
     gen_server:call(PortName, {command, Term, Timeout});
 
 port_action(get_size, Term) when erlang:is_list(Term) ->
     Timeout = get_timeout(Term),
-    PortNum = rand:uniform(?IMAGE_WORKERS),
+    PortNum = rand:uniform(?INTERNAL_IMAGE_WORKERS),
     PortName = erlang:list_to_atom("img_port_" ++ erlang:integer_to_list(PortNum)),
     gen_server:call(PortName, {command, Term, Timeout}).
 
-port_action(ping) ->
-    Timeout = 3000,
-    PortNum = rand:uniform(?IMAGE_WORKERS),
-    PortName = erlang:list_to_atom("img_port_" ++ erlang:integer_to_list(PortNum)),
-    gen_server:call(PortName, {command, [{ping, port}], Timeout}).
 
 -spec get_timeout(proplists:proplist()) -> pos_integer().
 
@@ -122,7 +120,6 @@ handle_info({Port, {data, Term0}}, #state{port = Port} = State) ->
                 {noreply, State#state{last_pong = os:timestamp(), ping_retries = 0}};
             {Tag, Term1} ->
                 Pid = erlang:binary_to_term(Tag),
-io:fwrite("Pid: ~p Term1: ~p~n", [Pid, Term1]),
                 case erlang:is_process_alive(Pid) of
                     true ->
                         Pid ! {Port, Term1},
@@ -171,33 +168,19 @@ handle_info(start_port, #state{port = undefined, num = PortNumber} = State) ->
     {Port, OSPid} = start_port(PortNumber, 0),
     {noreply, State#state{port = Port, os_pid = OSPid}};
 
-handle_info(ping, State) ->
-    port_action(ping),
-    erlang:send_after(10000, self(), ping), % Schedule next ping
-    {noreply, State};
-
-handle_info({ping_timeout, Tag}, #state{port = Port, ping_retries = Retries} = State) ->
-    ?WARNING("[img] Ping timeout for tag ~p, retries=~p", [Tag, Retries]),
-    NewRetries = Retries + 1,
-    if
-        NewRetries >= 3 ->
-            ?ERROR("[img] Port unresponsive after ~p ping retries", [NewRetries]),
-            self() ! {port_unresponsive, Port},
-            {noreply, State#state{ping_retries = 0}};
-        true ->
-            {noreply, State#state{ping_retries = NewRetries}}
+handle_info(ping, #state{port = Port} = State) ->
+    Timeout = 3000,
+    Tag = erlang:term_to_binary(self()),
+    Data = erlang:term_to_binary([{ping, port}, {tag, Tag}]),
+    case send_image_command(Port, Data, Timeout) of
+	{data, Binary} ->
+	    {_Tag, Reply} = erlang:binary_to_term(Binary),
+	    {noreply, ok, State};
+	{error, Reason} ->
+	    ?ERROR("[img] port did not respond to ping: ~p", [Reason]),
+	    {noreply, ok, State}
     end;
-
-handle_info({port_unresponsive, Port}, #state{port = Port, num = PortNumber} = State) ->
-    ?ERROR("[img] Port ~p unresponsive, restarting", [PortNumber]),
-    catch port_close(Port),
-    Links = sets:filter(
-              fun(Pid) ->
-                      Pid ! {'EXIT', Port, unresponsive},
-                      false
-              end, State#state.links),
-    erlang:send_after(200, self(), {start_port, 0}),
-    {noreply, State#state{port = undefined, os_pid = undefined, links = Links, last_pong = undefined, ping_retries = 0}};
+    {noreply, State};
 
 handle_info(Info, State) ->
     ?ERROR("[img] got unexpected info: ~p", [Info]),
@@ -212,8 +195,7 @@ handle_call({command, Term, Timeout}, _From, #state{port = Port} = State) ->
 	    {reply, Reply, State};
 	{error, Reason} ->
 	    ?ERROR("[img] port returned error: ~p", [Reason]),
-	    {reply, {error, Reason}, State};
-	{_Tag, {ping, _Pong}} -> ok
+	    {reply, {error, Reason}, State}
     end;
 
 handle_call(_Request, _From, State) ->
@@ -275,8 +257,12 @@ send_image_command(Port, Data, Timeout) when erlang:is_binary(Data) andalso erla
 	    end
     end.
 
-terminate(Reason, #state{port = Port, num = PortNumber} = State) ->
+terminate(Reason, #state{port = Port, num = PortNumber, ping_timer = Tref} = State) ->
     lager:warning("[img] terminating port. Reason: ~p~n", [Reason]),
+    case Tref of
+        undefined -> ok;
+        _ -> timer:cancel(Tref)
+    end,
     pg:leave(?SCOPE_PG, {?IMG_PORT, PortNumber}, self()),
     if erlang:is_port(Port) ->
             catch port_close(Port),
