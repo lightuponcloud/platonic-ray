@@ -14,8 +14,11 @@
 -include_lib("common_lib/include/general.hrl").
 
 start(_Type, _Args) ->
+    PrivDir = code:priv_dir(platonicray),
+
     Dispatch = cowboy_router:compile([
 	{'_', [
+	    {"/riak/static/[...]", cowboy_static, {dir, PrivDir, [{mimetypes, cow_mimetypes, all}]}},
 	    {"/riak/list/[...]", list_handler, []},
 	    {"/riak/object/[...]", object_handler, []},
 	    {"/riak/download/[...]", download_handler, []},

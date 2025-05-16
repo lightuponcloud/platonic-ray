@@ -183,7 +183,7 @@ load_unicode_mapping() ->
     AppDir = filename:dirname(EbinDir),
     FilePath = filename:join([AppDir, "priv", "UnicodeData.txt.gz"]),
     Fd = open_file(FilePath),
-    Ets = ets:new(?UNIDATA_TABLE, [{write_concurrency, false}, {read_concurrency, true}]),
+    Ets = ets:new(?UNIDATA_TABLE, [named_table, public, {write_concurrency, false}, {read_concurrency, true}]),
     read_file({Fd, Ets}),
     file:close(Fd),
     Ets.
@@ -203,12 +203,12 @@ load_mime_types() ->
     AppDir = filename:dirname(EbinDir),
     MimeTypesFile = filename:join([AppDir, "priv", "mime.types"]),
     {ok, MimeTypes} = httpd_conf:load_mime_types(MimeTypesFile),
-    Ets = ets:new(?MIME_TABLE, [{write_concurrency, false}, {read_concurrency, true}]),
+    Ets = ets:new(?MIME_TABLE, [named_table, public, {write_concurrency, false}, {read_concurrency, true}]),
     [ets:insert(Ets, I) || I <- MimeTypes],
     Ets.
 
 load_log_ets() ->
-    ets:new(?LOG_QUEUE, [named_table, {write_concurrency, true}, {read_concurrency, true}]).
+    ets:new(?LOG_QUEUE, [named_table, private, {write_concurrency, true}, {read_concurrency, true}]).
 
 load_transcode_ets() ->
     ets:new(?VIDEO_TRANSCODE_QUEUE, [
