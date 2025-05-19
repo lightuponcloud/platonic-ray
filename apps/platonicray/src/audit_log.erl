@@ -40,7 +40,8 @@
 %% - rate_limits: Map of {BucketId, {Tokens, LastRefill}} for rate limiting
 %%
 -record(state, {
-    update_timer = undefined,
+    log_flush_timer = undefined,
+    metrics_flush_timer = undefined,
     flushing = false,
     flush_ref = undefined,
     failed_queue = [],
@@ -106,9 +107,11 @@ start_link() ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
-    {ok, Tref} = timer:send_interval(?INTERNAL_LOG_FLUSH_INTERVAL_LONG, flush_audit_log),
+    {ok, Tref0} = timer:send_interval(?INTERNAL_LOG_FLUSH_INTERVAL_LONG, flush_audit_log),
+    {ok, Tref1} = timer:send_interval(?INTERNAL_USAGE_METRICS_SAVE_INTERVAL, log_metrics),
     {ok, #state{
-        update_timer = Tref,
+        log_flush_timer = Tref0,
+        metrics_flush_timer = Tref1,
         flushing = false,
         flush_ref = undefined,
         failed_queue = [],
@@ -237,7 +240,6 @@ handle_info(log_metrics, State) ->
         _ -> ok
     end,
     % Schedule next saving of metrics
-    erlang:send_after(?INTERNAL_USAGE_METRICS_SAVE_INTERVAL, self(), log_metrics),
     {noreply, State};
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{flush_ref = Ref} = State) ->
@@ -255,10 +257,14 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{flush_ref = Ref} = Stat
 %% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, #state{update_timer = Timer} = _State) ->
-    case Timer of
+terminate(_Reason, #state{log_flush_timer = Tref0, metrics_flush_timer = Tref1} = _State) ->
+    case Tref0 of
         undefined -> ok;
-        _ -> timer:cancel(Timer)
+        _ -> timer:cancel(Tref0)
+    end,
+    case Tref1 of
+        undefined -> ok;
+        _ -> timer:cancel(Tref1)
     end,
     ok.
 
@@ -412,7 +418,7 @@ log_to_s3(BucketId, Prefix, Entries) ->
     {{Year, Month, Day}, {_H, _M, _S}} = calendar:now_to_universal_time(os:timestamp()),
     Bits = string:tokens(BucketId, "-"),
     TenantId = string:to_lower(lists:nth(2, Bits)),
-    LogPrefix = [
+    LogPrefix = lists:flatten(utils:join_list_with_separator([
 	 ?AUDIT_LOG_PREFIX,
 	 TenantId,
 	 "buckets",
@@ -420,7 +426,7 @@ log_to_s3(BucketId, Prefix, Entries) ->
 	 Prefix,
 	 lists:flatten(io_lib:format("~4.10.0B", [Year])),
 	 lists:flatten(io_lib:format("~2.10.0B", [Month]))
-    ],
+    ], "/", [])),
     LogName = lists:flatten(io_lib:format("~2.10.0B_~s.jsonl.gz", [Day, EventId])),
     CompressedOutput = compress_data(Output),
     %% Write new object

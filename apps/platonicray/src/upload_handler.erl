@@ -1131,7 +1131,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 		    %% Update pseudo-directory index for faster listing.
 		    case indexing:update(BucketId, Prefix1, [{modified_keys, [ObjectKey0]}]) of
 			lock ->
-			    ?WARNING("[list_handler] Can't update index during upload, as lock exist: ~p/~p",
+			    ?WARNING("[list_handler] Can't update index during upload, while lock exist: ~p/~p",
 					  [BucketId, Prefix1]),
 			    js_handler:too_many(Req0);
 			_ ->
@@ -1168,6 +1168,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 				true -> video:ffmpeg(BucketId, utils:prefixed_object_key(Prefix1, ObjectKey0));
 				false -> ok
 			    end,
+			    light_ets:update_storage_metrics(BucketId, upload, TotalBytes),
 			    upload_response(Req0, OrigName0, IsLocked0, LockModifiedTime0,
 					    LockedUserId0, LockedUserName0, LockedUserTel0,
 					    RespCode, State0)

@@ -1,5 +1,6 @@
 %%
-%% This server performs copy and move operations in background.
+%% This server performs fake copy and move operations in background.
+%% Fake copy creates links from source object to distination.
 %%
 -module(copy_server).
 
@@ -506,6 +507,9 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 				is_locked = false
 			    },
 			    sqlite_server:add_object(DstBucketId, DstPrefix0, Obj),
+
+			    Size = utils:to_integer(proplists:get_value("bytes", ObjectMeta0)),
+			    light_ets:update_storage_metrics(DstBucketId, copy, Size),
 
 			    [{src_prefix, SrcPrefix},
 			     {dst_prefix, DstPrefix1},

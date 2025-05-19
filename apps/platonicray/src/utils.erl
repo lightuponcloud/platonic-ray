@@ -618,6 +618,7 @@ join_list_with_separator([Head|Tail], Sep, Acc0) ->
 	    case Head of
 		Sep -> Acc0;
 		"" -> Acc0;
+		undefined -> Acc0;
 		_ -> [Sep, Head | Acc0]
 	    end
     end,
@@ -634,6 +635,7 @@ join_binary_with_separator([Head|Tail], Sep) ->
 		fun (Value, Acc) ->
 		    case Value of
 			Sep -> Acc;
+			undefined -> Acc;
 			<<>> -> Acc;
 			_ -> <<Acc/binary, Sep/binary, Value/binary>>
 		    end

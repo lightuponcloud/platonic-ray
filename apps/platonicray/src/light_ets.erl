@@ -24,7 +24,7 @@
          get_subscribers_by_bucket/1, store_message/1, delete_message/2, get_messages_by_user/1,
          add_bucket_node/2, get_nodes_by_bucket/1, flush_logs/0]).
 %% For collecting storage stats
--export([update_storage/3, get_storage_metrics/1, get_all_storage_metrics/0]).
+-export([update_storage_metrics/3, get_storage_metrics/1, get_all_storage_metrics/0]).
 
 -include_lib("common_lib/include/log.hrl").
 -include_lib("common_lib/include/entities.hrl").
@@ -257,6 +257,8 @@ string_to_lower(String) ->
 
 update_metrics(upload, Size, {Used, Available}) ->
     {Used + Size, Available};
+update_metrics(undelete, Size, {Used, Available}) ->
+    {Used + Size, Available};
 update_metrics(delete, Size, {Used, Available}) ->
     {Used - Size, Available};
 update_metrics(copy, Size, {Used, Available}) ->
@@ -268,7 +270,7 @@ update_metrics({move, FromBucket, ToBucket}, Size, {Used, Available}) when FromB
     {Used - Size, Available}. % This is for the source bucket; destination handled separately
 
 %% Update storage metrics for a bucket based on operation
-update_storage(BucketId, Operation, Size) when is_list(BucketId), is_atom(Operation), is_integer(Size) ->
+update_storage_metrics(BucketId, Operation, Size) when is_list(BucketId), is_atom(Operation), is_integer(Size) ->
     gen_server:cast(?MODULE, {update_storage, BucketId, Operation, Size}).
 
 %% Get storage metrics for a specific bucket

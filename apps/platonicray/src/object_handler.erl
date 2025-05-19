@@ -284,11 +284,12 @@ undelete_object(BucketId, Prefix, ObjectKey) ->
 	    Response = s3_api:put_object(BucketId, Prefix, ObjectKey, <<>>, [{meta, Meta}]),
 	    case Response of
 		ok ->
+		    Size = utils:to_integer(proplists:get_value("bytes", Meta)),
 		    %% Update SQLite db
 		    Obj = #object{
 			key = ObjectKey,
 			orig_name = OrigName1,
-			bytes = proplists:get_value("bytes", Meta),
+			bytes = Size,
 			guid = proplists:get_value("guid", Meta),
 			md5 = proplists:get_value("md5", Meta),
 			version = proplists:get_value("version", Meta),
@@ -304,6 +305,7 @@ undelete_object(BucketId, Prefix, ObjectKey) ->
 			lock_modified_utc = proplists:get_value("lock-modified-utc", Meta)
 		    },
 		    sqlite_server:add_object(BucketId, Prefix, Obj),
+		    light_ets:update_storage_metrics(BucketId, undelete, Size),
 		    {ObjectKey, OrigName1};
 		{error, Reason} ->
 		    ?ERROR("[list_handler] Can't put object: ~p/~p/~p: ~p",
@@ -885,6 +887,8 @@ delete_objects(BucketId, Prefix, ObjectKeys0, Timestamp, User) ->
 			    Meta = parse_object_record(Metadata0, [{is_deleted, "true"}]),
 			    case s3_api:put_object(BucketId, Prefix, erlang:binary_to_list(ObjectKey), <<>>, [{meta, Meta}]) of
 				ok ->
+				    Size = utils:to_integer(proplists:get_value("bytes", Meta)),
+				    light_ets:update_storage_metrics(BucketId, delete, Size),
 				    UnicodeObjectName0 = proplists:get_value("orig-filename", Meta),
 				    UnicodeObjectName1 = utils:unhex(erlang:list_to_binary(UnicodeObjectName0)),
 				    {true, <<"\"", (unicode:characters_to_binary(UnicodeObjectName1))/binary, "\"">>};
