@@ -123,7 +123,7 @@ tokens_to_add(LastRefill, Now) ->
 process_queue(Items, Retries) ->
     Results = pmap:pmap(
 	fun({BucketId, ObjectKey, RetryCount}) ->
-	    Key = <<BucketId/binary, "/", ObjectKey/binary>>,
+	    Key = <<(utils:to_binary(BucketId))/binary, "/", (utils:to_binary(ObjectKey))/binary>>,
 	    case process_video(BucketId, ObjectKey) of
 		ok -> {ok, Key};
 		{error, Reason} when RetryCount < ?MAX_RETRIES ->
@@ -133,7 +133,8 @@ process_queue(Items, Retries) ->
 	    end
 	end,
 	Items,
-	?PMAP_WORKERS),
+	?PMAP_WORKERS,
+	180000),
 
     lists:foldl(fun
 	({ok, _Key}, {QueueAcc, RetriesAcc}) -> {QueueAcc, RetriesAcc};

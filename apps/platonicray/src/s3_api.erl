@@ -631,15 +631,19 @@ put_object(BucketId, Prefix, ObjectKey, BinaryData, Options)
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
     %% No need to guess mime type for service objects
     MimeType =
-	case ObjectKey of
-	    ?DB_VERSION_KEY -> "application/vnd.sqlite3";
-	    ?DB_VERSION_LOCK_FILENAME -> "application/vnd.lightup";
-	    ?WATERMARK_OBJECT_KEY -> "image/png";
-	    ?LOCK_DVV_INDEX_FILENAME -> "application/vnd.lightup";
-	    ?DVV_INDEX_FILENAME -> "application/vnd.lightup";
-	    ?LOCK_INDEX_FILENAME -> "application/vnd.lightup";
-	    ?INDEX_FILENAME -> "application/vnd.lightup";
-	    _ -> light_ets:guess_content_type(ObjectKey)
+	case utils:ends_with(ObjectKey, <<".json">>) orelse utils:ends_with(ObjectKey, <<".jsonl">>) of
+	    true -> "application/json";
+	    false ->
+		case ObjectKey of
+		    ?DB_VERSION_KEY -> "application/vnd.sqlite3";
+		    ?DB_VERSION_LOCK_FILENAME -> "application/vnd.lightup";
+		    ?WATERMARK_OBJECT_KEY -> "image/png";
+		    ?LOCK_DVV_INDEX_FILENAME -> "application/vnd.lightup";
+		    ?DVV_INDEX_FILENAME -> "application/vnd.lightup";
+		    ?LOCK_INDEX_FILENAME -> "application/vnd.lightup";
+		    ?INDEX_FILENAME -> "application/vnd.lightup";
+		    _ -> light_ets:guess_content_type(ObjectKey)
+		end
 	end,
     HTTPHeaders = [{"content-type", MimeType}],
 

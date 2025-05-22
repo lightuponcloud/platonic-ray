@@ -219,10 +219,15 @@ handle_info(log_metrics, State) ->
     %% Convert to JSON and write to file
     JSONEntries = [
 	begin
-	    [{timestamp, crypto_utils:iso_8601_basic_time(calendar:now_to_universal_time(os:timestamp()))},
-	     {bucket_id, BucketId},
+	    Bytes =
+		case Available of
+		    undefined -> null;
+		    B -> B
+		end,
+	    [{timestamp, utils:to_binary(crypto_utils:iso_8601_basic_time(calendar:now_to_universal_time(os:timestamp())))},
+	     {bucket_id, utils:to_binary(BucketId)},
 	     {used_bytes, Used},
-	     {available_bytes, Available}]
+	     {available_bytes, Bytes}]
 	end || {BucketId, {Used, Available}} <- Metrics
     ],
     Output = iolist_to_binary([jsx:encode(JSONEntries), "\n"]),

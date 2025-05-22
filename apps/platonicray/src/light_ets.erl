@@ -213,9 +213,10 @@ load_log_ets() ->
 load_transcode_ets() ->
     ets:new(?VIDEO_TRANSCODE_QUEUE, [
         ordered_set,
+        named_table,
         {write_concurrency, true},
         {read_concurrency, true},
-        private
+        public
     ]).
 
 load_subscribers_ets() ->
