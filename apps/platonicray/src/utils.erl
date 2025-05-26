@@ -862,6 +862,7 @@ split_thousands(Bin, Acc) ->
     end.
 
 
+bytes_to_string(undefined) -> 0;
 bytes_to_string(Size) ->
     bytes_to_string(Size, 1).
 

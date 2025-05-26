@@ -40,11 +40,13 @@ parse_tenant(RootElement) ->
 	    name = erlcloud_xml:get_text("/group/name", N)} end,
     Groups = [GetGroupAttrs(I) ||
 	I <- xmerl_xpath:string("/tenant/record/groups/group", RootElement)],
+    ApiKey = erlcloud_xml:get_text("/tenant/record/api_key", RootElement),
     #tenant{
 	id = TenantId,
 	name = TenantName,
 	enabled = IsTenantEnabled,
-	groups = Groups
+	groups = Groups,
+	api_key = ApiKey
     }.
 
 %%
@@ -191,14 +193,39 @@ to_html(Req0, State) ->
     case User#user.staff of
 	false -> js_handler:redirect_to_login(Req0);
 	true ->
+	    MetricsPath = utils:prefixed_object_key(?AUDIT_LOG_PREFIX, ?AUDIT_BUCKET_METRICS),
+	    Metrics =
+		case s3_api:get_object(?SECURITY_BUCKET_NAME, MetricsPath) of
+		    {error, _Reason} -> [];
+		    not_found -> [];
+		    Response ->
+			Content = proplists:get_value(content, Response),
+			case jsx:is_json(Content) of
+			    {error, badarg} -> [];
+			    false -> [];
+			    true -> jsx:decode(Content)
+			end
+		end,
 	    TenantsList = [tenant_to_proplist(T) || T <- get_tenants_list([], undefined)],
+	    GetUsedBytes = fun(Id) ->
+		case lists:filter(
+		    fun(Metric) ->
+			proplists:get_value(<<"bucket_id">>, Metric) =:= Id
+		    end, Metrics) of
+		    [Match | _] -> utils:bytes_to_string(proplists:get_value(<<"used_bytes">>, Match));
+		    [] -> undefined
+		    end
+		end,
+	    TenantsWithUsage = [
+		lists:keystore(used_bytes, 1, Tenant, {used_bytes, GetUsedBytes(Tenant)})
+		|| Tenant <- TenantsList],
 	    State1 = admin_users_handler:user_to_proplist(User),
 	    {ok, Body} = admin_tenants_dtl:render([
 		{brand_name, Settings1#general_settings.brand_name},
 		{static_root, Settings1#general_settings.static_root},
 		{root_path, Settings1#general_settings.root_path},
-		{tenants, TenantsList},
-		{tenants_count, length(TenantsList)}
+		{tenants, TenantsWithUsage},
+		{tenants_count, length(TenantsWithUsage)}
 	    ] ++ State1),
 	    {Body, Req0, []}
     end.

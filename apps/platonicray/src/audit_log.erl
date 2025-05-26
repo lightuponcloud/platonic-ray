@@ -292,14 +292,14 @@ code_change(_OldVsn, State, _Extra) ->
 flush_to_s3(FailedQueue) ->
     %% Retrieve logs from light_ets
     LogQueue = lists:foldl(
-        fun({_Id, {BucketId, _Prefix, _OperationName, _Status, _ObjectKeys, _Context, _Timestamp} = Entry}, Acc) ->
+        fun({_Id, {BucketId, Prefix, OperationName, Status, ObjectKeys, Context, Timestamp}}, Acc) ->
             case proplists:get_value(BucketId, Acc) of
                 undefined ->
-                    [{BucketId, [Entry]} | Acc];
+                    [{BucketId, [{Prefix, OperationName, Status, ObjectKeys, Context, Timestamp}]} | Acc];
                 Entries ->
                     %% Remove old and add updated
                     NewAcc = proplists:delete(BucketId, Acc),
-                    [{BucketId, [Entry | Entries]} | NewAcc]
+                    [{BucketId, [{Prefix, OperationName, Status, ObjectKeys, Context, Timestamp} | Entries]} | NewAcc]
             end
         end,
         [],
@@ -313,10 +313,11 @@ flush_to_s3(FailedQueue) ->
                 fun({BucketId, BucketEntries}, Acc) ->
                     case BucketEntries of
                         [] -> Acc;
-                            _ ->
+                        _ ->
+io:fwrite("BucketEntries: ~p~n", [BucketEntries]),
                             %% Group entries by prefix
                             EntriesByPrefix = lists:foldl(
-                                fun({_, Prefix0, OperationName, Status, ObjectKeys, Context, Timestamp}, Map) ->
+                                fun({Prefix0, _OperationName, _Status, _ObjectKeys, _Context, _Timestamp} = Entry, Map) ->
 				    Prefix1 =
 					case utils:ends_with(Prefix0, <<"/">>) of
 					    true -> Prefix0;
@@ -327,9 +328,7 @@ flush_to_s3(FailedQueue) ->
 						end
 					end,
                                     PrefixEntries = maps:get(Prefix1, Map, []),
-                                    maps:put(Prefix1,
-                                             PrefixEntries ++ [{OperationName, Status, ObjectKeys, Context, Timestamp}],
-                                             Map)
+                                    maps:put(Prefix1, [Entry | PrefixEntries], Map)
                                 end, #{}, BucketEntries),
                             %% Process each prefix
                             maps:fold(

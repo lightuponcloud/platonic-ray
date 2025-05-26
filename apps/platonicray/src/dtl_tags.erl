@@ -23,5 +23,5 @@ basename(ObjectKey) when erlang:is_binary(ObjectKey) ->
 
 -spec even(list()) -> boolean().
 
-even(Number) when erlang:is_list(Number) ->
+even(Number) ->
     utils:even(utils:to_integer(Number)).
