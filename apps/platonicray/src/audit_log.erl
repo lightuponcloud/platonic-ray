@@ -230,21 +230,24 @@ handle_info(log_metrics, State) ->
 	     {available_bytes, Bytes}]
 	end || {BucketId, {Used, Available}} <- Metrics
     ],
-    Output = iolist_to_binary([jsx:encode(JSONEntries), "\n"]),
-    Options = [{meta, [{"md5", crypto_utils:md5(Output)}]}],
-    case s3_api:retry_s3_operation(
-        fun() ->
-            s3_api:put_object(?SECURITY_BUCKET_NAME, ?AUDIT_LOG_PREFIX, ?AUDIT_BUCKET_METRICS, Output, Options)
-        end,
-        ?S3_RETRY_COUNT,
-        ?S3_BASE_DELAY_MS
-    ) of
-        {error, Reason} ->
-            ?ERROR("[audit_log] Can't save ~p/~p/~p: ~p",
-                    [?SECURITY_BUCKET_NAME, ?AUDIT_LOG_PREFIX, ?AUDIT_BUCKET_METRICS, Reason]);
-        _ -> ok
+    case JSONEntries of
+	[] -> ok;
+	_ ->
+	    Output = iolist_to_binary([jsx:encode(JSONEntries), "\n"]),
+	    Options = [{meta, [{"md5", crypto_utils:md5(Output)}]}],
+	    case s3_api:retry_s3_operation(
+		fun() ->
+		    s3_api:put_object(?SECURITY_BUCKET_NAME, ?AUDIT_LOG_PREFIX, ?AUDIT_BUCKET_METRICS, Output, Options)
+		end,
+		?S3_RETRY_COUNT,
+		?S3_BASE_DELAY_MS
+	    ) of
+		{error, Reason} ->
+		    ?ERROR("[audit_log] Can't save ~p/~p/~p: ~p",
+			[?SECURITY_BUCKET_NAME, ?AUDIT_LOG_PREFIX, ?AUDIT_BUCKET_METRICS, Reason]);
+		_ -> ok
+	    end
     end,
-    % Schedule next saving of metrics
     {noreply, State};
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{flush_ref = Ref} = State) ->
@@ -314,7 +317,6 @@ flush_to_s3(FailedQueue) ->
                     case BucketEntries of
                         [] -> Acc;
                         _ ->
-io:fwrite("BucketEntries: ~p~n", [BucketEntries]),
                             %% Group entries by prefix
                             EntriesByPrefix = lists:foldl(
                                 fun({Prefix0, _OperationName, _Status, _ObjectKeys, _Context, _Timestamp} = Entry, Map) ->

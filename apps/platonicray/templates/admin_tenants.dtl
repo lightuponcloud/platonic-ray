@@ -133,26 +133,19 @@ $('body').on('click', '#id-add-tenant', function(e){
     </ul>
 </div>
 <div class="management-block">
-<h3>Tenants<span class="mob-hidden" id="id-block-header"><span class="dirseparator"></span></span>
-</h3>
+<h3>Tenants</h3>
 <div class="management-table clearfix">
  <div class="articles-details">
 
-<div style="float:right;margin-right:50px;">
-    <span class="pushbutton"><button type="button" class="form-short-small-button2" id="id-add-tenant">Add Tenant</button></span>
+<div class="search_result_count">
+<div style="float:right;margin-right:50px;margin-top:-12px;">
+    <span class="pushbutton"><button type="button" class="form-short-small-button2" disabled="disabled" id="id-add-user">Add Tenant</button></span>
 </div>
-
-<div class="confirm pink_error">
-    <div>
-	<i class="glyphicon glyphicon-info-sign"></i>Are you sure you want to delete <span id="id-dialog-obj-rm-msg"></span>
-	<div>
-	    <span class="pushbutton"><button type="button" class="alert-button" id="ok-btn">Yes</button></span>
-	    <span class="pushbutton"><button type="button" class="alert-button" id="cancel-btn"> Cancel</button></span>
-	</div>
-    </div>
 </div>
-<div style="float:left;width:84%;" id="id-div-tenants">
-<table class="lvw" cellpadding="0" cellspacing="0" id="id-table-tenants"><tr class="table-title-row">
+<br/><br/>
+<div id="id-tenants">
+</div>
+<table class="lvw" cellpadding="0" cellspacing="0" id="id-table-users"><tr class="table-title-row">
 <th class="chd first-title-col">Name</th>
 <th class="chd">Used Bytes</th>
 <th class="chd">Active</th>
@@ -162,17 +155,13 @@ $('body').on('click', '#id-add-tenant', function(e){
 {% for tenant in tenants %}
 <tr id="id-tenant-tr_{{ tenant.id }}" class="{% if forloop.counter0|even %}oddtr{% endif %}{% if forloop.last %} last_row{% endif %}">
 <td class="first-row-col"><center>{{ tenant.name }}</center><input type="hidden" name="name_{{ tenant.id }}" value="{{ tenant.name }}"/></td>
-<td>{{ tenant.used_bytes }}</td>
+<td>{% if tenant.used_bytes %}{{ tenant.used_bytes }}{% else %}N/A{% endif %}</td>
 <td class="td-enabled"><center><img src="{{ static_root }}icon-{% ifequal tenant.enabled "true" %}yes{% else %}no{% endifequal %}.gif"/></center><input type="hidden" name="staff_{{ tenant.id }}" value="{{ tenant.enabled }}"/></td>
 <td><a id="id-tenant_{{ tenant.id }}" href="{{ root_path }}admin/{{ tenant.id }}/users/">View Users</a></td>
 <td class="table-last-col"></td>
 </tr>
 {% endfor %}
 </table>
-
-</div>
-<br/><br/>
-
  </div>
 </div>
 </div>
