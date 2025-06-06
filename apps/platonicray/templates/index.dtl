@@ -95,9 +95,8 @@
 	Menu<span class="caret"></span>
     </button>
     <ul class="secondary-menu-list dropdown-menu" aria-labelledby="dropdownMenu1">
-        <li class="secondary-menu-buckets"><a class="menu-res-bucket{% ifequal bucket_id tenant_bucket_id %}-selected{% endifequal %}" href="{{ root_path }}{{ tenant_bucket_id }}/"><span>{{ tenant_name }}</span></a></li>
-	<!--li class="secondary-menu-buckets"><a class="menu-priv-bucket{% ifequal bucket_suffix private_suffix %}-selected{% endifequal %}" href="#"><span>Private</span></a></li-->
-    {% for group in groups %}
+        <li class="secondary-menu-buckets"><a class="menu-res-bucket{% ifequal bucket_id tenant_bucket_id %}-selected{% endifequal %}" href="{{ root_path }}{{ tenant_bucket }}/"><span>{{ tenant_name }}</span></a></li>
+    {% for group in user_groups %}
         <li class="secondary-menu-buckets"><a class="menu-res-bucket{% ifequal bucket_id group.bucket_id %}-selected{% endifequal %}" href="{{ root_path }}{{ group.bucket_id }}/"><span>{{ group.name }}</span></a></li>
     {% endfor %}
     </ul>

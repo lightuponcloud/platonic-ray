@@ -211,7 +211,10 @@ first_page(Req0, Settings, State) ->
 			{static_root, Settings#general_settings.static_root},
 			{root_path, Settings#general_settings.root_path},
 			{bucket_suffix, ""},
-			{private_suffix, ?PRIVATE_BUCKET_SUFFIX}
+			{private_suffix, ?PRIVATE_BUCKET_SUFFIX},
+			{user_groups, UserGroups},
+			{tenant_bucket, erlang:list_to_binary(lists:concat([?BACKEND_PREFIX, "-", Tenant#tenant.id, "-", ?RESTRICTED_BUCKET_SUFFIX]))},
+			{tenant_name, utils:unhex(utils:to_binary(Tenant#tenant.name))}
 		    ] ++ State, [{locale, Locale}]),
 		    Req1 = cowboy_req:reply(200, #{
 			<<"content-type">> => <<"text/html">>

@@ -217,7 +217,7 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, true, Bina
     end;
 
 serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, false, BinaryData, T0) ->
-    {WWidth0, WHeight0, Watermark0} =
+    {WWidth0, _WHeight, Watermark} =
 	case s3_api:head_object(BucketId, ?WATERMARK_OBJECT_KEY) of
 	    {error, Reason1} ->
 		?ERROR("[img_scale_handler] head_object failed ~p/~p: ~p",
@@ -237,54 +237,31 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, false, Bin
 	end,
     Options = [
 	{from, BinaryData},
-	{to, jpeg},
+	{to, png},
 	{crop, CropFlag},
 	{scale_width, Width},
-	{scale_height, Height},
-	{size, byte_size(BinaryData)}
+	{scale_height, Height}
     ],
-    Reply0 =
+    Reply =
 	case WWidth0 of
 	    undefined -> img:port_action(scale, Options);
-	    _ ->
-		Watermark1 =
-		    case (Width < WWidth0 orelse Height < WHeight0) andalso Width >= 600 of
-			true ->
-			    %% Scale watermark to size of image / 2, but only if thumbnail size > 600 px
-			    Reply1 = img:port_action(scale, [
-				{from, Watermark0},
-				{to, jpeg},
-				{crop, false},
-				{scale_width, Width/2},
-				{scale_height, Height/2},
-				{size, byte_size(BinaryData)}
-			    ]),
-			    case Reply1 of
-				{error, _} -> undefined;
-				_ -> Reply1
-			    end;
-			false -> undefined
-		    end,
-		case Watermark1 of
-		    undefined -> img:port_action(scale, Options);
-		    _ -> img:port_action(scale, Options ++ [{watermark, Watermark1}])
-		end
+	    _ -> img:port_action(scale, Options ++ [{watermark, Watermark}])
 	end,
-    case Reply0 of
-	{error, Reason3} -> js_handler:bad_request(Req0, Reason3);
+    case Reply of
+	{error, Reason2} -> js_handler:bad_request(Req0, Reason2);
 	_ ->
-	    Response = s3_api:put_object(BucketId, utils:dirname(Prefix), CachedKey, Reply0),
+	    Response = s3_api:put_object(BucketId, utils:dirname(Prefix), CachedKey, Reply),
 	    case Response of
 		{error, Reason3} ->
 		    ?ERROR("[img_scale_handler] Can't put object ~p/~p/~p: ~p",
-				[BucketId, utils:dirname(Prefix), CachedKey, Reason3]);
+			   [BucketId, utils:dirname(Prefix), CachedKey, Reason3]);
 		_ -> ok
 	    end,
 	    T1 = utils:timestamp(),
 	    Req1 = cowboy_req:stream_reply(200, #{
 		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 	    }, Req0),
-	    cowboy_req:stream_body(Reply0, fin, Req1),
+	    cowboy_req:stream_body(Reply, fin, Req1),
 	    {stop, Req1, []}
     end.
 

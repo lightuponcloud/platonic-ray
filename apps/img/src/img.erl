@@ -199,6 +199,9 @@ handle_call({command, Term, Timeout}, _From, #state{port = Port} = State) ->
     Tag = erlang:term_to_binary(self()),
     Data = erlang:term_to_binary(Term++[{tag, Tag}]),
     case send_image_command(Port, Data, Timeout) of
+        {data, <<>>} ->
+	    ?WARNING("No data received from img port"),
+            {reply, <<>>, State};
         {data, Binary} ->
             {_Tag, Reply} = erlang:binary_to_term(Binary),
             {reply, Reply, State};

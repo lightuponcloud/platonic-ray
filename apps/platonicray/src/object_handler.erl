@@ -430,7 +430,8 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 				end,
                             OrigName = utils:unhex(utils:to_binary(proplists:get_value("x-amz-meta-orig-filename", Metadata0))),
 			    Summary = <<"Lock state changes from", (utils:to_binary(WasLocked))/binary,
-					(utils:to_binary(IsLocked0))/binary, BucketId/binary, PrefixedObjectKey/binary>>,
+					(utils:to_binary(IsLocked0))/binary, (utils:to_binary(BucketId))/binary,
+					(utils:to_binary(PrefixedObjectKey))/binary>>,
 			    audit_log:log_operation(
 				BucketId,
 				Prefix,

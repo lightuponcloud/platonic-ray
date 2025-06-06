@@ -141,6 +141,9 @@ process_queue(Items, Retries) ->
 	({retry, {BucketId, ObjectKey, RetryCount}, _Reason}, {QueueAcc, RetriesAcc}) ->
 	    Key = <<BucketId/binary, "/", ObjectKey/binary>>,
 	    {[{BucketId, ObjectKey, RetryCount} | QueueAcc], RetriesAcc#{Key => RetryCount}};
+	({error, timeout}, {QueueAcc, RetriesAcc}) ->
+	    ?ERROR("[video_sup] Timed out when processing video"),
+	    {QueueAcc, RetriesAcc};
 	({error, {crash, BucketId, ObjectKey, Reason}}, {QueueAcc, RetriesAcc}) ->
 	    Key = <<BucketId/binary, "/", ObjectKey/binary>>,
 	    ?ERROR("[video_sup] Failed processing ~p after retries: ~p", [Key, Reason]),
