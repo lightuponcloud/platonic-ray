@@ -217,22 +217,36 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, true, Bina
     end;
 
 serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, false, BinaryData, T0) ->
-    {WWidth0, _WHeight, Watermark} =
+    Watermark =
 	case s3_api:head_object(BucketId, ?WATERMARK_OBJECT_KEY) of
-	    {error, Reason1} ->
+	    {error, Reason0} ->
 		?ERROR("[img_scale_handler] head_object failed ~p/~p: ~p",
-			    [BucketId, ?WATERMARK_OBJECT_KEY, Reason1]),
-		{undefined, undefined, undefined};
-	    not_found -> {undefined, undefined, undefined};
+		       [BucketId, ?WATERMARK_OBJECT_KEY, Reason0]),
+		undefined;
+	    not_found -> undefined;
 	    WatermarkResponse ->
 		WatermarkGUID = proplists:get_value("x-amz-meta-guid", WatermarkResponse),
 		WatermarkUploadId = proplists:get_value("x-amz-meta-upload-id", WatermarkResponse),
-		WatermarkWidth = proplists:get_value("x-amz-meta-width", WatermarkResponse),
-		WatermarkHeight = proplists:get_value("x-amz-meta-height", WatermarkResponse),
 		case s3_api:get_object(BucketId, WatermarkGUID, WatermarkUploadId) of
-		    not_found -> {undefined, undefined, undefined};
-		    {error, _} -> {undefined, undefined, undefined};
-		    WatermarkBinaryData -> {WatermarkWidth, WatermarkHeight, WatermarkBinaryData}
+		    not_found -> undefined;
+		    {error, _} -> undefined;
+		    WatermarkBinaryData -> WatermarkBinaryData
+		end
+	end,
+    LayerMask =
+	case s3_api:head_object(BucketId, ?LAYER_MASK_OBJECT_KEY) of
+	    {error, Reason1} ->
+		?ERROR("[img_scale_handler] head_object failed ~p/~p: ~p",
+		       [BucketId, ?LAYER_MASK_OBJECT_KEY, Reason1]),
+		undefined;
+	    not_found -> undefined;
+	    MaskResponse ->
+		MaskGUID = proplists:get_value("x-amz-meta-guid", MaskResponse),
+		MaskUploadId = proplists:get_value("x-amz-meta-upload-id", MaskResponse),
+		case s3_api:get_object(BucketId, MaskGUID, MaskUploadId) of
+		    not_found -> undefined;
+		    {error, _} -> undefined;
+		    MaskBinaryData -> MaskBinaryData
 		end
 	end,
     Options = [
@@ -243,9 +257,17 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, false, Bin
 	{scale_height, Height}
     ],
     Reply =
-	case WWidth0 of
-	    undefined -> img:port_action(scale, Options);
-	    _ -> img:port_action(scale, Options ++ [{watermark, Watermark}])
+	case Watermark of
+	    undefined ->
+		case LayerMask of
+		    undefined -> img:port_action(scale, Options);
+		    _ -> img:port_action(scale, Options ++ [{mask, LayerMask}])
+		end;
+	    _ ->
+		case LayerMask of
+		    undefined -> img:port_action(scale, Options ++ [{watermark, Watermark}]);
+		    _ -> img:port_action(scale, Options ++ [{watermark, Watermark}, {mask, LayerMask}])
+		end
 	end,
     case Reply of
 	{error, Reason2} -> js_handler:bad_request(Req0, Reason2);

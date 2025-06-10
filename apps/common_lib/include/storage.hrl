@@ -239,9 +239,13 @@
 %%
 -define(STOP_OBJECT_SUFFIX, ".stop").
 %%
-%% If case watermark with this key is present in bucket, thumbnails will have watermark on them.
+%% If watermark with this key is present in bucket, thumbnails will have watermark on them.
 %%
 -define(WATERMARK_OBJECT_KEY, "watermark.png").
+%%
+%% Layer mask for controling transparency/visibility of specific areas
+%%
+-define(LAYER_MASK_OBJECT_KEY, "layer_mask.png").
 %%
 %% Name of object to store/read video preview to/from
 %%
