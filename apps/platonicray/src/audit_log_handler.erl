@@ -195,7 +195,7 @@ stream_logs(Req0, BucketId0, Prefix, Filters, OperationName, T0) when OperationN
 		    catch
 			_:Reason ->
 			    ?ERROR("[audit_log_handler] failed to decompress ~p/~p: ~p",
-					[?SECURITY_BUCKET_NAME, ObjectKey, Reason])
+				   [?SECURITY_BUCKET_NAME, ObjectKey, Reason])
 		    end
 	    end
 	end, FilteredObjects),

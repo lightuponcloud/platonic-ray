@@ -1099,7 +1099,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 			 {"height", proplists:get_value(height, State0)}];
 		    RiakResponse ->
 			%% Get width and height of image
-			Reply0 = img:port_action(get_size, [{from, RiakResponse}, {just_get_size, true}, {size, TotalBytes}]),
+			Reply0 = img:port_action(get_size, [{from, RiakResponse}, {just_get_size, true}]),
 			case Reply0 of
 			    {error, _} ->
 				[{"width", proplists:get_value(width, State0)},

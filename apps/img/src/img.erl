@@ -205,10 +205,12 @@ handle_info(ping, #state{port = Port, ping_retries = RetryCount, num = PortNumbe
             {noreply, State#state{last_pong = os:timestamp(), ping_retries = 0}};
         {error, Reason} ->
             % Ping failed
-            ?WARNING("[img] Port ~p (worker ~p) did not respond to ping: ~p, retry count: ~p", [Port, PortNumber, Reason, RetryCount]),
+            ?WARNING("[img] Port ~p (worker ~p) did not respond to ping: ~p, retry count: ~p",
+                     [Port, PortNumber, Reason, RetryCount]),
             if RetryCount >= ?MAX_PING_RETRIES ->
                 % Max retries reached, restart the port
-                ?ERROR("[img] Port ~p (worker ~p) failed to respond after ~p ping attempts, forcing restart", [Port, PortNumber, RetryCount + 1]),
+                ?ERROR("[img] Port ~p (worker ~p) failed to respond after ~p ping attempts, forcing restart",
+                       [Port, PortNumber, RetryCount + 1]),
                 cleanup_port(Port),
                 % Force port to exit
                 catch port_close(Port),

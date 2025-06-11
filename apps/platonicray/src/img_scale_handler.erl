@@ -274,7 +274,7 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, false, Bin
 	    _ ->
 		case LayerMask of
 		    undefined -> img:port_action(scale, Options ++ [{watermark, Watermark}]);
-		    _ -> img:port_action(scale, Options ++ [{watermark, Watermark}, {mask, LayerMask}, {mask_background_color, "black"}])
+		    _ -> img:port_action(scale, Options ++ [{watermark, Watermark}, {mask, LayerMask}, {mask_background_color, "white"}])
 		end
 	end,
     case Reply of

@@ -213,6 +213,7 @@ handle_info({flush_completed, _Pid, Result}, #state{flush_ref = Ref} = State) ->
             }}
     end;
 
+%% Stores usage metrics
 handle_info(log_metrics, State) ->
     %% Get all storage metrics
     Metrics = light_ets:get_all_storage_metrics(),
@@ -420,40 +421,44 @@ log_to_s3(BucketId, Prefix, Entries) ->
             Entry ++ [{manifest_path, ManifestPath}]
         end || {OperationName, Status, ObjectKeys, Context, Timestamp} <- Entries
     ],
-    Output = iolist_to_binary([jsx:encode(JSONEntries), "\n"]),
-    {{Year, Month, Day}, {_H, _M, _S}} = calendar:now_to_universal_time(os:timestamp()),
-    Bits = string:tokens(BucketId, "-"),
-    TenantId = string:to_lower(lists:nth(2, Bits)),
-    LogPrefix = lists:flatten(utils:join_list_with_separator([
-	 ?AUDIT_LOG_PREFIX,
-	 TenantId,
-	 "buckets",
-	 BucketId,
-	 Prefix,
-	 lists:flatten(io_lib:format("~4.10.0B", [Year])),
-	 lists:flatten(io_lib:format("~2.10.0B", [Month]))
-    ], "/", [])),
-    LogName = lists:flatten(io_lib:format("~2.10.0B_~s.jsonl.gz", [Day, EventId])),
-    CompressedOutput = compress_data(Output),
-    %% Write new object
-    Response = s3_api:retry_s3_operation(
-        fun() ->
-            s3_api:put_object(
-                ?SECURITY_BUCKET_NAME,
-		LogPrefix,
-		LogName,
-                CompressedOutput,
-                [{meta, [{"md5", crypto_utils:md5(Output)}]}]
-            )
-        end,
-        ?S3_RETRY_COUNT,
-        ?S3_BASE_DELAY_MS
-    ),
-    case Response of
-        {error, Reason} ->
-            ?ERROR("[audit_log] Can't put object ~p/~p/~p: ~p", [?SECURITY_BUCKET_NAME, LogPrefix, LogName, Reason]),
-            {error, Reason};
-        _ -> ok
+    case JSONEntries of
+	[] -> ok;
+	_ ->
+	    Output = iolist_to_binary([jsx:encode(JSONEntries), "\n"]),
+	    {{Year, Month, Day}, {_H, _M, _S}} = calendar:now_to_universal_time(os:timestamp()),
+	    Bits = string:tokens(BucketId, "-"),
+	    TenantId = string:to_lower(lists:nth(2, Bits)),
+	    LogPrefix = lists:flatten(utils:join_list_with_separator([
+		 ?AUDIT_LOG_PREFIX,
+		 TenantId,
+		 "buckets",
+		 BucketId,
+		 Prefix,
+		 lists:flatten(io_lib:format("~4.10.0B", [Year])),
+		 lists:flatten(io_lib:format("~2.10.0B", [Month]))
+	    ], "/", [])),
+	    LogName = lists:flatten(io_lib:format("~2.10.0B_~s.jsonl.gz", [Day, EventId])),
+	    CompressedOutput = compress_data(Output),
+	    %% Write new object
+	    Response = s3_api:retry_s3_operation(
+		fun() ->
+		    s3_api:put_object(
+			?SECURITY_BUCKET_NAME,
+			LogPrefix,
+			LogName,
+			CompressedOutput,
+			[{meta, [{"md5", crypto_utils:md5(Output)}]}]
+		    )
+		end,
+		?S3_RETRY_COUNT,
+		?S3_BASE_DELAY_MS
+	    ),
+	    case Response of
+		{error, Reason} ->
+		    ?ERROR("[audit_log] Can't put object ~p/~p/~p: ~p", [?SECURITY_BUCKET_NAME, LogPrefix, LogName, Reason]),
+		    {error, Reason};
+		_ -> ok
+	    end
     end.
 
 %% Rate limiting using token bucket algorithm

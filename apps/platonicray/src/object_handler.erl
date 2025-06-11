@@ -234,7 +234,7 @@ patch_operation(Req0, unlock, BucketId, Prefix, User, ObjectsList) ->
     case indexing:update(BucketId, Prefix, [{modified_keys, UpdatedKeys}]) of
 	lock ->
 	    ?WARNING("[list_handler] Can't update index during unlocking object, as index lock exists",
-			  [BucketId, Prefix]),
+		     [BucketId, Prefix]),
 	    js_handler:too_many(Req1);
 	_ -> {true, Req1, []}
     end;
@@ -243,7 +243,7 @@ patch_operation(Req0, undelete, BucketId, Prefix, User, ObjectsList) ->
     case indexing:update(BucketId, Prefix, [{modified_keys, ModifiedKeys0}]) of
 	lock ->
 	    ?WARNING("[list_handler] Can't update index during undeleting object, as index lock exists: ~p/~p",
-			  [BucketId, Prefix]),
+		     [BucketId, Prefix]),
 	    js_handler:too_many(Req0);
 	_ -> {true, Req0, []}
     end.
@@ -366,8 +366,7 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
     T0 = utils:timestamp(),
     case s3_api:head_object(BucketId, PrefixedObjectKey) of
 	{error, Reason} ->
-	    ?ERROR("[list_handler] head_object failed ~p/~p: ~p",
-			[BucketId, PrefixedObjectKey, Reason]),
+	    ?ERROR("[list_handler] head_object failed ~p/~p: ~p", [BucketId, PrefixedObjectKey, Reason]),
 	    not_found;
 	not_found -> not_found;
 	Metadata0 ->

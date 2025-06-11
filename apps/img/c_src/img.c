@@ -30,7 +30,23 @@
 #undef ROUND
 #define ROUND(f) ((f >= 0) ? (int)(f + .5) : (int)(f - .5))
 
-/* encode/decode session info. */
+/* Encode/decode session info. */
+
+/*
+* mask_background_color_size can be the following
+*
+* "transparent"     // Fully transparent
+* "none"           // Same as transparent
+
+* "rgba(255,0,0,0)"     // Fully transparent red
+* "rgba(255,0,0,0.5)"   // 50% transparent red
+* "rgba(0,0,0,0.25)"    // 25% transparent black
+
+* "#FF000000"      // Fully transparent red (RRGGBBAA format)
+* "#FF000080"      // 50% transparent red
+
+* "hsla(0,100%,50%,0.5)"  // 50% transparent red in HSL
+*/
 typedef struct transform
 {
     unsigned char *from;
@@ -63,13 +79,19 @@ typedef struct {
 
 // Color validation structure
 typedef struct {
-    unsigned char r, g, b;
+    unsigned char r, g, b, a;
     int is_valid;
-} RGBColor;
+    int is_transparent;
+} RGBAColor;
 
 void debug(const char* format, ...)
 {
-    FILE* file = fopen("/tmp/output.txt", "a");
+    char filename[256];
+    pid_t pid = getpid();  // Get the current process ID
+
+    snprintf(filename, sizeof(filename), "/tmp/output/%d.txt", pid);
+
+    FILE* file = fopen(filename, "a");  // Open file in append mode
     if (file == NULL) {
         return;
     }
@@ -77,60 +99,57 @@ void debug(const char* format, ...)
     va_list args;
     va_start(args, format);
 
-    // Check if there are additional arguments by trying to peek
-    // If no format specifiers in format string, treat as plain string
     if (strchr(format, '%') == NULL) {
-        // No format specifiers found, treat as plain string
+        // No format specifiers, treat as plain string
         fputs(format, file);
     } else {
-        // Format specifiers found, use vfprintf
+        // Format specifiers present, format accordingly
         vfprintf(file, format, args);
     }
 
     va_end(args);
 
-    // Add newline for better readability
+    // Add newline for readability
     fputc('\n', file);
-
     fclose(file);
 }
 
 void print_transform_attributes(const transform_se *t)
 {
     if (t == NULL) {
-        debug("Transform structure is NULL\n");
+        debug("Transform structure is NULL");
         return;
     }
 
-    debug("Transform Structure Attributes:\n");
-    debug("================================\n");
+    debug("Transform Structure Attributes:");
+    debug("================================");
 
     // Print pointer addresses and sizes for binary data
-    debug("from:                    %p\n", (void*)t->from);
-    debug("from_size:               %zu bytes\n", t->from_size);
+    debug("from:                    %p", (void*)t->from);
+    debug("from_size:               %zu bytes", t->from_size);
 
     // Print 'to' field (null-terminated string)
-    debug("to:                      \"%.4s\"\n", t->to);
+    debug("to:                      \"%.4s\"", t->to);
 
-    debug("watermark:               %p\n", (void*)t->watermark);
-    debug("watermark_size:          %zu bytes\n", t->watermark_size);
+    debug("watermark:               %p", (void*)t->watermark);
+    debug("watermark_size:          %zu bytes", t->watermark_size);
 
-    debug("mask:                    %p\n", (void*)t->mask);
-    debug("mask_size:               %zu bytes\n", t->mask_size);
-    
+    debug("mask:                    %p", (void*)t->mask);
+    debug("mask_size:               %zu bytes", t->mask_size);
+
     // Print mask background color (assuming it's a string)
-    debug("mask_background_color:   \"%.63s\"\n", t->mask_background_color);
-    debug("mask_background_color_size: %zu\n", t->mask_background_color_size);
-    
-    debug("scale_width:             %lu\n", t->scale_width);
-    debug("scale_height:            %lu\n", t->scale_height);
-    
-    debug("tag:                     %p\n", (void*)t->tag);
-    debug("tag_size:                %zu bytes\n", t->tag_size);
-    
-    debug("crop:                    %s\n", t->crop ? "true" : "false");
-    debug("just_get_size:           %s\n", t->just_get_size ? "true" : "false");
-    debug("just_ping:               %s\n", t->just_ping ? "true" : "false");
+    debug("mask_background_color:   \"%.63s\"", t->mask_background_color);
+    debug("mask_background_color_size: %zu", t->mask_background_color_size);
+
+    debug("scale_width:             %lu", t->scale_width);
+    debug("scale_height:            %lu", t->scale_height);
+
+    debug("tag:                     %p", (void*)t->tag);
+    debug("tag_size:                %zu bytes", t->tag_size);
+
+    debug("crop:                    %s", t->crop ? "true" : "false");
+    debug("just_get_size:           %s", t->just_get_size ? "true" : "false");
+    debug("just_ping:               %s", t->just_ping ? "true" : "false");
 }
 
 static ssize_t write_exact(unsigned char *buf, ssize_t len)
@@ -186,11 +205,6 @@ static int encode_ping_response(transform_se *se, ei_x_buff *result, char *atom_
     return PONG;
 }
 
-
-/*
-    Refactored image processing functions - split for better debugging and maintainability
-*/
-
 // Helper function to initialize ImageMagick wand
 static MagickWand *init_magick_wand(transform_se *se, ei_x_buff *result, int *encode_stat)
 {
@@ -212,6 +226,9 @@ static MagickWand *init_magick_wand(transform_se *se, ei_x_buff *result, int *en
 // Function to handle size-only requests
 static int handle_get_size_only(transform_se *se, MagickWand *magick_wand, ei_x_buff *result)
 {
+    if (!magick_wand) {
+        return encode_error(se, result, "get_size_null_wand_error");
+    }
     size_t width = MagickGetImageWidth(magick_wand);
     size_t height = MagickGetImageHeight(magick_wand);
 
@@ -221,7 +238,6 @@ static int handle_get_size_only(transform_se *se, MagickWand *magick_wand, ei_x_
     {
         return encode_error(se, result, "size_encoding_error");
     }
-
     return 0;
 }
 
@@ -255,24 +271,43 @@ static void calculate_watermark_dimensions(size_t width, size_t height, size_t w
  * Validate color specification and convert to RGB if possible
  * Supports hex codes (#RRGGBB, #RGB) and common color names
  */
-int validate_color(const char* color_spec, RGBColor* rgb_out) {
-    if (!color_spec || !rgb_out) return 0;
+/*
+ * Enhanced color validation with transparency support
+ * Supports:
+ * - Named colors: "red", "blue", "transparent", etc.
+ * - Hex codes: "#FF0000", "#F00", "#FF000080" (with alpha)
+ * - RGB: "rgb(255,0,0)"
+ * - RGBA: "rgba(255,0,0,0.5)"
+ * - HSL: "hsl(0,100%,50%)"
+ * - Special: "transparent", "none"
+ */
+int validate_color_with_alpha(const char* color_spec, RGBAColor* rgba_out) {
+    if (!color_spec || !rgba_out) return 0;
 
-    rgb_out->is_valid = 0;
+    rgba_out->is_valid = 0;
+    rgba_out->is_transparent = 0;
 
     // Initialize MagickWand for color validation
     MagickWandGenesis();
     PixelWand* pixel_wand = NewPixelWand();
 
     if (PixelSetColor(pixel_wand, color_spec) == MagickTrue) {
-        rgb_out->r = (unsigned char)(PixelGetRed(pixel_wand) * 255);
-        rgb_out->g = (unsigned char)(PixelGetGreen(pixel_wand) * 255);
-        rgb_out->b = (unsigned char)(PixelGetBlue(pixel_wand) * 255);
-        rgb_out->is_valid = 1;
+        rgba_out->r = (unsigned char)(PixelGetRed(pixel_wand) * 255);
+        rgba_out->g = (unsigned char)(PixelGetGreen(pixel_wand) * 255);
+        rgba_out->b = (unsigned char)(PixelGetBlue(pixel_wand) * 255);
+        rgba_out->a = (unsigned char)(PixelGetAlpha(pixel_wand) * 255);
+        rgba_out->is_valid = 1;
+
+        // Check if color is transparent
+        if (PixelGetAlpha(pixel_wand) < 0.01 || 
+            strcmp(color_spec, "transparent") == 0 || 
+            strcmp(color_spec, "none") == 0) {
+            rgba_out->is_transparent = 1;
+        }
     }
 
     DestroyPixelWand(pixel_wand);
-    return rgb_out->is_valid;
+    return rgba_out->is_valid;
 }
 
 /*
@@ -365,10 +400,35 @@ int normalize_mask(MagickWand* mask_wand) {
 
 
 /*
+ * Create a pixel wand with proper transparency support
+ */
+PixelWand* create_background_pixel(const char* color_spec) {
+    PixelWand* pixel_wand = NewPixelWand();
+    if (!pixel_wand) return NULL;
+
+    // Handle special transparent cases
+    if (strcmp(color_spec, "transparent") == 0 || strcmp(color_spec, "none") == 0) {
+        PixelSetColor(pixel_wand, "transparent");
+        return pixel_wand;
+    }
+
+    // Try to set the color
+    if (PixelSetColor(pixel_wand, color_spec) == MagickFalse) {
+        // If color setting fails, use default transparent
+        PixelSetColor(pixel_wand, "transparent");
+    }
+
+    return pixel_wand;
+}
+
+/*
  * Main layer mask application function with intelligent processing
  */
 int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *result)
 {
+    if (!magick_wand) {
+        return encode_error(se, result, "apply_layer_mask_null_wand_error");
+    }
     MagickWand* mask_wand = NULL;
     MagickWand* result_wand = NULL;
     MagickWand* color_wand = NULL;
@@ -422,16 +482,19 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
         goto cleanup;
     }
 
-    PixelWand* bg_pixel = NewPixelWand();
+    PixelWand* bg_pixel = create_background_pixel(se->mask_background_color);
     if (!bg_pixel) {
         encode_stat = encode_error(se, result, "pixel_wand_create_error");
         goto cleanup;
     }
 
-    PixelSetColor(bg_pixel, se->mask_background_color);
-
     if (MagickNewImage(color_wand, input_width, input_height, bg_pixel) == MagickFalse) {
         encode_stat = encode_error(se, result, "color_imagemagick_error");
+        DestroyPixelWand(bg_pixel);
+        goto cleanup;
+    }
+    if (MagickSetImageAlphaChannel(color_wand, ActivateAlphaChannel) == MagickFalse) {
+        encode_stat = encode_error(se, result, "alpha_channel_error");
         DestroyPixelWand(bg_pixel);
         goto cleanup;
     }
@@ -444,11 +507,13 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
         goto cleanup;
     }
 
-    // Apply inversion logic based on analysis
     if (analysis.invert_mask) {
-        // Don't invert - black stays black (transparent), white becomes opaque
+        // More black pixels detected, we want black areas to show original
+        // So we DON'T invert - black stays black (transparent), white becomes opaque
+        // Do nothing - keep mask as is
     } else {
-        // Invert mask - white becomes black (transparent), black becomes white (opaque)
+        // More white pixels detected, we want white areas to show original  
+        // So we DO invert - white becomes black (transparent), black becomes white (opaque)
         if (MagickNegateImage(mask_copy, MagickFalse) == MagickFalse) {
             encode_stat = encode_error(se, result, "invert_mask_imagemagick_error");
             goto cleanup;
@@ -498,9 +563,13 @@ cleanup:
     return encode_stat;
 }
 
+
 // Function to apply watermark
 static int apply_watermark(transform_se *se, MagickWand *magick_wand, ei_x_buff *result)
 {
+    if (!magick_wand) {
+        return encode_error(se, result, "apply_watermark_null_wand_error");
+    }
     int encode_stat = 0;
     MagickWand *magick_wand_watermark = NewMagickWand();
 
@@ -586,7 +655,9 @@ static int set_image_format(transform_se *se, MagickWand *magick_wand, ei_x_buff
 // Function to handle image scaling and cropping
 static int scale_and_crop_image(transform_se *se, MagickWand *magick_wand, ei_x_buff *result)
 {
-
+    if (!magick_wand) {
+        return encode_error(se, result, "scale_and_crop_image_null_wand_error");
+    }
     size_t width = MagickGetImageWidth(magick_wand);
     size_t height = MagickGetImageHeight(magick_wand);
 
@@ -653,7 +724,7 @@ static int scale_and_crop_image(transform_se *se, MagickWand *magick_wand, ei_x_
         return encode_error(se, result, "imagemagick_compress_error");
     }
 
-    return 0;
+    return OK;
 }
 
 // Function to encode final result
@@ -701,9 +772,8 @@ static void cleanup_resources(transform_se *se, MagickWand *magick_wand)
 }
 
 
-
 /*
-    Main processing function - now much cleaner and easier to debug
+    Main processing function
     ``se`` -- source data
     ``result`` -- should contain status
 */
@@ -717,13 +787,6 @@ int process_image(transform_se *se, ei_x_buff *result)
         encode_stat = encode_ping_response(se, result, "ping");
         goto cleanup;
     }
-print_transform_attributes(se);
-    // Early validation
-    if (se->from_size == 0)
-    {
-        encode_stat = encode_error(se, result, "no_src_img_error");
-        goto cleanup;
-    }
 
     // Initialize ImageMagick wand
     magick_wand = init_magick_wand(se, result, &encode_stat);
@@ -732,10 +795,17 @@ print_transform_attributes(se);
         goto cleanup;
     }
 
-    // Handle size-only requests
     if (se->just_get_size == 1)
     {
         encode_stat = handle_get_size_only(se, magick_wand, result);
+        goto cleanup;
+    }
+
+    print_transform_attributes(se);
+    // Early validation
+    if (se->from_size == 0)
+    {
+        encode_stat = encode_error(se, result, "no_src_img_error");
         goto cleanup;
     }
 
@@ -953,10 +1023,10 @@ int parse_transform(unsigned char *buf, int offset, int arity, transform_se *se,
             se->mask_background_color_size = strlen(se->mask_background_color);
 
             // Validate the color
-            RGBColor rgb;
-            if (!validate_color(se->mask_background_color, &rgb)) {
+            RGBAColor rgb;
+            if (!validate_color_with_alpha(se->mask_background_color, &rgb)) {
                 // Use default color if validation fails
-                strncpy(se->mask_background_color, "black", MAX_COLOR_NAME - 1);
+                strncpy(se->mask_background_color, "white", MAX_COLOR_NAME - 1);
                 se->mask_background_color[MAX_COLOR_NAME - 1] = '\0';
                 se->mask_background_color_size = strlen(se->mask_background_color);
             }
@@ -984,7 +1054,7 @@ int parse_transform(unsigned char *buf, int offset, int arity, transform_se *se,
                 encode_stat = encode_error(se, &result, "atom_decode_error");
                 break;
             }
-            se->just_get_size = 1;
+            se->just_ping = 1;
         }
         else if (strncmp("tag", last_atom, strlen(last_atom)) == 0)
         {
