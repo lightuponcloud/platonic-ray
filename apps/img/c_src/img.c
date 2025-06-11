@@ -47,6 +47,7 @@ typedef struct transform
     unsigned char *tag; // PID
     int crop;           // Crop image
     int just_get_size;  // Just return width and height of provided image
+    int just_ping;      // Just return ping response
     size_t tag_size;
 } transform_se;
 
@@ -65,6 +66,72 @@ typedef struct {
     unsigned char r, g, b;
     int is_valid;
 } RGBColor;
+
+void debug(const char* format, ...)
+{
+    FILE* file = fopen("/tmp/output.txt", "a");
+    if (file == NULL) {
+        return;
+    }
+
+    va_list args;
+    va_start(args, format);
+
+    // Check if there are additional arguments by trying to peek
+    // If no format specifiers in format string, treat as plain string
+    if (strchr(format, '%') == NULL) {
+        // No format specifiers found, treat as plain string
+        fputs(format, file);
+    } else {
+        // Format specifiers found, use vfprintf
+        vfprintf(file, format, args);
+    }
+
+    va_end(args);
+
+    // Add newline for better readability
+    fputc('\n', file);
+
+    fclose(file);
+}
+
+void print_transform_attributes(const transform_se *t)
+{
+    if (t == NULL) {
+        debug("Transform structure is NULL\n");
+        return;
+    }
+
+    debug("Transform Structure Attributes:\n");
+    debug("================================\n");
+
+    // Print pointer addresses and sizes for binary data
+    debug("from:                    %p\n", (void*)t->from);
+    debug("from_size:               %zu bytes\n", t->from_size);
+
+    // Print 'to' field (null-terminated string)
+    debug("to:                      \"%.4s\"\n", t->to);
+
+    debug("watermark:               %p\n", (void*)t->watermark);
+    debug("watermark_size:          %zu bytes\n", t->watermark_size);
+
+    debug("mask:                    %p\n", (void*)t->mask);
+    debug("mask_size:               %zu bytes\n", t->mask_size);
+    
+    // Print mask background color (assuming it's a string)
+    debug("mask_background_color:   \"%.63s\"\n", t->mask_background_color);
+    debug("mask_background_color_size: %zu\n", t->mask_background_color_size);
+    
+    debug("scale_width:             %lu\n", t->scale_width);
+    debug("scale_height:            %lu\n", t->scale_height);
+    
+    debug("tag:                     %p\n", (void*)t->tag);
+    debug("tag_size:                %zu bytes\n", t->tag_size);
+    
+    debug("crop:                    %s\n", t->crop ? "true" : "false");
+    debug("just_get_size:           %s\n", t->just_get_size ? "true" : "false");
+    debug("just_ping:               %s\n", t->just_ping ? "true" : "false");
+}
 
 static ssize_t write_exact(unsigned char *buf, ssize_t len)
 {
@@ -94,6 +161,7 @@ static ssize_t write_cmd(ei_x_buff *buff)
     return write_exact((unsigned char *)buff->buff, buff->index);
 }
 
+
 static int encode_error(transform_se *se, ei_x_buff *result, char *atom_name)
 {
     char error_key[6] = "error\0";
@@ -118,6 +186,7 @@ static int encode_ping_response(transform_se *se, ei_x_buff *result, char *atom_
     return PONG;
 }
 
+
 /*
     Refactored image processing functions - split for better debugging and maintainability
 */
@@ -136,6 +205,7 @@ static MagickWand *init_magick_wand(transform_se *se, ei_x_buff *result, int *en
         (void)DestroyMagickWand(magick_wand);
         return NULL;
     }
+    *encode_stat = OK;
     return magick_wand;
 }
 
@@ -297,7 +367,7 @@ int normalize_mask(MagickWand* mask_wand) {
 /*
  * Main layer mask application function with intelligent processing
  */
-int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *result, int *encode_stat)
+int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *result)
 {
     MagickWand* input_wand = NULL;
     MagickWand* mask_wand = NULL;
@@ -305,6 +375,7 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
     MagickWand* color_wand = NULL;
     MagickWand* mask_copy = NULL;
     int success = 0;  // Track success status
+    int encode_stat = 0;
 
     // Initialize ImageMagick
     MagickWandGenesis();
@@ -313,7 +384,7 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
     input_wand = NewMagickWand();
     if (MagickReadImageBlob(input_wand, se->from, se->from_size) == MagickFalse)
     {
-        *encode_stat = encode_error(se, result, "source_imagemagick_error");
+        encode_stat = encode_error(se, result, "source_imagemagick_error");
         goto cleanup;
     }
 
@@ -323,7 +394,7 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
     // Load mask image
     mask_wand = NewMagickWand();
     if (MagickReadImageBlob(mask_wand, se->mask, se->mask_size) == MagickFalse) {
-        *encode_stat = encode_error(se, result, "mask_imagemagick_error");
+        encode_stat = encode_error(se, result, "mask_imagemagick_error");
         goto cleanup;
     }
 
@@ -333,7 +404,7 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
     // Resize mask to match input dimensions if necessary
     if (mask_width != input_width || mask_height != input_height) {
         if (MagickResizeImage(mask_wand, input_width, input_height, TriangleFilter, 1.0) == MagickFalse) {
-            *encode_stat = encode_error(se, result, "resize_imagemagick_error");
+            encode_stat = encode_error(se, result, "resize_imagemagick_error");
             goto cleanup;
         }
     }
@@ -346,7 +417,7 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
     // Create result image by cloning input
     result_wand = CloneMagickWand(input_wand);
     if (!result_wand) {
-        *encode_stat = encode_error(se, result, "clone_imagemagick_error");
+        encode_stat = encode_error(se, result, "clone_imagemagick_error");
         goto cleanup;
     }
 
@@ -356,7 +427,7 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
     PixelSetColor(bg_pixel, se->mask_background_color);
 
     if (MagickNewImage(color_wand, input_width, input_height, bg_pixel) == MagickFalse) {
-        *encode_stat = encode_error(se, result, "color_imagemagick_error");
+        encode_stat = encode_error(se, result, "color_imagemagick_error");
         DestroyPixelWand(bg_pixel);
         goto cleanup;
     }
@@ -365,7 +436,7 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
     // Prepare mask for compositing
     mask_copy = CloneMagickWand(mask_wand);
     if (!mask_copy) {
-        *encode_stat = encode_error(se, result, "clone_imagemagick_error");
+        encode_stat = encode_error(se, result, "clone_imagemagick_error");
         goto cleanup;
     }
     // Apply inversion logic based on analysis
@@ -374,7 +445,7 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
     } else {
         // Invert mask - white becomes black (transparent), black becomes white (opaque)
         if (MagickNegateImage(mask_copy, MagickFalse) == MagickFalse) {
-            *encode_stat = encode_error(se, result, "invert_mask_imagemagick_error");
+            encode_stat = encode_error(se, result, "invert_mask_imagemagick_error");
             goto cleanup;
         }
     }
@@ -382,31 +453,31 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
     // Use mask as alpha channel for color layer
     if (MagickCompositeImageChannel(color_wand, AlphaChannel, mask_copy,
                                     CopyOpacityCompositeOp, 0, 0) == MagickFalse) {
-        *encode_stat = encode_error(se, result, "apply_mask_imagemagick_error");
+        encode_stat = encode_error(se, result, "apply_mask_imagemagick_error");
         goto cleanup;
     }
 
     // Composite color layer over original image
     if (MagickCompositeImage(result_wand, color_wand, OverCompositeOp, 0, 0) == MagickFalse) {
-        *encode_stat = encode_error(se, result, "compose_imagemagick_error");
+        encode_stat = encode_error(se, result, "compose_imagemagick_error");
         goto cleanup;
     }
 
     // Transfer result to the output magick_wand
     // Clear the existing magick_wand and copy the result
     ClearMagickWand(magick_wand);
-    
+
     // Get the image blob from result_wand
     size_t blob_length;
     unsigned char* blob = MagickGetImageBlob(result_wand, &blob_length);
     if (blob == NULL) {
-        *encode_stat = encode_error(se, result, "get_blob_imagemagick_error");
+        encode_stat = encode_error(se, result, "get_blob_imagemagick_error");
         goto cleanup;
     }
-    
+
     // Load the blob into magick_wand
     if (MagickReadImageBlob(magick_wand, blob, blob_length) == MagickFalse) {
-        *encode_stat = encode_error(se, result, "load_result_imagemagick_error");
+        encode_stat = encode_error(se, result, "load_result_imagemagick_error");
         MagickRelinquishMemory(blob);
         goto cleanup;
     }
@@ -426,26 +497,27 @@ cleanup:
     MagickWandTerminus();
 
     // Return success status or the error code
-    return success ? 0 : (*encode_stat != 0 ? *encode_stat : -1);
+    return encode_stat;
 
 }
 
 // Function to apply watermark
-static int apply_watermark(transform_se *se, MagickWand *magick_wand, ei_x_buff *result, int *encode_stat)
+static int apply_watermark(transform_se *se, MagickWand *magick_wand, ei_x_buff *result)
 {
+    int encode_stat = 0;
     MagickWand *magick_wand_watermark = NewMagickWand();
 
     // Load watermark image
     if (MagickReadImageBlob(magick_wand_watermark, se->watermark, se->watermark_size) == MagickFalse)
     {
-        *encode_stat = encode_error(se, result, "watermark_blob_imagemagick_error");
+        encode_stat = encode_error(se, result, "watermark_blob_imagemagick_error");
 	goto cleanup;
     }
 
     // Set watermark transparency
     if (MagickEvaluateImageChannel(magick_wand_watermark, AlphaChannel, MultiplyEvaluateOperator, 0.4) == MagickFalse)
     {
-        *encode_stat = encode_error(se, result, "alpha_imagemagick_error");
+        encode_stat = encode_error(se, result, "alpha_imagemagick_error");
 	goto cleanup;
     }
 
@@ -462,21 +534,21 @@ static int apply_watermark(transform_se *se, MagickWand *magick_wand, ei_x_buff 
     // Resize watermark
     if (MagickResizeImage(magick_wand_watermark, new_wm_width, new_wm_height, TriangleFilter, 1.0) == MagickFalse)
     {
-        *encode_stat = encode_error(se, result, "imagemagick_resize_error");
+        encode_stat = encode_error(se, result, "imagemagick_resize_error");
 	goto cleanup;
     }
 
     // Composite watermark onto main image
     if (MagickCompositeImage(magick_wand, magick_wand_watermark, DissolveCompositeOp, width / 5, height / 5) == MagickFalse)
     {
-        *encode_stat = encode_error(se, result, "composite_imagemagick_error");
+        encode_stat = encode_error(se, result, "composite_imagemagick_error");
 	goto cleanup;
     }
 
 cleanup:
     if(magick_wand_watermark) (void)DestroyMagickWand(magick_wand_watermark);
 
-    return (*encode_stat != 0 ? *encode_stat : -1);
+    return encode_stat;
 }
 
 // Function to set image format and compression
@@ -631,6 +703,8 @@ static void cleanup_resources(transform_se *se, MagickWand *magick_wand)
     }
 }
 
+
+
 /*
     Main processing function - now much cleaner and easier to debug
     ``se`` -- source data
@@ -641,6 +715,12 @@ int process_image(transform_se *se, ei_x_buff *result)
     int encode_stat = 0;
     MagickWand *magick_wand = NULL;
 
+    if (se->just_ping == 1)
+    {
+        encode_stat = encode_ping_response(se, result, "ping");
+        goto cleanup;
+    }
+print_transform_attributes(se);
     // Early validation
     if (se->from_size == 0)
     {
@@ -665,7 +745,7 @@ int process_image(transform_se *se, ei_x_buff *result)
     // Apply watermark if needed
     if (se->watermark_size > 0)
     {
-        encode_stat = apply_watermark(se, magick_wand, result, &encode_stat);
+        encode_stat = apply_watermark(se, magick_wand, result);
         if (encode_stat != 0)
         {
             goto cleanup;
@@ -676,7 +756,7 @@ int process_image(transform_se *se, ei_x_buff *result)
     // Apply mask if needed
     if (se->mask_size > 0)
     {
-        encode_stat = apply_layer_mask(se, magick_wand, result, &encode_stat);
+        encode_stat = apply_layer_mask(se, magick_wand, result);
         if (encode_stat != 0)
         {
             goto cleanup;
@@ -735,6 +815,7 @@ int parse_transform(unsigned char *buf, int offset, int arity, transform_se *se,
     se->scale_height = 0;
     se->crop = 1;
     se->just_get_size = 0;
+    se->just_ping = 0;
 
     int i;
     for (i = 0; i < arity; i++)
@@ -906,8 +987,7 @@ int parse_transform(unsigned char *buf, int offset, int arity, transform_se *se,
                 encode_stat = encode_error(se, &result, "atom_decode_error");
                 break;
             }
-            encode_stat = encode_ping_response(se, &result, "ping");
-            break; // Exit loop after handling ping
+            se->just_get_size = 1;
         }
         else if (strncmp("tag", last_atom, strlen(last_atom)) == 0)
         {
@@ -1026,7 +1106,6 @@ int main(void)
             encode_stat = parse_transform(buf, offset, arity, &se, result);
             if (OK == encode_stat)
                 encode_stat = process_image(&se, &result);
-
             if (INTERNAL_ERROR != encode_stat)
             {
                 (void)write_cmd(&result);
