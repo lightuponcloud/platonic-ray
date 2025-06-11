@@ -103,7 +103,7 @@ init(Req0, Opts) ->
     end.
 
 bad_request(Req0, MsgCode)
-	when erlang:is_integer(MsgCode) orelse erlang:is_list(MsgCode) orelse erlang:is_atom(MsgCode) ->
+	when erlang:is_integer(MsgCode) orelse erlang:is_list(MsgCode) orelse erlang:is_atom(MsgCode) or erlang:is_binary(MsgCode) ->
     Req1 = cowboy_req:reply(400, #{
 	<<"content-type">> => <<"application/json">>
     }, jsx:encode([{error, MsgCode}]), Req0),

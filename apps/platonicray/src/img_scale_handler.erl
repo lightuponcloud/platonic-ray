@@ -225,12 +225,16 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, false, Bin
 		undefined;
 	    not_found -> undefined;
 	    WatermarkResponse ->
-		WatermarkGUID = proplists:get_value("x-amz-meta-guid", WatermarkResponse),
-		WatermarkUploadId = proplists:get_value("x-amz-meta-upload-id", WatermarkResponse),
-		case s3_api:get_object(BucketId, WatermarkGUID, WatermarkUploadId) of
-		    not_found -> undefined;
-		    {error, _} -> undefined;
-		    WatermarkBinaryData -> WatermarkBinaryData
+		case proplists:get_value("x-amz-meta-is-deleted", WatermarkResponse) of
+		    "true" -> undefined;
+		    _ ->
+			WatermarkGUID = proplists:get_value("x-amz-meta-guid", WatermarkResponse),
+			WatermarkUploadId = proplists:get_value("x-amz-meta-upload-id", WatermarkResponse),
+			case s3_api:get_object(BucketId, WatermarkGUID, WatermarkUploadId) of
+			    not_found -> undefined;
+			    {error, _} -> undefined;
+			    WatermarkBinaryData -> WatermarkBinaryData
+			end
 		end
 	end,
     LayerMask =
@@ -241,12 +245,16 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, false, Bin
 		undefined;
 	    not_found -> undefined;
 	    MaskResponse ->
-		MaskGUID = proplists:get_value("x-amz-meta-guid", MaskResponse),
-		MaskUploadId = proplists:get_value("x-amz-meta-upload-id", MaskResponse),
-		case s3_api:get_object(BucketId, MaskGUID, MaskUploadId) of
-		    not_found -> undefined;
-		    {error, _} -> undefined;
-		    MaskBinaryData -> MaskBinaryData
+		case proplists:get_value("x-amz-meta-is-deleted", MaskResponse) of
+		    "true" -> undefined;
+		    _ ->
+			MaskGUID = proplists:get_value("x-amz-meta-guid", MaskResponse),
+			MaskUploadId = proplists:get_value("x-amz-meta-upload-id", MaskResponse),
+			case s3_api:get_object(BucketId, MaskGUID, MaskUploadId) of
+			    not_found -> undefined;
+			    {error, _} -> undefined;
+			    MaskBinaryData -> MaskBinaryData
+			end
 		end
 	end,
     Options = [
@@ -261,12 +269,12 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, false, Bin
 	    undefined ->
 		case LayerMask of
 		    undefined -> img:port_action(scale, Options);
-		    _ -> img:port_action(scale, Options ++ [{mask, LayerMask}])
+		    _ -> img:port_action(scale, Options ++ [{mask, LayerMask}, {mask_background_color, "black"}])
 		end;
 	    _ ->
 		case LayerMask of
 		    undefined -> img:port_action(scale, Options ++ [{watermark, Watermark}]);
-		    _ -> img:port_action(scale, Options ++ [{watermark, Watermark}, {mask, LayerMask}])
+		    _ -> img:port_action(scale, Options ++ [{watermark, Watermark}, {mask, LayerMask}, {mask_background_color, "black"}])
 		end
 	end,
     case Reply of

@@ -369,30 +369,23 @@ int normalize_mask(MagickWand* mask_wand) {
  */
 int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *result)
 {
-    MagickWand* input_wand = NULL;
     MagickWand* mask_wand = NULL;
     MagickWand* result_wand = NULL;
     MagickWand* color_wand = NULL;
     MagickWand* mask_copy = NULL;
-    int success = 0;  // Track success status
     int encode_stat = 0;
 
-    // Initialize ImageMagick
-    MagickWandGenesis();
-
-    // Load input image
-    input_wand = NewMagickWand();
-    if (MagickReadImageBlob(input_wand, se->from, se->from_size) == MagickFalse)
-    {
-        encode_stat = encode_error(se, result, "source_imagemagick_error");
-        goto cleanup;
-    }
-
-    size_t input_width = MagickGetImageWidth(input_wand);
-    size_t input_height = MagickGetImageHeight(input_wand);
+    // Get input image dimensions directly from the passed magick_wand
+    size_t input_width = MagickGetImageWidth(magick_wand);
+    size_t input_height = MagickGetImageHeight(magick_wand);
 
     // Load mask image
     mask_wand = NewMagickWand();
+    if (!mask_wand) {
+        encode_stat = encode_error(se, result, "mask_wand_create_error");
+        goto cleanup;
+    }
+
     if (MagickReadImageBlob(mask_wand, se->mask, se->mask_size) == MagickFalse) {
         encode_stat = encode_error(se, result, "mask_imagemagick_error");
         goto cleanup;
@@ -408,14 +401,15 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
             goto cleanup;
         }
     }
+
     // Normalize mask for consistent processing
     normalize_mask(mask_wand);
 
     // Analyze mask to determine processing approach
     MaskAnalysis analysis = analyze_mask_dominant_color(mask_wand);
 
-    // Create result image by cloning input
-    result_wand = CloneMagickWand(input_wand);
+    // Create result image by cloning the input magick_wand
+    result_wand = CloneMagickWand(magick_wand);
     if (!result_wand) {
         encode_stat = encode_error(se, result, "clone_imagemagick_error");
         goto cleanup;
@@ -423,7 +417,17 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
 
     // Create solid color layer
     color_wand = NewMagickWand();
+    if (!color_wand) {
+        encode_stat = encode_error(se, result, "color_wand_create_error");
+        goto cleanup;
+    }
+
     PixelWand* bg_pixel = NewPixelWand();
+    if (!bg_pixel) {
+        encode_stat = encode_error(se, result, "pixel_wand_create_error");
+        goto cleanup;
+    }
+
     PixelSetColor(bg_pixel, se->mask_background_color);
 
     if (MagickNewImage(color_wand, input_width, input_height, bg_pixel) == MagickFalse) {
@@ -436,9 +440,10 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
     // Prepare mask for compositing
     mask_copy = CloneMagickWand(mask_wand);
     if (!mask_copy) {
-        encode_stat = encode_error(se, result, "clone_imagemagick_error");
+        encode_stat = encode_error(se, result, "clone_mask_imagemagick_error");
         goto cleanup;
     }
+
     // Apply inversion logic based on analysis
     if (analysis.invert_mask) {
         // Don't invert - black stays black (transparent), white becomes opaque
@@ -463,11 +468,10 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
         goto cleanup;
     }
 
-    // Transfer result to the output magick_wand
-    // Clear the existing magick_wand and copy the result
+    // Clear the original wand
     ClearMagickWand(magick_wand);
 
-    // Get the image blob from result_wand
+    // Get the processed image as blob
     size_t blob_length;
     unsigned char* blob = MagickGetImageBlob(result_wand, &blob_length);
     if (blob == NULL) {
@@ -475,30 +479,23 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
         goto cleanup;
     }
 
-    // Load the blob into magick_wand
+    // Load the blob back into the original magick_wand
     if (MagickReadImageBlob(magick_wand, blob, blob_length) == MagickFalse) {
         encode_stat = encode_error(se, result, "load_result_imagemagick_error");
         MagickRelinquishMemory(blob);
         goto cleanup;
     }
 
-    // Clean up the blob memory
     MagickRelinquishMemory(blob);
-    success = 1;  // Mark as successful
 
 cleanup:
     // Clean up all MagickWand resources
-    if (input_wand) DestroyMagickWand(input_wand);
     if (mask_wand) DestroyMagickWand(mask_wand);
     if (result_wand) DestroyMagickWand(result_wand);
     if (color_wand) DestroyMagickWand(color_wand);
     if (mask_copy) DestroyMagickWand(mask_copy);
 
-    MagickWandTerminus();
-
-    // Return success status or the error code
     return encode_stat;
-
 }
 
 // Function to apply watermark
