@@ -19,7 +19,7 @@ init(Req, Opts) ->
 
 content_types_provided(Req, State) ->
     {[
-	{{<<"image">>, <<"jpeg">>, '*'}, to_scale},
+	{{<<"image">>, <<"png">>, '*'}, to_scale},
 	{{<<"application">>, <<"json">>, []}, to_json}
     ], Req, State}.
 
@@ -52,7 +52,7 @@ to_scale(Req0, State) ->
     case s3_api:head_object(BucketId, PrefixedObjectKey) of
 	{error, Reason} ->
 	    ?ERROR("[img_scale_handler] head_object failed ~p/~p: ~p",
-			[BucketId, PrefixedObjectKey, Reason]),
+		   [BucketId, PrefixedObjectKey, Reason]),
 	    {<<>>, Req0, []};
 	not_found -> {<<>>, Req0, []};
 	Metadata0 ->

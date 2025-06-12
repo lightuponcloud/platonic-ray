@@ -31,7 +31,7 @@
 -define(INTERNAL_IMAGE_WORKERS, 4).  %% The number of imagemagick workers for scaling images
 -define(INTERNAL_IMAGE_POPRT_PING_INTERVAL, 30000).  % 30 seconds ( this is retry timeout )
 -define(MAX_PING_RETRIES, 3).        % Maximum number of ping retry attempts
--define(RESTART_DELAY, 500).
+-define(RESTART_DELAY, 300).
 
 %% Starts N servers for image/video thumbnails
 start_link(PortNumber) ->

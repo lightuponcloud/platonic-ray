@@ -68,41 +68,49 @@ typedef struct transform
 } transform_se;
 
 // Mask analysis results
-typedef struct {
+typedef struct
+{
     int invert_mask;
     double black_percentage;
     double white_percentage;
+    double transparent_percentage;
     size_t total_pixels;
     size_t black_pixels;
     size_t white_pixels;
+    size_t transparent_pixels;
 } MaskAnalysis;
 
 // Color validation structure
-typedef struct {
+typedef struct
+{
     unsigned char r, g, b, a;
     int is_valid;
     int is_transparent;
 } RGBAColor;
 
-void debug(const char* format, ...)
+void debug(const char *format, ...)
 {
     char filename[256];
-    pid_t pid = getpid();  // Get the current process ID
+    pid_t pid = getpid(); // Get the current process ID
 
     snprintf(filename, sizeof(filename), "/tmp/output/%d.txt", pid);
 
-    FILE* file = fopen(filename, "a");  // Open file in append mode
-    if (file == NULL) {
+    FILE *file = fopen(filename, "a"); // Open file in append mode
+    if (file == NULL)
+    {
         return;
     }
 
     va_list args;
     va_start(args, format);
 
-    if (strchr(format, '%') == NULL) {
+    if (strchr(format, '%') == NULL)
+    {
         // No format specifiers, treat as plain string
         fputs(format, file);
-    } else {
+    }
+    else
+    {
         // Format specifiers present, format accordingly
         vfprintf(file, format, args);
     }
@@ -116,7 +124,8 @@ void debug(const char* format, ...)
 
 void print_transform_attributes(const transform_se *t)
 {
-    if (t == NULL) {
+    if (t == NULL)
+    {
         debug("Transform structure is NULL");
         return;
     }
@@ -125,16 +134,16 @@ void print_transform_attributes(const transform_se *t)
     debug("================================");
 
     // Print pointer addresses and sizes for binary data
-    debug("from:                    %p", (void*)t->from);
+    debug("from:                    %p", (void *)t->from);
     debug("from_size:               %zu bytes", t->from_size);
 
     // Print 'to' field (null-terminated string)
     debug("to:                      \"%.4s\"", t->to);
 
-    debug("watermark:               %p", (void*)t->watermark);
+    debug("watermark:               %p", (void *)t->watermark);
     debug("watermark_size:          %zu bytes", t->watermark_size);
 
-    debug("mask:                    %p", (void*)t->mask);
+    debug("mask:                    %p", (void *)t->mask);
     debug("mask_size:               %zu bytes", t->mask_size);
 
     // Print mask background color (assuming it's a string)
@@ -144,7 +153,7 @@ void print_transform_attributes(const transform_se *t)
     debug("scale_width:             %lu", t->scale_width);
     debug("scale_height:            %lu", t->scale_height);
 
-    debug("tag:                     %p", (void*)t->tag);
+    debug("tag:                     %p", (void *)t->tag);
     debug("tag_size:                %zu bytes", t->tag_size);
 
     debug("crop:                    %s", t->crop ? "true" : "false");
@@ -179,7 +188,6 @@ static ssize_t write_cmd(ei_x_buff *buff)
 
     return write_exact((unsigned char *)buff->buff, buff->index);
 }
-
 
 static int encode_error(transform_se *se, ei_x_buff *result, char *atom_name)
 {
@@ -226,7 +234,8 @@ static MagickWand *init_magick_wand(transform_se *se, ei_x_buff *result, int *en
 // Function to handle size-only requests
 static int handle_get_size_only(transform_se *se, MagickWand *magick_wand, ei_x_buff *result)
 {
-    if (!magick_wand) {
+    if (!magick_wand)
+    {
         return encode_error(se, result, "get_size_null_wand_error");
     }
     size_t width = MagickGetImageWidth(magick_wand);
@@ -281,17 +290,20 @@ static void calculate_watermark_dimensions(size_t width, size_t height, size_t w
  * - HSL: "hsl(0,100%,50%)"
  * - Special: "transparent", "none"
  */
-int validate_color_with_alpha(const char* color_spec, RGBAColor* rgba_out) {
-    if (!color_spec || !rgba_out) return 0;
+int validate_color_with_alpha(const char *color_spec, RGBAColor *rgba_out)
+{
+    if (!color_spec || !rgba_out)
+        return 0;
 
     rgba_out->is_valid = 0;
     rgba_out->is_transparent = 0;
 
     // Initialize MagickWand for color validation
     MagickWandGenesis();
-    PixelWand* pixel_wand = NewPixelWand();
+    PixelWand *pixel_wand = NewPixelWand();
 
-    if (PixelSetColor(pixel_wand, color_spec) == MagickTrue) {
+    if (PixelSetColor(pixel_wand, color_spec) == MagickTrue)
+    {
         rgba_out->r = (unsigned char)(PixelGetRed(pixel_wand) * 255);
         rgba_out->g = (unsigned char)(PixelGetGreen(pixel_wand) * 255);
         rgba_out->b = (unsigned char)(PixelGetBlue(pixel_wand) * 255);
@@ -299,9 +311,9 @@ int validate_color_with_alpha(const char* color_spec, RGBAColor* rgba_out) {
         rgba_out->is_valid = 1;
 
         // Check if color is transparent
-        if (PixelGetAlpha(pixel_wand) < 0.01 || 
-            strcmp(color_spec, "transparent") == 0 || 
-            strcmp(color_spec, "none") == 0) {
+        if (PixelGetAlpha(pixel_wand) < 0.01 || strcmp(color_spec, "transparent") == 0 ||
+            strcmp(color_spec, "none") == 0)
+        {
             rgba_out->is_transparent = 1;
         }
     }
@@ -314,44 +326,57 @@ int validate_color_with_alpha(const char* color_spec, RGBAColor* rgba_out) {
  * Analyze mask to determine dominant color using efficient histogram method
  * This is the core intelligence feature from the Python script
  */
-MaskAnalysis analyze_mask_dominant_color(MagickWand* mask_wand) {
+MaskAnalysis analyze_mask_dominant_color(MagickWand *mask_wand)
+{
     MaskAnalysis analysis = {0};
 
     // Clone mask for analysis to avoid modifying original
-    MagickWand* analysis_wand = CloneMagickWand(mask_wand);
-    if (!analysis_wand) return analysis;
+    MagickWand *analysis_wand = CloneMagickWand(mask_wand);
+    if (!analysis_wand)
+        return analysis;
 
-    // Convert to grayscale for consistent analysis
-    MagickSetImageType(analysis_wand, GrayscaleType);
-
-    // Remove alpha channel if present
-    if (MagickGetImageAlphaChannel(analysis_wand) == MagickTrue) {
-        MagickSetImageAlphaChannel(analysis_wand, RemoveAlphaChannel);
-    }
+    // Ensure we have an alpha channel for transparency analysis
+    MagickSetImageAlphaChannel(analysis_wand, ActivateAlphaChannel);
 
     // Get image dimensions
     size_t width = MagickGetImageWidth(analysis_wand);
     size_t height = MagickGetImageHeight(analysis_wand);
     analysis.total_pixels = width * height;
 
-    // Use pixel iterator for efficient histogram-like analysis
-    PixelIterator* iterator = NewPixelIterator(analysis_wand);
-    if (!iterator) {
+    // Use pixel iterator for analysis
+    PixelIterator *iterator = NewPixelIterator(analysis_wand);
+    if (!iterator)
+    {
         DestroyMagickWand(analysis_wand);
         return analysis;
     }
 
     size_t row_count = 0;
-    PixelWand** pixels;
+    PixelWand **pixels;
 
     // Iterate through all pixels
-    while ((pixels = PixelGetNextIteratorRow(iterator, &row_count)) != NULL) {
-        for (size_t i = 0; i < row_count; i++) {
-            double intensity = PixelGetRed(pixels[i]); // Grayscale, so R=G=B
+    while ((pixels = PixelGetNextIteratorRow(iterator, &row_count)) != NULL)
+    {
+        for (size_t i = 0; i < row_count; i++)
+        {
+            double alpha = PixelGetAlpha(pixels[i]);
 
-            if (intensity < 0.5) { // Black-ish pixel (threshold at 50%)
+            // Check for transparency first
+            if (alpha < 0.01)
+            {
+                analysis.transparent_pixels++;
+                continue;
+            }
+
+            // For non-transparent pixels, check grayscale intensity
+            double intensity = (PixelGetRed(pixels[i]) + PixelGetGreen(pixels[i]) + PixelGetBlue(pixels[i])) / 3.0;
+
+            if (intensity < 0.5)
+            { // Black-ish pixel
                 analysis.black_pixels++;
-            } else { // White-ish pixel
+            }
+            else
+            { // White-ish pixel
                 analysis.white_pixels++;
             }
         }
@@ -361,59 +386,76 @@ MaskAnalysis analyze_mask_dominant_color(MagickWand* mask_wand) {
     DestroyMagickWand(analysis_wand);
 
     // Calculate percentages
-    if (analysis.total_pixels > 0) {
+    if (analysis.total_pixels > 0)
+    {
         analysis.black_percentage = (double)analysis.black_pixels / analysis.total_pixels * 100.0;
         analysis.white_percentage = (double)analysis.white_pixels / analysis.total_pixels * 100.0;
+        analysis.transparent_percentage = (double)analysis.transparent_pixels / analysis.total_pixels * 100.0;
     }
 
-    // Determine if mask should be inverted
-    // The dominant color should be transparent (show original image)
+    // Determine if mask should be inverted based on requirements:
+    // Black pixels in mask should show original image (be transparent in mask)
+    // White pixels in mask should show replacement color (be opaque in mask)
     analysis.invert_mask = (analysis.black_pixels > analysis.white_pixels) ? 1 : 0;
 
     return analysis;
 }
 
-
 /*
  * Normalize mask values to ensure consistent intensity
  * This addresses varying mask types and improves processing reliability
  */
-int normalize_mask(MagickWand* mask_wand) {
-    if (!mask_wand) return 0;
+int normalize_mask(MagickWand *mask_wand)
+{
+    if (!mask_wand)
+        return 0;
 
-    // Convert to grayscale first
-    if (MagickSetImageType(mask_wand, GrayscaleType) == MagickFalse) {
+    // Ensure alpha channel is activated
+    if (MagickSetImageAlphaChannel(mask_wand, ActivateAlphaChannel) == MagickFalse)
+    {
+        return 0;
+    }
+
+    // Convert RGB to grayscale while preserving alpha
+    if (MagickSetImageType(mask_wand, GrayscaleType) == MagickFalse)
+    {
         return 0;
     }
 
     // Normalize the image to full range (0-255)
-    if (MagickNormalizeImage(mask_wand) == MagickFalse) {
+    if (MagickNormalizeImage(mask_wand) == MagickFalse)
+    {
         return 0;
     }
 
     // Enhance contrast to ensure clear black/white separation
-    if (MagickContrastImage(mask_wand, MagickTrue) == MagickFalse) {
+    if (MagickContrastImage(mask_wand, MagickTrue) == MagickFalse)
+    {
         return 0;
     }
+
     return 1;
 }
-
 
 /*
  * Create a pixel wand with proper transparency support
  */
-PixelWand* create_background_pixel(const char* color_spec) {
-    PixelWand* pixel_wand = NewPixelWand();
-    if (!pixel_wand) return NULL;
+PixelWand *create_background_pixel(const char *color_spec)
+{
+    PixelWand *pixel_wand = NewPixelWand();
+    if (!pixel_wand)
+        return NULL;
 
     // Handle special transparent cases
-    if (strcmp(color_spec, "transparent") == 0 || strcmp(color_spec, "none") == 0) {
+    if (strcmp(color_spec, "transparent") == 0 || strcmp(color_spec, "none") == 0)
+    {
         PixelSetColor(pixel_wand, "transparent");
         return pixel_wand;
     }
 
     // Try to set the color
-    if (PixelSetColor(pixel_wand, color_spec) == MagickFalse) {
+    if (PixelSetColor(pixel_wand, color_spec) == MagickFalse)
+    {
         // If color setting fails, use default transparent
         PixelSetColor(pixel_wand, "transparent");
     }
@@ -426,27 +468,43 @@ PixelWand* create_background_pixel(const char* color_spec) {
  */
 int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *result)
 {
-    if (!magick_wand) {
+    if (!magick_wand)
+    {
         return encode_error(se, result, "apply_layer_mask_null_wand_error");
     }
-    MagickWand* mask_wand = NULL;
-    MagickWand* result_wand = NULL;
-    MagickWand* color_wand = NULL;
-    MagickWand* mask_copy = NULL;
+
+    MagickWand *mask_wand = NULL;
+    MagickWand *result_wand = NULL;
     int encode_stat = 0;
 
-    // Get input image dimensions directly from the passed magick_wand
+    // Force PNG output to ensure transparency support
+    if (MagickSetImageFormat(magick_wand, "PNG") == MagickFalse)
+    {
+        encode_stat = encode_error(se, result, "png_format_error");
+        goto cleanup;
+    }
+
+    // Get input image dimensions
     size_t input_width = MagickGetImageWidth(magick_wand);
     size_t input_height = MagickGetImageHeight(magick_wand);
 
+    // Ensure input image has alpha channel
+    if (MagickSetImageAlphaChannel(magick_wand, ActivateAlphaChannel) == MagickFalse)
+    {
+        encode_stat = encode_error(se, result, "activate_alpha_error");
+        goto cleanup;
+    }
+
     // Load mask image
     mask_wand = NewMagickWand();
-    if (!mask_wand) {
+    if (!mask_wand)
+    {
         encode_stat = encode_error(se, result, "mask_wand_create_error");
         goto cleanup;
     }
 
-    if (MagickReadImageBlob(mask_wand, se->mask, se->mask_size) == MagickFalse) {
+    if (MagickReadImageBlob(mask_wand, se->mask, se->mask_size) == MagickFalse)
+    {
         encode_stat = encode_error(se, result, "mask_imagemagick_error");
         goto cleanup;
     }
@@ -455,98 +513,177 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
     size_t mask_height = MagickGetImageHeight(mask_wand);
 
     // Resize mask to match input dimensions if necessary
-    if (mask_width != input_width || mask_height != input_height) {
-        if (MagickResizeImage(mask_wand, input_width, input_height, TriangleFilter, 1.0) == MagickFalse) {
+    if (mask_width != input_width || mask_height != input_height)
+    {
+        if (MagickResizeImage(mask_wand, input_width, input_height, TriangleFilter, 1.0) == MagickFalse)
+        {
             encode_stat = encode_error(se, result, "resize_imagemagick_error");
             goto cleanup;
         }
     }
 
-    // Normalize mask for consistent processing
-    normalize_mask(mask_wand);
+    // Ensure mask has alpha channel activated
+    if (MagickSetImageAlphaChannel(mask_wand, ActivateAlphaChannel) == MagickFalse)
+    {
+        encode_stat = encode_error(se, result, "mask_alpha_error");
+        goto cleanup;
+    }
 
-    // Analyze mask to determine processing approach
+    // Analyze mask to determine dominant color (which should be replaced)
     MaskAnalysis analysis = analyze_mask_dominant_color(mask_wand);
 
-    // Create result image by cloning the input magick_wand
-    result_wand = CloneMagickWand(magick_wand);
-    if (!result_wand) {
-        encode_stat = encode_error(se, result, "clone_imagemagick_error");
+    // Create result image - start with a transparent background
+    result_wand = NewMagickWand();
+    if (!result_wand)
+    {
+        encode_stat = encode_error(se, result, "result_wand_create_error");
         goto cleanup;
     }
 
-    // Create solid color layer
-    color_wand = NewMagickWand();
-    if (!color_wand) {
-        encode_stat = encode_error(se, result, "color_wand_create_error");
+    PixelWand *transparent_pixel = NewPixelWand();
+    if (!transparent_pixel)
+    {
+        encode_stat = encode_error(se, result, "transparent_pixel_create_error");
+        goto cleanup;
+    }
+    PixelSetColor(transparent_pixel, "transparent");
+
+    if (MagickNewImage(result_wand, input_width, input_height, transparent_pixel) == MagickFalse)
+    {
+        encode_stat = encode_error(se, result, "create_transparent_image_error");
+        DestroyPixelWand(transparent_pixel);
+        goto cleanup;
+    }
+    DestroyPixelWand(transparent_pixel);
+
+    // Set the format for the result image (this was missing!)
+    if (MagickSetImageFormat(result_wand, "PNG") == MagickFalse)
+    {
+        encode_stat = encode_error(se, result, "result_png_format_error");
         goto cleanup;
     }
 
-    PixelWand* bg_pixel = create_background_pixel(se->mask_background_color);
-    if (!bg_pixel) {
-        encode_stat = encode_error(se, result, "pixel_wand_create_error");
+    if (MagickSetImageAlphaChannel(result_wand, ActivateAlphaChannel) == MagickFalse)
+    {
+        encode_stat = encode_error(se, result, "result_alpha_error");
         goto cleanup;
     }
 
-    if (MagickNewImage(color_wand, input_width, input_height, bg_pixel) == MagickFalse) {
-        encode_stat = encode_error(se, result, "color_imagemagick_error");
-        DestroyPixelWand(bg_pixel);
-        goto cleanup;
-    }
-    if (MagickSetImageAlphaChannel(color_wand, ActivateAlphaChannel) == MagickFalse) {
-        encode_stat = encode_error(se, result, "alpha_channel_error");
-        DestroyPixelWand(bg_pixel);
-        goto cleanup;
-    }
-    DestroyPixelWand(bg_pixel);
+    // Process pixel by pixel to correctly handle the mask
+    PixelIterator *mask_iterator = NewPixelIterator(mask_wand);
+    PixelIterator *original_iterator = NewPixelIterator(magick_wand);
+    PixelIterator *result_iterator = NewPixelIterator(result_wand);
 
-    // Prepare mask for compositing
-    mask_copy = CloneMagickWand(mask_wand);
-    if (!mask_copy) {
-        encode_stat = encode_error(se, result, "clone_mask_imagemagick_error");
+    if (!mask_iterator || !original_iterator || !result_iterator)
+    {
+        encode_stat = encode_error(se, result, "iterator_create_error");
+        if (mask_iterator)
+            DestroyPixelIterator(mask_iterator);
+        if (original_iterator)
+            DestroyPixelIterator(original_iterator);
+        if (result_iterator)
+            DestroyPixelIterator(result_iterator);
         goto cleanup;
     }
 
-    if (analysis.invert_mask) {
-        // More black pixels detected, we want black areas to show original
-        // So we DON'T invert - black stays black (transparent), white becomes opaque
-        // Do nothing - keep mask as is
-    } else {
-        // More white pixels detected, we want white areas to show original  
-        // So we DO invert - white becomes black (transparent), black becomes white (opaque)
-        if (MagickNegateImage(mask_copy, MagickFalse) == MagickFalse) {
-            encode_stat = encode_error(se, result, "invert_mask_imagemagick_error");
-            goto cleanup;
+    // Parse background color
+    RGBAColor bg_color;
+    if (!validate_color_with_alpha(se->mask_background_color, &bg_color))
+    {
+        // Default to transparent if color parsing fails
+        bg_color.r = bg_color.g = bg_color.b = bg_color.a = 0;
+        bg_color.is_transparent = 1;
+    }
+
+    // Process each row
+    size_t row_count = 0;
+    PixelWand **mask_pixels;
+    PixelWand **original_pixels;
+    PixelWand **result_pixels;
+
+    while ((mask_pixels = PixelGetNextIteratorRow(mask_iterator, &row_count)) != NULL)
+    {
+        original_pixels = PixelGetNextIteratorRow(original_iterator, &row_count);
+        result_pixels = PixelGetNextIteratorRow(result_iterator, &row_count);
+
+        if (!original_pixels || !result_pixels)
+            break;
+
+        for (size_t i = 0; i < row_count; i++)
+        {
+            double mask_alpha = PixelGetAlpha(mask_pixels[i]);
+
+            // If mask pixel is transparent, result should be transparent
+            if (mask_alpha < 0.01)
+            {
+                PixelSetColor(result_pixels[i], "transparent");
+                continue;
+            }
+
+            // Get mask grayscale intensity (average of RGB)
+            double mask_intensity =
+                (PixelGetRed(mask_pixels[i]) + PixelGetGreen(mask_pixels[i]) + PixelGetBlue(mask_pixels[i])) / 3.0;
+
+            // Determine which color should be replaced based on analysis
+            int should_replace = 0;
+            if (analysis.invert_mask)
+            {
+                // More black pixels - black areas show original, white areas get replaced
+                should_replace = (mask_intensity > 0.5); // White-ish pixels
+            }
+            else
+            {
+                // More white pixels - white areas show original, black areas get replaced
+                should_replace = (mask_intensity < 0.5); // Black-ish pixels
+            }
+
+            if (should_replace)
+            {
+                // Use background color
+                if (bg_color.is_transparent)
+                {
+                    PixelSetColor(result_pixels[i], "transparent");
+                }
+                else
+                {
+                    PixelSetRed(result_pixels[i], bg_color.r / 255.0);
+                    PixelSetGreen(result_pixels[i], bg_color.g / 255.0);
+                    PixelSetBlue(result_pixels[i], bg_color.b / 255.0);
+                    PixelSetAlpha(result_pixels[i], bg_color.a / 255.0);
+                }
+            }
+            else
+            {
+                // Use original image pixel
+                PixelSetRed(result_pixels[i], PixelGetRed(original_pixels[i]));
+                PixelSetGreen(result_pixels[i], PixelGetGreen(original_pixels[i]));
+                PixelSetBlue(result_pixels[i], PixelGetBlue(original_pixels[i]));
+                PixelSetAlpha(result_pixels[i], PixelGetAlpha(original_pixels[i]));
+            }
         }
+
+        // Sync the result row
+        PixelSyncIterator(result_iterator);
     }
 
-    // Use mask as alpha channel for color layer
-    if (MagickCompositeImageChannel(color_wand, AlphaChannel, mask_copy,
-                                    CopyOpacityCompositeOp, 0, 0) == MagickFalse) {
-        encode_stat = encode_error(se, result, "apply_mask_imagemagick_error");
-        goto cleanup;
-    }
+    DestroyPixelIterator(mask_iterator);
+    DestroyPixelIterator(original_iterator);
+    DestroyPixelIterator(result_iterator);
 
-    // Composite color layer over original image
-    if (MagickCompositeImage(result_wand, color_wand, OverCompositeOp, 0, 0) == MagickFalse) {
-        encode_stat = encode_error(se, result, "compose_imagemagick_error");
-        goto cleanup;
-    }
-
-    // Clear the original wand
+    // Replace the original image with the result
     ClearMagickWand(magick_wand);
 
-    // Get the processed image as blob
     size_t blob_length;
-    unsigned char* blob = MagickGetImageBlob(result_wand, &blob_length);
-    if (blob == NULL) {
-        encode_stat = encode_error(se, result, "get_blob_imagemagick_error");
+    unsigned char *blob = MagickGetImageBlob(result_wand, &blob_length);
+    if (blob == NULL)
+    {
+        encode_stat = encode_error(se, result, "get_result_blob_error");
         goto cleanup;
     }
 
-    // Load the blob back into the original magick_wand
-    if (MagickReadImageBlob(magick_wand, blob, blob_length) == MagickFalse) {
-        encode_stat = encode_error(se, result, "load_result_imagemagick_error");
+    if (MagickReadImageBlob(magick_wand, blob, blob_length) == MagickFalse)
+    {
+        encode_stat = encode_error(se, result, "load_result_blob_error");
         MagickRelinquishMemory(blob);
         goto cleanup;
     }
@@ -554,20 +691,19 @@ int apply_layer_mask(transform_se *se, MagickWand *magick_wand, ei_x_buff *resul
     MagickRelinquishMemory(blob);
 
 cleanup:
-    // Clean up all MagickWand resources
-    if (mask_wand) DestroyMagickWand(mask_wand);
-    if (result_wand) DestroyMagickWand(result_wand);
-    if (color_wand) DestroyMagickWand(color_wand);
-    if (mask_copy) DestroyMagickWand(mask_copy);
+    if (mask_wand)
+        DestroyMagickWand(mask_wand);
+    if (result_wand)
+        DestroyMagickWand(result_wand);
 
     return encode_stat;
 }
 
-
 // Function to apply watermark
 static int apply_watermark(transform_se *se, MagickWand *magick_wand, ei_x_buff *result)
 {
-    if (!magick_wand) {
+    if (!magick_wand)
+    {
         return encode_error(se, result, "apply_watermark_null_wand_error");
     }
     int encode_stat = 0;
@@ -577,21 +713,28 @@ static int apply_watermark(transform_se *se, MagickWand *magick_wand, ei_x_buff 
     if (MagickReadImageBlob(magick_wand_watermark, se->watermark, se->watermark_size) == MagickFalse)
     {
         encode_stat = encode_error(se, result, "watermark_blob_imagemagick_error");
-	goto cleanup;
+        goto cleanup;
+    }
+
+    // Verify watermark dimensions
+    size_t wm_width = MagickGetImageWidth(magick_wand_watermark);
+    size_t wm_height = MagickGetImageHeight(magick_wand_watermark);
+    if (wm_width == 0 || wm_height == 0)
+    {
+        encode_stat = encode_error(se, result, "invalid_watermark_dimensions_error");
+        goto cleanup;
     }
 
     // Set watermark transparency
     if (MagickEvaluateImageChannel(magick_wand_watermark, AlphaChannel, MultiplyEvaluateOperator, 0.4) == MagickFalse)
     {
         encode_stat = encode_error(se, result, "alpha_imagemagick_error");
-	goto cleanup;
+        goto cleanup;
     }
 
-    // Get dimensions
+    // Get main image dimensions
     size_t width = MagickGetImageWidth(magick_wand);
     size_t height = MagickGetImageHeight(magick_wand);
-    size_t wm_width = MagickGetImageWidth(magick_wand_watermark);
-    size_t wm_height = MagickGetImageHeight(magick_wand_watermark);
 
     // Calculate new watermark dimensions
     size_t new_wm_width, new_wm_height;
@@ -601,18 +744,20 @@ static int apply_watermark(transform_se *se, MagickWand *magick_wand, ei_x_buff 
     if (MagickResizeImage(magick_wand_watermark, new_wm_width, new_wm_height, TriangleFilter, 1.0) == MagickFalse)
     {
         encode_stat = encode_error(se, result, "imagemagick_resize_error");
-	goto cleanup;
+        goto cleanup;
     }
 
     // Composite watermark onto main image
-    if (MagickCompositeImage(magick_wand, magick_wand_watermark, DissolveCompositeOp, width / 5, height / 5) == MagickFalse)
+    if (MagickCompositeImage(magick_wand, magick_wand_watermark, DissolveCompositeOp, width / 5, height / 5) ==
+        MagickFalse)
     {
         encode_stat = encode_error(se, result, "composite_imagemagick_error");
-	goto cleanup;
+        goto cleanup;
     }
 
 cleanup:
-    if(magick_wand_watermark) (void)DestroyMagickWand(magick_wand_watermark);
+    if (magick_wand_watermark)
+        (void)DestroyMagickWand(magick_wand_watermark);
 
     return encode_stat;
 }
@@ -655,7 +800,8 @@ static int set_image_format(transform_se *se, MagickWand *magick_wand, ei_x_buff
 // Function to handle image scaling and cropping
 static int scale_and_crop_image(transform_se *se, MagickWand *magick_wand, ei_x_buff *result)
 {
-    if (!magick_wand) {
+    if (!magick_wand)
+    {
         return encode_error(se, result, "scale_and_crop_image_null_wand_error");
     }
     size_t width = MagickGetImageWidth(magick_wand);
@@ -673,7 +819,8 @@ static int scale_and_crop_image(transform_se *se, MagickWand *magick_wand, ei_x_
 
     if (cal_ratio > src_ratio)
     {
-        if (MagickResizeImage(magick_wand, se->scale_width, (se->scale_width * height / width), TriangleFilter, 1.0) == MagickFalse)
+        if (MagickResizeImage(magick_wand, se->scale_width, (se->scale_width * height / width), TriangleFilter, 1.0) ==
+            MagickFalse)
         {
             return encode_error(se, result, "imagemagick_resize_error");
         }
@@ -693,7 +840,8 @@ static int scale_and_crop_image(transform_se *se, MagickWand *magick_wand, ei_x_
     }
     else if (cal_ratio < src_ratio)
     {
-        if (MagickResizeImage(magick_wand, se->scale_height * width / height, se->scale_height, TriangleFilter, 1.0) == MagickFalse)
+        if (MagickResizeImage(magick_wand, se->scale_height * width / height, se->scale_height, TriangleFilter, 1.0) ==
+            MagickFalse)
         {
             return encode_error(se, result, "imagemagick_resize_error");
         }
@@ -770,7 +918,6 @@ static void cleanup_resources(transform_se *se, MagickWand *magick_wand)
         free(se->tag);
     }
 }
-
 
 /*
     Main processing function
@@ -1007,7 +1154,8 @@ int parse_transform(unsigned char *buf, int offset, int arity, transform_se *se,
             }
 
             // Check if string fits in fixed buffer
-            if (size_long >= MAX_COLOR_NAME) {
+            if (size_long >= MAX_COLOR_NAME)
+            {
                 encode_stat = encode_error(se, &result, "mask_color_too_long_error");
                 break;
             }
@@ -1024,7 +1172,8 @@ int parse_transform(unsigned char *buf, int offset, int arity, transform_se *se,
 
             // Validate the color
             RGBAColor rgb;
-            if (!validate_color_with_alpha(se->mask_background_color, &rgb)) {
+            if (!validate_color_with_alpha(se->mask_background_color, &rgb))
+            {
                 // Use default color if validation fails
                 strncpy(se->mask_background_color, "white", MAX_COLOR_NAME - 1);
                 se->mask_background_color[MAX_COLOR_NAME - 1] = '\0';
